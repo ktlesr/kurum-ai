@@ -1,0 +1,22 @@
+/* Kurum AI — Open WebUI görünüm düzeltmeleri. Tüm kullanıcılara uygulanır.
+   Open WebUI her sayfada /static/custom.css dosyasını yükler; compose bu dosyayı oraya bağlar. */
+
+/* Yazı boyutu: taban 16px → 17.6px (arayüz metni 12–14px → 13–15px).
+   --app-text-scale'i uygulama her açılışta html'e inline yazdığı için değişkeni değil tabanı büyütüyoruz;
+   kullanıcının Ayarlar → Arayüz → UI ölçeği seçimi bunun üzerine çarpan olarak çalışmaya devam eder. */
+html:root {
+  font-size: calc(1.1rem * var(--app-text-scale, 1));
+}
+
+/* Açık tema: ikincil metinlerdeki açık griler (L 69–77%) beyaz zeminde silik. Koyulaştır.
+   Yalnızca açık temada metin rengi; zemin/kenarlık grileri ve koyu tema etkilenmez. */
+html:not(.dark) .text-gray-400,
+html:not(.dark) .text-gray-500 {
+  color: var(--color-gray-600);
+}
+html:not(.dark) .text-gray-600 {
+  color: var(--color-gray-700);
+}
+html:not(.dark) ::placeholder {
+  color: var(--color-gray-500);
+}

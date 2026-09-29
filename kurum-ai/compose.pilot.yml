@@ -1,0 +1,51 @@
+# Aşama 1 — Pilot: Windows + Docker Desktop, host'ta çalışan Ollama.
+# Başlatma: docker compose -f compose.pilot.yml up -d
+#
+# Not: Open WebUI bu ayarların çoğunu yalnızca İLK açılışta veritabanına yazar (PersistentConfig).
+# Sonradan değiştirmek için Yönetici Paneli'ni kullanın ya da README'deki "Ayarı sıfırlama" adımına bakın.
+
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${WEBUI_VERSION:-v0.11.4}
+    container_name: open-webui
+    restart: unless-stopped
+    ports:
+      - "${WEBUI_PORT:-3000}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - open-webui:/app/backend/data
+      # Yazı boyutu/kontrast düzeltmesi; açılışta /static/custom.css olarak yayınlanır
+      - ./custom.css:/app/build/static/custom.css:ro
+    environment:
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?.env dosyasında WEBUI_SECRET_KEY tanımlı değil}
+      WEBUI_NAME: ${WEBUI_NAME:-Kurum AI}
+
+      # Model sunucusu: host'taki Ollama
+      ENABLE_OLLAMA_API: "true"
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      ENABLE_OPENAI_API: "false"
+      ENABLE_DIRECT_CONNECTIONS: "false"
+      ENABLE_EVALUATION_ARENA_MODELS: "false"
+
+      # Kullanıcılar: ilk kayıt admin olur, sonrakiler admin onayı bekler
+      ENABLE_SIGNUP: "true"
+      DEFAULT_USER_ROLE: pending
+      DEFAULT_LOCALE: tr-TR
+
+      # Doküman RAG: embedding Ollama'daki çok dilli model ile
+      RAG_EMBEDDING_ENGINE: ollama
+      RAG_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma:latest}
+      RAG_OLLAMA_BASE_URL: http://host.docker.internal:11434
+
+      # Dışarı çıkan her şey kapalı
+      OFFLINE_MODE: "true"
+      ENABLE_WEB_SEARCH: "false"
+      ENABLE_COMMUNITY_SHARING: "false"
+      ENABLE_VERSION_UPDATE_CHECK: "false"
+      SCARF_NO_ANALYTICS: "true"
+      DO_NOT_TRACK: "true"
+      ANONYMIZED_TELEMETRY: "false"
+
+volumes:
+  open-webui:

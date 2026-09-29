@@ -1,0 +1,2 @@
+# Betikler ve yapılandırma Linux cihazda çalışır; Windows'ta checkout edilse de LF kalsın
+* text=auto eol=lf

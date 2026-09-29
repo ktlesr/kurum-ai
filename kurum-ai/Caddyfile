@@ -1,0 +1,22 @@
+{
+	# Container içinde sistem sertifika deposuna kök sertifika yüklemeye çalışma
+	skip_install_trust
+	# Kurum sertifikasındaki OCSP adresine dışarı istek atma
+	ocsp_stapling off
+}
+
+# Sertifika seçimi .env'deki CADDY_TLS ile:
+#   internal → Caddy'nin kendi iç CA'sı (kök sertifika istemcilere dağıtılır, README)
+#   kurum    → kurum CA'sından alınmış sertifika: certs/cert.pem (zincir dahil) + certs/key.pem
+(tls-internal) {
+	tls internal
+}
+(tls-kurum) {
+	tls /certs/cert.pem /certs/key.pem
+}
+
+{$DOMAIN} {
+	import tls-{$CADDY_TLS}
+	encode zstd gzip
+	reverse_proxy open-webui:8080
+}

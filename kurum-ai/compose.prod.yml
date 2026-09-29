@@ -1,0 +1,149 @@
+# Aşama 2 — Üretim: NVIDIA GB10 sınıfı AI cihazı (Linux ARM64), internet çıkışı kapalı.
+# Önce (internet açıkken bir kez): scripts/download-models.sh
+# Başlatma: docker compose -f compose.prod.yml up -d
+#
+# Ağlar:
+#   backend  (internal) — vllm + open-webui. Dışarıya çıkışı ve dışarıdan girişi yok.
+#   frontend            — open-webui + caddy. Dışarıya yalnızca caddy 80/443 açar.
+# vLLM'in portu yayınlanmaz; kurum ağından tek giriş noktası Caddy'dir.
+
+name: kurum-ai
+
+services:
+  vllm:
+    # NVIDIA'nın DGX Spark / GB10 için önerdiği NGC vLLM imajı (arm64). Upstream vllm/vllm-openai GB10'u desteklemez.
+    image: nvcr.io/nvidia/vllm:${VLLM_VERSION:-26.09-py3}
+    restart: unless-stopped
+    command:
+      - vllm
+      - serve
+      - /models/llm/${LLM_MODEL:-openai/gpt-oss-20b}
+      - --served-model-name=${LLM_MODEL:-openai/gpt-oss-20b}
+      - --host=0.0.0.0
+      - --port=8000
+      - --gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.6}
+    environment:
+      VLLM_API_KEY: ${VLLM_API_KEY:?.env dosyasında VLLM_API_KEY tanımlı değil}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      # gpt-oss tokenizer dosyaları çalışma anında indirilmeye çalışılır; önceden indirilen kopya kullanılır
+      TIKTOKEN_ENCODINGS_BASE: /models/tiktoken
+      VLLM_NO_USAGE_STATS: "1"
+      DO_NOT_TRACK: "1"
+    volumes:
+      - ./models/llm:/models/llm:ro
+      - ./models/tiktoken:/models/tiktoken:ro
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks: [backend]
+    healthcheck:
+      # /health API anahtarı istemez
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15m # model belleğe yüklenirken
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${WEBUI_VERSION:-v0.11.4}
+    restart: unless-stopped
+    depends_on: [vllm]
+    volumes:
+      # Adlandırılmış volume: imajdaki hazır tiktoken önbelleği ilk açılışta içine kopyalanır (bind mount'ta kopyalanmaz)
+      - open-webui:/app/backend/data
+      - ./models/embedding:/models/embedding:ro
+      - ./custom.css:/app/build/static/custom.css:ro
+    environment:
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?.env dosyasında WEBUI_SECRET_KEY tanımlı değil}
+      WEBUI_NAME: ${WEBUI_NAME:-Kurum AI}
+      WEBUI_URL: https://${DOMAIN:?.env dosyasında DOMAIN tanımlı değil}
+
+      # Model sunucusu: iç ağdaki vLLM (OpenAI uyumlu API)
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_OPENAI_API: "true"
+      OPENAI_API_BASE_URL: http://vllm:8000/v1
+      OPENAI_API_KEY: ${VLLM_API_KEY}
+      ENABLE_DIRECT_CONNECTIONS: "false"
+      ENABLE_EVALUATION_ARENA_MODELS: "false"
+
+      # Kullanıcılar
+      ENABLE_SIGNUP: "true"
+      DEFAULT_USER_ROLE: pending
+      DEFAULT_LOCALE: tr-TR
+
+      # Doküman RAG: önceden indirilmiş yerel embedding modeli (dosya yolu verilince indirme denenmez)
+      RAG_EMBEDDING_ENGINE: ""
+      RAG_EMBEDDING_MODEL: /models/embedding/${HF_EMBEDDING_MODEL:-BAAI/bge-m3}
+
+      # Dışarı çıkan her şey kapalı
+      OFFLINE_MODE: "true"
+      HF_HUB_OFFLINE: "1"
+      ENABLE_WEB_SEARCH: "false"
+      ENABLE_COMMUNITY_SHARING: "false"
+      ENABLE_VERSION_UPDATE_CHECK: "false"
+      SCARF_NO_ANALYTICS: "true"
+      DO_NOT_TRACK: "true"
+      ANONYMIZED_TELEMETRY: "false"
+
+      # LDAP / Active Directory (varsayılan kapalı; README "LDAP / AD ile giriş")
+      ENABLE_LDAP: ${ENABLE_LDAP:-false}
+      LDAP_SERVER_LABEL: ${LDAP_SERVER_LABEL:-Kurum Hesabı}
+      LDAP_SERVER_HOST: ${LDAP_SERVER_HOST:-}
+      LDAP_SERVER_PORT: ${LDAP_SERVER_PORT:-636}
+      LDAP_USE_TLS: ${LDAP_USE_TLS:-true}
+      LDAP_VALIDATE_CERT: ${LDAP_VALIDATE_CERT:-true}
+      LDAP_CA_CERT_FILE: ${LDAP_CA_CERT_FILE:-}
+      LDAP_APP_DN: ${LDAP_APP_DN:-}
+      LDAP_APP_PASSWORD: ${LDAP_APP_PASSWORD:-}
+      LDAP_SEARCH_BASE: ${LDAP_SEARCH_BASE:-}
+      LDAP_SEARCH_FILTERS: ${LDAP_SEARCH_FILTERS:-}
+      LDAP_ATTRIBUTE_FOR_USERNAME: ${LDAP_ATTRIBUTE_FOR_USERNAME:-sAMAccountName}
+      LDAP_ATTRIBUTE_FOR_MAIL: ${LDAP_ATTRIBUTE_FOR_MAIL:-mail}
+    networks: [backend, frontend]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 3m
+
+  caddy:
+    image: caddy:${CADDY_VERSION:-2.10.2-alpine}
+    restart: unless-stopped
+    depends_on: [open-webui]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [frontend]
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  backend:
+    internal: true
+  frontend:
+
+volumes:
+  open-webui:
+  caddy-data:
+  caddy-config:
