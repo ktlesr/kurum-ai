@@ -23,7 +23,7 @@ for try in 1 2 3 4 5; do
   echo "İndirme yarıda kaldı, yeniden deneniyor ($try/5)…"; sleep 10
 done
 
-mkdir -p models/llm models/embedding models/tiktoken certs
+mkdir -p models/llm models/embedding models/tiktoken models/tessdata certs
 
 # İndirme için Open WebUI imajındaki Python + huggingface_hub kullanılır; cihaza ek paket kurulmaz.
 py() { docker run --rm ${HF_TOKEN:+-e HF_TOKEN="$HF_TOKEN"} -v "$HOST_DIR/models:/models" --entrypoint python "$WEBUI_IMAGE" -c "$@"; }
@@ -44,13 +44,14 @@ hf_download "$LLM_MODEL" "/models/llm/$LLM_MODEL"
 echo "== 3/4 Embedding modeli: $EMB_MODEL"
 hf_download "$EMB_MODEL" "/models/embedding/$EMB_MODEL"
 
-echo "== 4/4 Tokenizer dosyaları (gpt-oss çevrimdışı çalışması için)"
+echo "== 4/4 Tokenizer (gpt-oss) ve Türkçe OCR (Tesseract) dosyaları"
 py 'import urllib.request
 for n in ("o200k_base", "cl100k_base"):
-    urllib.request.urlretrieve(f"https://openaipublic.blob.core.windows.net/encodings/{n}.tiktoken", f"/models/tiktoken/{n}.tiktoken")'
+    urllib.request.urlretrieve(f"https://openaipublic.blob.core.windows.net/encodings/{n}.tiktoken", f"/models/tiktoken/{n}.tiktoken")
+urllib.request.urlretrieve("https://github.com/tesseract-ocr/tessdata_best/raw/main/tur.traineddata", "/models/tessdata/tur.traineddata")'
 
 echo
-du -sh models/llm models/embedding models/tiktoken
+du -sh models/llm models/embedding models/tiktoken models/tessdata
 echo
 echo "Tamamlandı. Şimdi cihazın internet çıkışını tekrar kapatın, sonra:"
 echo "  docker compose -f compose.prod.yml up -d"

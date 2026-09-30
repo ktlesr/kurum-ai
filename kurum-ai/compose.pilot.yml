@@ -2,7 +2,7 @@
 # Başlatma: docker compose -f compose.pilot.yml up -d
 #
 # Not: Open WebUI bu ayarların çoğunu yalnızca İLK açılışta veritabanına yazar (PersistentConfig).
-# Sonradan değiştirmek için Yönetici Paneli'ni kullanın ya da README'deki "Ayarı sıfırlama" adımına bakın.
+# Sonradan değiştirmek için Yönetici Paneli'ni kullanın (README, "Ayarlar hakkında önemli not").
 
 services:
   open-webui:
@@ -38,6 +38,11 @@ services:
       RAG_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma:latest}
       RAG_OLLAMA_BASE_URL: http://host.docker.internal:11434
 
+      # Taranmış (görüntü) PDF'ler için OCR: Docling + Tesseract Türkçe
+      CONTENT_EXTRACTION_ENGINE: docling
+      DOCLING_SERVER_URL: http://docling:5001
+      DOCLING_PARAMS: '{"do_ocr": "true", "ocr_engine": "tesseract", "ocr_lang": ["tur", "eng"]}'
+
       # Dışarı çıkan her şey kapalı
       OFFLINE_MODE: "true"
       ENABLE_WEB_SEARCH: "false"
@@ -46,6 +51,24 @@ services:
       SCARF_NO_ANALYTICS: "true"
       DO_NOT_TRACK: "true"
       ANONYMIZED_TELEMETRY: "false"
+
+  # Doküman dönüştürme + OCR. Modeller imajın içinde; çalışırken indirme yapmaz.
+  docling:
+    image: ghcr.io/docling-project/docling-serve-cpu:${DOCLING_VERSION:-v1.35.0}
+    container_name: docling
+    restart: unless-stopped
+    environment:
+      # Taranmış PDF'de OCR sayfa başına ~5-10 sn sürer; 120 sn varsayılanı uzun dokümanlara yetmez
+      DOCLING_SERVE_MAX_SYNC_WAIT: "1800"
+    volumes:
+      # İmajda Tesseract yalnızca İngilizce ile gelir; Türkçe modeli (README, Önkoşullar)
+      - ./models/tessdata/tur.traineddata:/usr/share/tesseract/tessdata/tur.traineddata:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 1m
 
 volumes:
   open-webui:

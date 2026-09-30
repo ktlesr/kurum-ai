@@ -56,7 +56,7 @@ services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:${WEBUI_VERSION:-v0.11.4}
     restart: unless-stopped
-    depends_on: [vllm]
+    depends_on: [vllm, docling]
     volumes:
       # Adlandırılmış volume: imajdaki hazır tiktoken önbelleği ilk açılışta içine kopyalanır (bind mount'ta kopyalanmaz)
       - open-webui:/app/backend/data
@@ -83,6 +83,11 @@ services:
       # Doküman RAG: önceden indirilmiş yerel embedding modeli (dosya yolu verilince indirme denenmez)
       RAG_EMBEDDING_ENGINE: ""
       RAG_EMBEDDING_MODEL: /models/embedding/${HF_EMBEDDING_MODEL:-BAAI/bge-m3}
+
+      # Taranmış (görüntü) PDF'ler için OCR: Docling + Tesseract Türkçe
+      CONTENT_EXTRACTION_ENGINE: docling
+      DOCLING_SERVER_URL: http://docling:5001
+      DOCLING_PARAMS: '{"do_ocr": "true", "ocr_engine": "tesseract", "ocr_lang": ["tur", "eng"]}'
 
       # Dışarı çıkan her şey kapalı
       OFFLINE_MODE: "true"
@@ -115,6 +120,25 @@ services:
       timeout: 10s
       retries: 5
       start_period: 3m
+
+  # Doküman dönüştürme + OCR. Modeller imajın içinde; yalnızca iç ağda, dışarı çıkışı yok.
+  docling:
+    image: ghcr.io/docling-project/docling-serve-cpu:${DOCLING_VERSION:-v1.35.0}
+    restart: unless-stopped
+    environment:
+      # Taranmış PDF'de OCR sayfa başına ~5-10 sn sürer; 120 sn varsayılanı uzun dokümanlara yetmez
+      DOCLING_SERVE_MAX_SYNC_WAIT: "1800"
+      HF_HUB_OFFLINE: "1"
+    volumes:
+      # İmajda Tesseract yalnızca İngilizce ile gelir; Türkçe modeli download-models.sh indirir
+      - ./models/tessdata/tur.traineddata:/usr/share/tesseract/tessdata/tur.traineddata:ro
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 1m
 
   caddy:
     image: caddy:${CADDY_VERSION:-2.10.2-alpine}

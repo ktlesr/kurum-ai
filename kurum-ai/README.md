@@ -36,6 +36,11 @@ Pilotta HTTPS ve Caddy yoktur; Open WebUI doğrudan `http://<bilgisayar>:3000` a
    ollama list | Select-String ":cloud"
    ollama rm gemini-3-flash-preview:cloud
    ```
+5. **Türkçe OCR modeli** (taranmış PDF'leri okumak için, ~7 MB, bir kez). `kurum-ai` klasöründe:
+   ```powershell
+   New-Item -ItemType Directory -Force models\tessdata | Out-Null
+   Invoke-WebRequest https://github.com/tesseract-ocr/tessdata_best/raw/main/tur.traineddata -OutFile models\tessdata\tur.traineddata
+   ```
 
 ### 2. Yapılandırma
 
@@ -141,6 +146,22 @@ Ayarlar bölümündeki pilot değerleri:
 
 Bu ayarlar Open WebUI'nin kendi adına dışarı bağlanmasını engeller; ağ seviyesinde tam kapalılık Aşama 2'de güvenlik duvarıyla sağlanır. Pilot bilgisayarının internet erişimi açık kalır; bu yüzden gizli dokümanlarla pilot yapılmamalı ve bulut modelleri silinmiş olmalıdır (bkz. Önkoşullar 4).
 
+### Taranmış PDF'ler (OCR)
+
+Tarayıcıdan geçmiş PDF'lerde metin yoktur, yalnızca sayfa görüntüsü vardır. Open WebUI'nin varsayılan okuyucusu bunlarda **"The content provided is empty"** hatası verir. Bu yüzden kurulumda ayrı bir **Docling** servisi vardır: PDF, Word, Excel vb. dosyaları metne çevirir, görüntü olan sayfalarda **Tesseract Türkçe** OCR çalıştırır. Docling'in modelleri imajın içindedir, çalışırken internete çıkmaz. Türkçe OCR modeli Önkoşullar 5'te indirilir.
+
+- **Hız:** taranmış 28 sayfalık bir PDF bu bilgisayarda ~100 sn'de işlendi (sayfa başına 3–4 sn). Yükleme sırasında dosya kartı bu süre boyunca "işleniyor" görünür. Metin katmanı olan PDF'ler çok daha hızlıdır.
+- **Kalite:** Türkçe karakterler (ş, ğ, ı, İ) ve kelime sırası doğru okunur. EasyOCR de denendi; Türkçe harfleri düşürdüğü (ş→s, ğ→g) ve kelimeleri kaydırdığı için seçilmedi.
+- **Bilinen sınır:** Taranmış sayfada **fosforlu kalemle / sarı zeminle vurgulanmış hücreler** atlanabiliyor (denenen örnekte "250.000.000 TL" hücresi). Önemli rakamları kaynak sayfadan kontrol edin.
+
+**Mevcut bir kurulumda açmak için** (ayar yalnızca ilk açılışta env'den okunur): **Yönetici Paneli → Ayarlar → Belgeler (Documents) → İçerik Çıkarma Motoru (Content Extraction Engine)** = `Docling`, sunucu adresi `http://docling:5001`, parametreler:
+
+```json
+{"do_ocr": "true", "ocr_engine": "tesseract", "ocr_lang": ["tur", "eng"]}
+```
+
+Kaydedin; daha önce "empty" hatası veren dosyaları yeniden yükleyin.
+
 ### Görünüm (yazı boyutu ve kontrast)
 
 `custom.css` tüm kullanıcılar için yazıları %10 büyütür ve açık temadaki silik gri metinleri koyulaştırır. Değiştirdikten sonra `docker restart open-webui` ve tarayıcıda Ctrl+F5. Kişisel ayar: **Ayarlar → Arayüz → UI ölçeği** (bunun üzerine çarpan olarak uygulanır).
@@ -188,6 +209,7 @@ docker compose -f compose.pilot.yml up -d
 |---|---|---|
 | `vllm` | `nvcr.io/nvidia/vllm:26.09-py3` | NVIDIA'nın DGX Spark / GB10 için yayınladığı vLLM imajı (arm64). Tek model sunar (varsayılan `openai/gpt-oss-20b`). |
 | `open-webui` | `ghcr.io/open-webui/open-webui:v0.11.4` | Arayüz. vLLM'e `http://vllm:8000/v1` üzerinden API anahtarıyla bağlanır; Ollama bağlantısı kapalı. |
+| `docling` | `ghcr.io/docling-project/docling-serve-cpu:v1.35.0` | Doküman dönüştürme ve Türkçe OCR (taranmış PDF'ler; bkz. Aşama 1 "Taranmış PDF'ler"). Yalnızca `backend` iç ağında. |
 | `caddy` | `caddy:2.10.2-alpine` | Tek giriş noktası; HTTPS. |
 
 Kurum ağına açılan tek şey Caddy'nin 80/443 portlarıdır. vLLM'in portu hiçbir yerde yayınlanmaz ve yalnızca `backend` iç ağındadır.
