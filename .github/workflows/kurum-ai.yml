@@ -1,0 +1,41 @@
+name: kurum-ai doğrulama
+
+on:
+  push:
+    paths: ["kurum-ai/**", ".github/workflows/kurum-ai.yml"]
+  pull_request:
+    paths: ["kurum-ai/**", ".github/workflows/kurum-ai.yml"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kurum-ai
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Test .env
+        run: |
+          cp .env.example .env
+          sed -i 's/^WEBUI_SECRET_KEY=$/WEBUI_SECRET_KEY=ci/; s/^VLLM_API_KEY=$/VLLM_API_KEY=ci/' .env
+
+      - name: Compose dosyaları
+        run: |
+          docker compose -f compose.pilot.yml config -q
+          docker compose -f compose.prod.yml config -q
+          COMPOSE_FILE=compose.prod.yml:compose.dev.yml docker compose config -q
+
+      - name: Caddyfile (iki sertifika modu)
+        run: |
+          mkdir -p certs
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=ai.kurum.local \
+            -keyout certs/key.pem -out certs/cert.pem 2>/dev/null
+          for tls in internal kurum; do
+            docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$PWD/certs:/certs:ro" \
+              -e DOMAIN=ai.kurum.local -e CADDY_TLS=$tls caddy:2.10.2-alpine \
+              caddy validate --config /etc/caddy/Caddyfile
+          done
+
+      - name: Betikler
+        run: shellcheck --severity=warning scripts/*.sh

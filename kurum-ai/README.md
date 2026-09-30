@@ -419,3 +419,54 @@ Güncellemeler plansız yapılmaz; yılda birkaç kez, bakım penceresinde:
 5. **Uygulama:** `docker compose -f compose.prod.yml up -d` → tüm servisler `healthy` olana kadar bekleyin.
 6. **Test:** "7. Test" bölümündeki adımlar ve bu listedeki doğrulama komutları.
 7. **Geri dönüş (gerekirse):** `.env.bak`'ı geri koyun → `docker compose -f compose.prod.yml up -d` → sorun sürerse yedeği geri yükleyin (bölüm 9). Open WebUI yeni sürümde veritabanını dönüştürebilir; eski sürüme dönüşte **yedeği geri yüklemek gerekir.**
+
+---
+
+## Geliştirme ortamı (cihaz olmadan üretim yığınını deneme)
+
+`compose.dev.yml`, üretim yığınını (`compose.prod.yml`) NVIDIA GPU'lu bir x86 bilgisayarda (ör. Windows + Docker Desktop) çalıştırır. vLLM, gpt-oss, çevrimdışı açılış ve HTTPS zinciri cihaz gelmeden burada denenir. Üretimden farkları:
+
+| | Üretim | Geliştirme |
+|---|---|---|
+| Proje adı (volume/container önekleri) | `kurum-ai` | `kurum-ai-dev` (pilotla çakışmaz) |
+| Caddy portları | 80 / 443 | 8080 / 8443 (`DEV_HTTP_PORT`, `DEV_HTTPS_PORT`) |
+| İşlemci mimarisi | ARM64 | x86 (aynı imajların x86 sürümü) |
+| vLLM model runner | varsayılan (V2) | V1 (`VLLM_USE_V2_MODEL_RUNNER=0`): Docker Desktop/WSL2'de pinned memory olmadığı için V2 "UVA is not available" hatası verir |
+| `VLLM_GPU_MEMORY_UTILIZATION` | 0.6 (128 GB ortak bellek) | 0.9 (24 GB GPU; 0.8'de 128K bağlam için KV cache yetmedi) |
+
+**Kurulum** (`kurum-ai` klasöründe, Git Bash):
+
+```bash
+# .env'de Aşama 2 değerleri dolu olmalı; geliştirme için:
+#   DOMAIN=localhost   CADDY_TLS=internal   VLLM_GPU_MEMORY_UTILIZATION=0.9 (24 GB GPU)
+ollama stop <yüklü-model>                       # GPU belleğini boşaltın
+bash scripts/download-models.sh                 # ~40 GB, bir kez
+export COMPOSE_FILE="compose.prod.yml;compose.dev.yml"   # Linux'ta ayraç ":" 
+docker compose up -d
+docker compose ps
+```
+
+Arayüz: **https://localhost:8443** (Caddy iç CA'sı; tarayıcı uyarısını geçin ya da kök sertifikayı güvenilenlere ekleyin, bkz. Aşama 2 bölüm 5).
+
+`COMPOSE_FILE` ayarlıyken `docker compose` komutları ve `scripts/backup.sh` geliştirme projesine uygulanır. Temizlemek için: `docker compose down -v` (yalnızca `kurum-ai-dev` verisi silinir).
+
+**Geliştirme ortamında yapılan testler** (RTX 5090 Laptop 24 GB, Windows 11 + Docker Desktop, NGC vLLM 26.09 / vLLM 0.29, Open WebUI v0.11.4):
+
+| Test | Sonuç |
+|---|---|
+| `download-models.sh` (imajlar + gpt-oss-20b + bge-m3 + tokenizer) | Başarılı; gpt-oss 13 GB (`original/`, `metal/` atlandı), bge-m3 2.2 GB. Bir kopmada otomatik yeniden deneme çalıştı. |
+| vLLM açılışı | ~3.5 dk (ağırlık yükleme ~90 sn), 209K token KV cache |
+| vLLM'e anahtarsız istek | 401 |
+| vLLM'e host'tan erişim | Yok (port yayınlanmıyor) |
+| Türkçe PDF sorusu (Caddy HTTPS → Open WebUI → vLLM) | Doğru cevap, kaynak `[1]`, ~7 sn |
+| **İnternet tamamen kapalıyken** (tüm ağlar `internal`) sıfırdan açılış | 3 servis de `healthy` (~160 sn); doküman işleme ve soru-cevap çalıştı; hiçbir container dış adres çözemedi |
+
+## Otomatik doğrulama (GitHub Actions)
+
+`kurum-ai/` altında bir değişiklik push edildiğinde `.github/workflows/kurum-ai.yml` şunları kontrol eder:
+
+- `compose.pilot.yml`, `compose.prod.yml` ve `compose.prod.yml + compose.dev.yml` geçerli mi (`docker compose config`)
+- `Caddyfile` her iki sertifika modunda (`internal`, `kurum`) geçerli mi (`caddy validate`)
+- Betiklerde hata var mı (`shellcheck`)
+
+Kırmızı bir çalıştırma, değişikliğin cihaza uygulanmaması gerektiği anlamına gelir.

@@ -4,6 +4,9 @@
 # Kapılı (gated) bir model için: HF_TOKEN=hf_xxx scripts/download-models.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Windows Git Bash'te de çalışsın: /models gibi argümanlar Windows yoluna çevrilmesin, volume için D:/... yolu kullanılsın
+export MSYS_NO_PATHCONV=1
+HOST_DIR=$(pwd -W 2>/dev/null || pwd)
 
 [ -f .env ] || { echo "HATA: .env yok. Önce: cp .env.example .env" >&2; exit 1; }
 # .env'i source etmiyoruz (LDAP_APP_DN gibi boşluklu değerler bash'i bozar); gerekeni tek tek okuyoruz.
@@ -13,12 +16,17 @@ EMB_MODEL=$(envval HF_EMBEDDING_MODEL); EMB_MODEL=${EMB_MODEL:-BAAI/bge-m3}
 WEBUI_VERSION=$(envval WEBUI_VERSION); WEBUI_IMAGE=ghcr.io/open-webui/open-webui:${WEBUI_VERSION:-v0.11.4}
 
 echo "== 1/4 Container imajları indiriliyor"
-docker compose -f compose.prod.yml pull
+# Bağlantı koparsa tekrar dene; tamamlanan katmanlar yeniden indirilmez
+for try in 1 2 3 4 5; do
+  docker compose -f compose.prod.yml pull && break
+  [ "$try" = 5 ] && { echo "HATA: imajlar 5 denemede indirilemedi" >&2; exit 1; }
+  echo "İndirme yarıda kaldı, yeniden deneniyor ($try/5)…"; sleep 10
+done
 
 mkdir -p models/llm models/embedding models/tiktoken certs
 
 # İndirme için Open WebUI imajındaki Python + huggingface_hub kullanılır; cihaza ek paket kurulmaz.
-py() { docker run --rm ${HF_TOKEN:+-e HF_TOKEN="$HF_TOKEN"} -v "$PWD/models:/models" --entrypoint python "$WEBUI_IMAGE" -c "$@"; }
+py() { docker run --rm ${HF_TOKEN:+-e HF_TOKEN="$HF_TOKEN"} -v "$HOST_DIR/models:/models" --entrypoint python "$WEBUI_IMAGE" -c "$@"; }
 hf_download() { # <repo> <hedef klasör>
   # original/ ve metal/ (gpt-oss) ile onnx/openvino/tf kopyaları kullanılmıyor; atlanır (~26 GB tasarruf).
   # Ağırlıkların .safetensors hali varsa aynı ağırlıkların .bin kopyası da atlanır.
