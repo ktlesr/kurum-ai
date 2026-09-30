@@ -175,6 +175,7 @@ Kaydedin; daha önce "empty" hatası veren dosyaları yeniden yükleyin.
 | Kaydolan kullanıcı "izin yok" hatası alıyor | Yeni kayıtlar kapalı: 4. adımdaki "Enable New Sign Ups" anahtarını açın. |
 | `port is already allocated` | `.env` içinde `WEBUI_PORT` değerini değiştirip yeniden başlatın. |
 | Cevap çok geç geliyor | İlk soruda model belleğe yüklenir (≈30 sn). Daha küçük bir model deneyin. |
+| Sohbet adı ilk mesajın tamamı oluyor | Düşünen model başlık için ayrılan token'ları düşünmeye harcıyor. **Yönetici Paneli → Ayarlar → Arayüz → Görev Modeli** parametreleri: `{"think": false, "max_tokens": 1000}` (yeni kurulumda hazır gelir). |
 
 ### Tamamen sıfırlama (tüm veriler silinir)
 

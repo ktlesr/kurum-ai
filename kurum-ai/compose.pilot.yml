@@ -33,6 +33,10 @@ services:
       DEFAULT_USER_ROLE: pending
       DEFAULT_LOCALE: tr-TR
 
+      # Başlık/etiket/öneri üretimi: düşünen modeller (gemma4 vb.) 1000 token'ı düşünmeye harcayıp
+      # başlığı yazamıyor, sohbet adı ilk mesajın tamamı oluyor. Bu görevlerde düşünmeyi kapat.
+      TASK_MODEL_PARAMS: '{"think": false, "max_tokens": 1000}'
+
       # Doküman RAG: embedding Ollama'daki çok dilli model ile
       RAG_EMBEDDING_ENGINE: ollama
       RAG_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma:latest}
