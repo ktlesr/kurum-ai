@@ -519,3 +519,18 @@ Yönetici e-postası ve parolası sorulur (ya da `ADMIN_EMAIL` / `ADMIN_PASSWORD
 Kurum işine en yakın olanlar: **Ib Check Deck** (rakam/tutarlılık kontrolü), **Competitive Analysis**, **Audit Xls**, **Clean Data Xls**, **Dd Checklist**, **Unit Economics**, **Returns Analysis**.
 
 Test (geliştirme ortamı, gpt-oss-20b): 63 beceri yüklendi, ikinci çalıştırmada 63'ü güncellendi. *Ib Check Deck*'e bilerek hatalı verilen bütçe özetinde (kalemler toplamı 255 milyon, yazan toplam 250 milyon; süre 36 ay ama takvim 30 ay) iki tutarsızlığı da buldu, Türkçe raporladı (~9 sn).
+
+### Diğer beceri koleksiyonları
+
+| Klasör | Kaynak | Beceri | İçerik |
+|---|---|---|---|
+| `skills/financial-services/` | anthropics/financial-services (Apache 2.0) | 63 | Finans, yatırım, fon yönetimi |
+| `skills/knowledge-work-plugins/` | anthropics/knowledge-work-plugins (Apache 2.0) | 30 | Hukuk (sözleşme inceleme, risk, uyum), operasyon, veri, İK, ürün/proje, hibe ve teklif yazımı |
+| `skills/anthropic-skills/` | anthropics/skills — yalnızca `internal-comms` (Apache 2.0) | 1 | Kurum içi duyuru ve bülten |
+| `skills/kurum/` | Kurum içi, **taslak** | 2 | **GPD teklif ön değerlendirme**, **Bilgi notu** |
+
+Seçilmeyenler: dış servislere (e-posta, CRM, Slack, Notion) dayanan beceriler; `anthropics/skills` içindeki docx/pdf/xlsx/pptx (tescilli lisans).
+
+Kurum becerileri (`skills/kurum/`) Türkçe yazılmıştır ve kurum işine göre düzenlenebilir: `SKILL.md` dosyasını değiştirip `import-skills.py`'yi yeniden çalıştırmak yeterlidir. Yeni beceri için `skills/kurum/<alan>/<beceri-adı>/SKILL.md` oluşturun (üstte `name` ve `description` başlığıyla).
+
+Test (gpt-oss-20b, AFSÜ GPD teklifi ve Döğer talebi): GPD becerisi 24 ay sınırı aşımını, boş destek tutarı/oranını, boş EK 1.2 / 1.3 / Mantıksal Çerçeve'yi ve bütçe kırılımı eksikliğini buldu; ancak OCR'ın bozduğu tabloları "boş" saydığı ve sayfa numaralarını karıştırdığı da oldu, iki çalıştırma farklı sonuç verdi. Bilgi notu becerisi doğru yapı ve rakamlarla not üretti; Türkçede yer yer bozuk kelimeler var. **Çıktılar taslaktır; kaynakla kontrol edilmeden kullanılmamalıdır.** Cihazda daha büyük bir modelle (ör. gpt-oss-120b) yeniden değerlendirilecek.

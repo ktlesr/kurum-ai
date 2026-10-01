@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent / "skills"
 MAX_CHARS = 60_000  # ~15K token; üstündeyse references/ eklenmez (bağlamın çoğunu beceri yemesin)
 
-HEADER = """Aşağıda "{name}" becerisinin talimatları var (kaynak: {source}; özgün dil İngilizce).
+HEADER = """Aşağıda "{name}" becerisinin talimatları var (kaynak: {source}).
 Kullanıcının isteğini bu talimatlara göre yerine getir.
 
 Bu ortamın kısıtları talimatlardan önce gelir:
