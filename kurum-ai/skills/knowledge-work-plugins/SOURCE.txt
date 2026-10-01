@@ -1,0 +1,2 @@
+Kaynak: https://github.com/anthropics/knowledge-work-plugins (da38ec1ee89d41e5380e652a97382695003396e7 2026-09-24 12:33:00 -0700)
+Lisans: Apache 2.0 (LICENSE). Seçilmiş 30 beceri; yalnızca .md dosyaları. Dış servis bağlantıları (~~email, ~~CRM vb.) bu ortamda yoktur.

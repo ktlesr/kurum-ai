@@ -1,0 +1,2 @@
+Kaynak: https://github.com/anthropics/skills (8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4 2026-09-28 19:20:03 -0700)
+Lisans: Apache 2.0 (LICENSE; yalnızca internal-comms). docx/pdf/xlsx/pptx tescilli lisanslı olduğu için alınmadı.
