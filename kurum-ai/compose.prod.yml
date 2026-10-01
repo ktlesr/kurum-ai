@@ -22,6 +22,10 @@ services:
       - --host=0.0.0.0
       - --port=8000
       - --gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.6}
+      # Araç çağırma: Open WebUI Yeteneklerinin otomatik seçimi (view_skill) için gerekli.
+      # Ayrıştırıcı modele özgüdür: gpt-oss → openai, gemma4 → gemma4, qwen3 → hermes.
+      - --enable-auto-tool-choice
+      - --tool-call-parser=${VLLM_TOOL_PARSER:-openai}
     environment:
       VLLM_API_KEY: ${VLLM_API_KEY:?.env dosyasında VLLM_API_KEY tanımlı değil}
       HF_HUB_OFFLINE: "1"

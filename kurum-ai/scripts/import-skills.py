@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""skills/ altındaki becerileri (SKILL.md) Open WebUI'ye çalışma alanı modeli olarak yükler.
+"""skills/ altındaki becerileri (SKILL.md) Open WebUI'ye "Yetenek" (Skill) olarak yükler.
 
-Her beceri, seçilen temel modelin üzerine kurulu ayrı bir "asistan" olur: beceri talimatı
-sistem promptuna girer, kullanıcı model listesinden seçip sohbet eder. Tekrar çalıştırılırsa
-mevcut modelleri günceller. Yalnızca standart kütüphane; internet gerekmez.
+Kullanıcı hangi modelle sohbet ederse etsin, beceriyi mesajda anarak çağırır; araç çağırma açık
+modellerde model beceri listesinden uygun olanı kendisi seçip yükler (view_skill). Tekrar
+çalıştırılırsa mevcut becerileri günceller. Yalnızca standart kütüphane; internet gerekmez.
 
-  python3 scripts/import-skills.py --url https://ai.kurum.local --base-model openai/gpt-oss-20b --cacert kurum-ai-root.crt
+  python3 scripts/import-skills.py --url https://ai.kurum.local --cacert kurum-ai-root.crt
   python3 scripts/import-skills.py --dry-run          # ağsız: ne yükleneceğini listeler
 
 Yönetici e-posta/parolası ADMIN_EMAIL / ADMIN_PASSWORD ortam değişkenlerinden ya da sorularak alınır.
@@ -108,9 +108,8 @@ class Api:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--url", default="https://ai.kurum.local")
-    ap.add_argument("--base-model", help="Becerilerin üzerine kurulacağı model (ör. openai/gpt-oss-20b)")
     ap.add_argument("--cacert", help="Caddy iç CA kök sertifikası (README: Aşama 2, bölüm 5); kurum sertifikasında gerekmez")
-    ap.add_argument("--private", action="store_true", help="Modelleri yalnızca yöneticiye açık bırak (varsayılan: tüm kullanıcılar)")
+    ap.add_argument("--private", action="store_true", help="Becerileri yalnızca yöneticiye açık bırak (varsayılan: tüm kullanıcılar)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -127,28 +126,23 @@ def main():
     password = os.environ.get("ADMIN_PASSWORD") or getpass.getpass("Parola: ")
     api.token = api.call("POST", "/api/v1/auths/signin", {"email": email, "password": password})["token"]
 
-    available = [m["id"] for m in api.call("GET", "/api/models")["data"]]
-    if a.base_model not in available:
-        raise SystemExit(f"--base-model şunlardan biri olmalı:\n  " + "\n  ".join(available))
-    existing = {m["id"] for m in api.call("GET", "/api/v1/models/base") or []} | \
-               {m["id"] for m in api.call("GET", "/api/v1/models/all") or []}
+    existing = {sk["id"] for sk in api.call("GET", "/api/v1/skills/") or []}
 
     grants = [] if a.private else [{"principal_type": "user", "principal_id": "*", "permission": "read"}]
     for s in items:
         form = {
             "id": s["id"],
-            "base_model_id": a.base_model,
             "name": s["name"],
-            "meta": {"description": s["description"], "tags": [{"name": t} for t in s["tags"]],
-                     "capabilities": {"file_upload": True, "citations": True}},
-            "params": {"system": s["system"]},
+            "description": s["description"],
+            "content": s["system"],
+            "meta": {"tags": s["tags"]},
             "access_grants": grants,
             "is_active": True,
         }
         update = s["id"] in existing
-        api.call("POST", "/api/v1/models/model/update" if update else "/api/v1/models/create", form)
+        api.call("POST", f"/api/v1/skills/id/{s['id']}/update" if update else "/api/v1/skills/create", form)
         print(("güncellendi " if update else "eklendi     ") + s["id"])
-    print(f"\n{len(items)} beceri yüklendi (temel model: {a.base_model}).")
+    print(f"\n{len(items)} beceri yüklendi.")
 
 
 if __name__ == "__main__":

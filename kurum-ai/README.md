@@ -496,19 +496,26 @@ Kırmızı bir çalıştırma, değişikliğin cihaza uygulanmaması gerektiği 
 
 ---
 
-## Beceriler (financial-services)
+## Beceriler (Yetenekler)
 
-`skills/financial-services/` altında Anthropic'in [financial-services](https://github.com/anthropics/financial-services) deposundaki **63 beceri** (Apache 2.0, kaynak commit `SOURCE.txt`'te) bulunur. Her beceri Open WebUI'de **ayrı bir model** olarak yüklenir: model listesinden ör. **Ib Check Deck** seçilir, doküman eklenip sohbet edilir. Beceri talimatı sistem promptuna girer.
+`skills/` altındaki beceriler (tablo aşağıda) Open WebUI'ye **Yetenek** olarak yüklenir. Model değişmez; kullanıcı hangi modelle sohbet ediyorsa beceriyi mesajın içinde çağırır:
+
+1. Mesaj kutusuna **`$`** yazın → yetenek listesi açılır → ör. **Bilgi Notu** seçin.
+2. Dokümanı ekleyip isteği yazın: `$Bilgi Notu Bu talep hakkında makama bilgi notu hazırla.`
+
+Seçilen becerinin talimatı o sohbete tam olarak eklenir. Tüm yetenekler **Çalışma Alanı → Yetenekler**'de görülür, kapatılır veya düzenlenir.
+
+**Otomatik seçim:** Araç çağırma açık olduğunda (vLLM'de `--enable-auto-tool-choice`, compose.prod.yml'de hazır) modele yeteneklerin yalnızca adı ve açıklaması verilir; model uygun olanı kendisi yükleyebilir (`view_skill`). gpt-oss-20b ile denemede bu **tutarsız** çalıştı (aynı istekte kimi zaman yükledi, kimi zaman yüklemeden cevapladı). Güvenilir yol `$` ile seçmektir.
 
 **Yükleme** (cihazda, internet gerekmez; tekrar çalıştırılırsa günceller):
 
 ```bash
-python3 scripts/import-skills.py --url https://ai.kurum.local --base-model openai/gpt-oss-20b \
+python3 scripts/import-skills.py --url https://ai.kurum.local \
   --cacert kurum-ai-root.crt          # Caddy iç CA'sı kullanılıyorsa (bölüm 5); kurum sertifikasında gerekmez
 python3 scripts/import-skills.py --dry-run   # ağsız: ne yükleneceğini listeler
 ```
 
-Yönetici e-postası ve parolası sorulur (ya da `ADMIN_EMAIL` / `ADMIN_PASSWORD`). Modeller tüm kullanıcılara açık yüklenir (`--private` ile yalnızca yöneticiye). Model listesini sadeleştirmek için kullanılmayanlar **Çalışma Alanı → Modeller**'den kapatılır.
+Yönetici e-postası ve parolası sorulur (ya da `ADMIN_EMAIL` / `ADMIN_PASSWORD`). Yetenekler tüm kullanıcılara açık yüklenir (`--private` ile yalnızca yöneticiye). Kullanılmayanlar **Çalışma Alanı → Yetenekler**'den kapatılır.
 
 **Sınırlar** (her becerinin talimatına otomatik eklenir):
 - Dış veri servisleri (FactSet, S&P, LSEG, Morningstar vb.) **yoktur**; beceri yalnızca yüklenen dokümanlarla çalışır.
@@ -518,7 +525,7 @@ Yönetici e-postası ve parolası sorulur (ya da `ADMIN_EMAIL` / `ADMIN_PASSWORD
 
 Kurum işine en yakın olanlar: **Ib Check Deck** (rakam/tutarlılık kontrolü), **Competitive Analysis**, **Audit Xls**, **Clean Data Xls**, **Dd Checklist**, **Unit Economics**, **Returns Analysis**.
 
-Test (geliştirme ortamı, gpt-oss-20b): 63 beceri yüklendi, ikinci çalıştırmada 63'ü güncellendi. *Ib Check Deck*'e bilerek hatalı verilen bütçe özetinde (kalemler toplamı 255 milyon, yazan toplam 250 milyon; süre 36 ay ama takvim 30 ay) iki tutarsızlığı da buldu, Türkçe raporladı (~9 sn).
+Test (geliştirme ortamı, gpt-oss-20b): 96 yetenek yüklendi, ikinci çalıştırmada 96'sı güncellendi; `$` ile çağrılan Bilgi Notu becerisi notu doğru yapıda üretti. *Ib Check Deck*'e bilerek hatalı verilen bütçe özetinde (kalemler toplamı 255 milyon, yazan toplam 250 milyon; süre 36 ay ama takvim 30 ay) iki tutarsızlığı da buldu, Türkçe raporladı (~9 sn).
 
 ### Diğer beceri koleksiyonları
 
