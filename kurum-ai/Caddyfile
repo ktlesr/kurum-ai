@@ -3,6 +3,8 @@
 	skip_install_trust
 	# Kurum sertifikasındaki OCSP adresine dışarı istek atma
 	ocsp_stapling off
+	# Tarayıcı IP adresine bağlanırken SNI göndermez; o durumda bu adın sertifikası sunulur (geliştirme: IP)
+	default_sni {$DEFAULT_SNI:localhost}
 }
 
 # Sertifika seçimi .env'deki CADDY_TLS ile:

@@ -41,6 +41,10 @@ services:
       RAG_EMBEDDING_ENGINE: ollama
       RAG_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma:latest}
       RAG_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # Soru başına modele giden doküman metni: 10 × 1500 karakter (varsayılan 3 × 1000 analiz için az)
+      RAG_TOP_K: "10"
+      CHUNK_SIZE: "1500"
+      CHUNK_OVERLAP: "150"
 
       # Taranmış (görüntü) PDF'ler için OCR: Docling + Tesseract Türkçe
       CONTENT_EXTRACTION_ENGINE: docling

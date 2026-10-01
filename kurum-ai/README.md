@@ -162,6 +162,10 @@ Tarayıcıdan geçmiş PDF'lerde metin yoktur, yalnızca sayfa görüntüsü var
 
 Kaydedin; daha önce "empty" hatası veren dosyaları yeniden yükleyin.
 
+Aynı sayfada **Top K = 10**, **Parça boyutu (Chunk Size) = 1500**, **Parça örtüşmesi = 150** yapın (yeni kurulumda hazır gelir). Varsayılan 3 × 1000 karakterle model uzun bir belgenin yalnızca küçük bir kısmını görür.
+
+Test (geliştirme ortamı, gemma-4-26B, Docling açık): txt, md, docx (tablo), xlsx (tablo), metinli PDF ve taranmış PDF'den sorulan rakam ve yıl sorularının dördü de doğru cevaplandı (~1 sn). Docling kapalıyken docx/xlsx tabloları satır-sütun ilişkisini kaybediyor, taranmış PDF hiç okunmuyordu.
+
 ### Görünüm (yazı boyutu ve kontrast)
 
 `custom.css` tüm kullanıcılar için yazıları %10 büyütür ve açık temadaki silik gri metinleri koyulaştırır. Değiştirdikten sonra `docker restart open-webui` ve tarayıcıda Ctrl+F5. Kişisel ayar: **Ayarlar → Arayüz → UI ölçeği** (bunun üzerine çarpan olarak uygulanır).
@@ -208,7 +212,7 @@ docker compose -f compose.pilot.yml up -d
 
 | Servis | İmaj | Görev |
 |---|---|---|
-| `vllm` | `nvcr.io/nvidia/vllm:26.09-py3` | NVIDIA'nın DGX Spark / GB10 için yayınladığı vLLM imajı (arm64). Tek model sunar (varsayılan `openai/gpt-oss-20b`). |
+| `vllm` | `nvcr.io/nvidia/vllm:26.09-py3` | NVIDIA'nın DGX Spark / GB10 için yayınladığı vLLM imajı (arm64). Tek model sunar (varsayılan `google/gemma-4-26B-A4B-it`). |
 | `open-webui` | `ghcr.io/open-webui/open-webui:v0.11.4` | Arayüz. vLLM'e `http://vllm:8000/v1` üzerinden API anahtarıyla bağlanır; Ollama bağlantısı kapalı. |
 | `docling` | `ghcr.io/docling-project/docling-serve-cpu:v1.35.0` | Doküman dönüştürme ve Türkçe OCR (taranmış PDF'ler; bkz. Aşama 1 "Taranmış PDF'ler"). Yalnızca `backend` iç ağında. |
 | `caddy` | `caddy:2.10.2-alpine` | Tek giriş noktası; HTTPS. |
@@ -222,7 +226,7 @@ Kurum ağına açılan tek şey Caddy'nin 80/443 portlarıdır. vLLM'in portu hi
   docker run --rm --gpus all nvcr.io/nvidia/vllm:26.09-py3 nvidia-smi
   ```
   (Bu komut imajı da indirir; internet gerekir.)
-- **Disk:** ~60 GB boş alan (imajlar ~25 GB, gpt-oss-20b ~14 GB, bge-m3 ~2.3 GB, yedekler).
+- **Disk:** ~100 GB boş alan (imajlar ~25 GB, gemma-4-26B ~52 GB, bge-m3 ~2.3 GB, yedekler).
 - **DNS:** `ai.kurum.local` (veya seçtiğiniz ad) → cihazın IP adresi. Kurum DNS sunucusunda A kaydı açın.
 - **Sertifika:** ya Caddy'nin iç CA'sı (kök sertifikayı istemcilere GPO ile dağıtırsınız) ya da kurum CA'sından `ai.kurum.local` için alınmış sertifika.
 
@@ -258,7 +262,7 @@ nano .env    # DOMAIN, CADDY_TLS ve gerekiyorsa LDAP ayarlarını düzenleyin
    ```bash
    bash scripts/download-models.sh
    ```
-   Betik sırasıyla şunları yapar: container imajlarını çeker, LLM'i `models/llm/` altına, embedding modelini `models/embedding/` altına ve gpt-oss'un çevrimdışı çalışması için gereken tokenizer dosyalarını `models/tiktoken/` altına indirir. Ek paket kurmaz, yalnızca Docker kullanır. Süre bağlantı hızına bağlıdır (~40 GB).
+   Betik sırasıyla şunları yapar: container imajlarını çeker, LLM'i `models/llm/` altına, embedding modelini `models/embedding/` altına ve gpt-oss'un çevrimdışı çalışması için gereken tokenizer dosyalarını `models/tiktoken/` altına indirir. Ek paket kurmaz, yalnızca Docker kullanır. Süre bağlantı hızına bağlıdır (~80 GB).
 3. İnternet çıkışını **tekrar kapatın**.
 
 ### 4. Başlatma
@@ -303,7 +307,7 @@ LDAP açıksa kullanıcılar kurum hesabıyla giriş yapar. İlk girişte hesap 
 
 ### 7. Test
 
-1. `https://ai.kurum.local` → giriş → model listesinde `openai/gpt-oss-20b` görünmeli.
+1. `https://ai.kurum.local` → giriş → model listesinde `google/gemma-4-26B-A4B-it` görünmeli.
 2. Türkçe bir PDF yükleyip içindeki bir bilgiyi sorun. Cevap kaynak numarasıyla (`[1]`) gelmeli.
 3. Kabul kontrolleri:
 
@@ -447,7 +451,7 @@ Güncellemeler plansız yapılmaz; yılda birkaç kez, bakım penceresinde:
 
 ## Geliştirme ortamı (cihaz olmadan üretim yığınını deneme)
 
-`compose.dev.yml`, üretim yığınını (`compose.prod.yml`) NVIDIA GPU'lu bir x86 bilgisayarda (ör. Windows + Docker Desktop) çalıştırır. vLLM, gpt-oss, çevrimdışı açılış ve HTTPS zinciri cihaz gelmeden burada denenir. Üretimden farkları:
+`compose.dev.yml`, üretim yığınını (`compose.prod.yml`) NVIDIA GPU'lu bir x86 bilgisayarda (ör. Windows + Docker Desktop) çalıştırır. vLLM, model, çevrimdışı açılış ve HTTPS zinciri cihaz gelmeden burada denenir. Üretimden farkları:
 
 | | Üretim | Geliştirme |
 |---|---|---|
@@ -456,14 +460,19 @@ Güncellemeler plansız yapılmaz; yılda birkaç kez, bakım penceresinde:
 | İşlemci mimarisi | ARM64 | x86 (aynı imajların x86 sürümü) |
 | vLLM model runner | varsayılan (V2) | V1 (`VLLM_USE_V2_MODEL_RUNNER=0`): Docker Desktop/WSL2'de pinned memory olmadığı için V2 "UVA is not available" hatası verir |
 | `VLLM_GPU_MEMORY_UTILIZATION` | 0.6 (128 GB ortak bellek) | 0.9 (24 GB GPU; 0.8'de 128K bağlam için KV cache yetmedi) |
+| `LLM_MODEL` | `google/gemma-4-26B-A4B-it` (bf16, ~52 GB) | `RedHatAI/gemma-4-26B-A4B-it-NVFP4` (~17 GB; bf16 24 GB'a sığmaz, NVFP4 Blackwell GPU ister) |
 
 **Kurulum** (`kurum-ai` klasöründe, Git Bash):
 
 ```bash
 # .env'de Aşama 2 değerleri dolu olmalı; geliştirme için:
 #   DOMAIN=localhost   CADDY_TLS=internal   VLLM_GPU_MEMORY_UTILIZATION=0.9 (24 GB GPU)
+#   LLM_MODEL=RedHatAI/gemma-4-26B-A4B-it-NVFP4
+#   Ağdaki başka bilgisayarlardan erişim (https://<IP>:8443):
+#     DEV_SITE="localhost, <IP>"   DEV_DEFAULT_SNI=<IP>
+#     + yönetici PowerShell: New-NetFirewallRule -DisplayName "Kurum AI dev (8443)" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Domain,Private
 ollama stop <yüklü-model>                       # GPU belleğini boşaltın
-bash scripts/download-models.sh                 # ~40 GB, bir kez
+bash scripts/download-models.sh                 # ~25 GB, bir kez
 export COMPOSE_FILE="compose.prod.yml;compose.dev.yml"   # Linux'ta ayraç ":" 
 docker compose up -d
 docker compose ps

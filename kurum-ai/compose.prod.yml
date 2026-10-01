@@ -17,15 +17,19 @@ services:
     command:
       - vllm
       - serve
-      - /models/llm/${LLM_MODEL:-openai/gpt-oss-20b}
-      - --served-model-name=${LLM_MODEL:-openai/gpt-oss-20b}
+      - /models/llm/${LLM_MODEL:-google/gemma-4-26B-A4B-it}
+      - --served-model-name=${LLM_MODEL:-google/gemma-4-26B-A4B-it}
       - --host=0.0.0.0
       - --port=8000
       - --gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.6}
+      # Bağlam uzunluğu: modelin sınırı, bellek yetmezse belleğe sığan en büyük değer
+      - --max-model-len=auto
       # Araç çağırma: Open WebUI Yeteneklerinin otomatik seçimi (view_skill) için gerekli.
-      # Ayrıştırıcı modele özgüdür: gpt-oss → openai, gemma4 → gemma4, qwen3 → hermes.
+      # Ayrıştırıcılar modele özgüdür: gemma4 → gemma4/gemma4, gpt-oss → openai/openai_gptoss.
       - --enable-auto-tool-choice
-      - --tool-call-parser=${VLLM_TOOL_PARSER:-openai}
+      - --tool-call-parser=${VLLM_TOOL_PARSER:-gemma4}
+      # Düşünme metnini cevaptan ayırır (Open WebUI'de "düşünüldü" bölümünde görünür)
+      - --reasoning-parser=${VLLM_REASONING_PARSER:-gemma4}
     environment:
       VLLM_API_KEY: ${VLLM_API_KEY:?.env dosyasında VLLM_API_KEY tanımlı değil}
       HF_HUB_OFFLINE: "1"
@@ -78,6 +82,8 @@ services:
       OPENAI_API_KEY: ${VLLM_API_KEY}
       ENABLE_DIRECT_CONNECTIONS: "false"
       ENABLE_EVALUATION_ARENA_MODELS: "false"
+      # Tek model sunuluyor: her kullanıcı görsün. Yoksa vLLM'den gelen her yeni model yalnızca yöneticiye görünür.
+      BYPASS_MODEL_ACCESS_CONTROL: "true"
 
       # Kullanıcılar
       ENABLE_SIGNUP: "true"
@@ -87,6 +93,10 @@ services:
       # Doküman RAG: önceden indirilmiş yerel embedding modeli (dosya yolu verilince indirme denenmez)
       RAG_EMBEDDING_ENGINE: ""
       RAG_EMBEDDING_MODEL: /models/embedding/${HF_EMBEDDING_MODEL:-BAAI/bge-m3}
+      # Soru başına modele giden doküman metni: 10 × 1500 karakter (varsayılan 3 × 1000 analiz için az)
+      RAG_TOP_K: "10"
+      CHUNK_SIZE: "1500"
+      CHUNK_OVERLAP: "150"
 
       # Taranmış (görüntü) PDF'ler için OCR: Docling + Tesseract Türkçe
       CONTENT_EXTRACTION_ENGINE: docling

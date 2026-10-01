@@ -18,6 +18,11 @@ services:
       VLLM_USE_V2_MODEL_RUNNER: "0"
 
   caddy:
+    environment:
+      # Ağdaki başka bilgisayarlardan IP ile erişim için: DEV_SITE="localhost, 10.43.1.29"
+      DOMAIN: ${DEV_SITE:-localhost}
+      # IP ile bağlanan tarayıcı SNI göndermez; IP sertifikasını varsayılan yap: DEV_DEFAULT_SNI=10.43.1.29
+      DEFAULT_SNI: ${DEV_DEFAULT_SNI:-localhost}
     # 80/443 geliştirme bilgisayarında genelde dolu
     ports: !override
       - "${DEV_HTTP_PORT:-8080}:80"
