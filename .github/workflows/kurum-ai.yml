@@ -39,3 +39,6 @@ jobs:
 
       - name: Betikler
         run: shellcheck --severity=warning scripts/*.sh
+
+      - name: Beceri içe aktarma (ağsız)
+        run: python3 scripts/import-skills.py --dry-run | tail -1

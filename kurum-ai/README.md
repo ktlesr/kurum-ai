@@ -493,3 +493,29 @@ Arayüz: **https://localhost:8443** (Caddy iç CA'sı; tarayıcı uyarısını g
 - Betiklerde hata var mı (`shellcheck`)
 
 Kırmızı bir çalıştırma, değişikliğin cihaza uygulanmaması gerektiği anlamına gelir.
+
+---
+
+## Beceriler (financial-services)
+
+`skills/financial-services/` altında Anthropic'in [financial-services](https://github.com/anthropics/financial-services) deposundaki **63 beceri** (Apache 2.0, kaynak commit `SOURCE.txt`'te) bulunur. Her beceri Open WebUI'de **ayrı bir model** olarak yüklenir: model listesinden ör. **Ib Check Deck** seçilir, doküman eklenip sohbet edilir. Beceri talimatı sistem promptuna girer.
+
+**Yükleme** (cihazda, internet gerekmez; tekrar çalıştırılırsa günceller):
+
+```bash
+python3 scripts/import-skills.py --url https://ai.kurum.local --base-model openai/gpt-oss-20b \
+  --cacert kurum-ai-root.crt          # Caddy iç CA'sı kullanılıyorsa (bölüm 5); kurum sertifikasında gerekmez
+python3 scripts/import-skills.py --dry-run   # ağsız: ne yükleneceğini listeler
+```
+
+Yönetici e-postası ve parolası sorulur (ya da `ADMIN_EMAIL` / `ADMIN_PASSWORD`). Modeller tüm kullanıcılara açık yüklenir (`--private` ile yalnızca yöneticiye). Model listesini sadeleştirmek için kullanılmayanlar **Çalışma Alanı → Modeller**'den kapatılır.
+
+**Sınırlar** (her becerinin talimatına otomatik eklenir):
+- Dış veri servisleri (FactSet, S&P, LSEG, Morningstar vb.) **yoktur**; beceri yalnızca yüklenen dokümanlarla çalışır.
+- Excel/PowerPoint dosyası **üretilmez**; çıktı Markdown tablo ve metindir. Becerilerin Python betikleri alınmamıştır.
+- Ekleri 60.000 karakteri aşan 3 becerinin (`initiating-coverage`, `earnings-preview-single`, `tear-sheet`) `references/` dosyaları eklenmez.
+- Talimatlar İngilizcedir; cevaplar Türkçe istenir. Yerel model hesapta hata yapabilir: rakamları kaynaktan kontrol edin.
+
+Kurum işine en yakın olanlar: **Ib Check Deck** (rakam/tutarlılık kontrolü), **Competitive Analysis**, **Audit Xls**, **Clean Data Xls**, **Dd Checklist**, **Unit Economics**, **Returns Analysis**.
+
+Test (geliştirme ortamı, gpt-oss-20b): 63 beceri yüklendi, ikinci çalıştırmada 63'ü güncellendi. *Ib Check Deck*'e bilerek hatalı verilen bütçe özetinde (kalemler toplamı 255 milyon, yazan toplam 250 milyon; süre 36 ay ama takvim 30 ay) iki tutarsızlığı da buldu, Türkçe raporladı (~9 sn).
