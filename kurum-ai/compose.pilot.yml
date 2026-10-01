@@ -55,6 +55,9 @@ services:
       OFFLINE_MODE: "true"
       ENABLE_WEB_SEARCH: "false"
       ENABLE_COMMUNITY_SHARING: "false"
+      # Cevap altı takip önerileri ve etiketler: her mesajda 2 ek model çağrısı, kozmetik
+      ENABLE_FOLLOW_UP_GENERATION: "false"
+      ENABLE_TAGS_GENERATION: "false"
       ENABLE_VERSION_UPDATE_CHECK: "false"
       SCARF_NO_ANALYTICS: "true"
       DO_NOT_TRACK: "true"
