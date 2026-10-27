@@ -1,0 +1,46 @@
+# Dokploy (Docker Compose) for the GB10 / DGX Spark. Domain + HTTPS: set in Dokploy's Domains tab (Traefik → app:3000).
+# Secrets come from Dokploy's Environment tab, never from this file. Required: POSTGRES_PASSWORD, APP_ORIGIN.
+# First admin: docker compose exec app sh -c 'ADMIN_PASSWORD=… node scripts/create-admin.ts admin'
+name: kurum-ai-web
+
+services:
+  app:
+    build:
+      context: ..
+      target: ${APP_TARGET:-app} # app-docling: Docling inside the image
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    # Everything else (DEFAULT_MODEL, ALLOWED_MODELS, EMBED_URL, VISION_URL, MODEL_API_KEY, limits — README table)
+    # comes from Dokploy's .env as is; only what this stack defines is set here.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://kurumai:${POSTGRES_PASSWORD:?}@db:5432/kurumai
+      APP_ORIGIN: ${APP_ORIGIN:?} # e.g. https://ai.example.com — mutations are refused without it
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-vllm}
+      MODEL_URL: ${MODEL_URL:-http://host.docker.internal:8000/v1}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: [appdata:/app/.cache]
+    expose: ["3000"]
+    # cgroup cap for the app and its Docling child (audit S5: RLIMIT_AS breaks torch; a cgroup limit doesn't).
+    mem_limit: ${APP_MEM_LIMIT:-16g}
+    # One instance per database (lib/boot takes an advisory lock and refuses a second one).
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kurumai
+      POSTGRES_DB: kurumai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kurumai"]
+      interval: 5s
+      retries: 20
+
+volumes:
+  appdata:
+  dbdata:

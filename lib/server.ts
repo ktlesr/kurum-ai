@@ -7,7 +7,7 @@ import path from "node:path";
 import { DEFAULT_CHARS_PER_TOKEN } from "./context";
 import type { Chunk } from "./rag";
 
-export const DEFAULT_MODEL = process.env.DEFAULT_MODEL ?? "gemma4:12b";
+export const DEFAULT_MODEL = process.env.DEFAULT_MODEL || "gemma4:12b";
 export const NUM_CTX = Number(process.env.NUM_CTX) || 16384;
 export const MAX_BYTES = 25 * 1024 * 1024;
 
@@ -150,7 +150,7 @@ export function toMeta(doc: Doc): DocMeta {
 // Server-side allowlist: the client picks among these, never anything else Ollama happens to have
 // (a `:cloud` model would ship the document off-site — audit S2). Default: just the default model.
 export const ALLOWED_MODELS = new Set(
-  (process.env.ALLOWED_MODELS ?? DEFAULT_MODEL).split(",").map((m) => m.trim()).filter(Boolean),
+  (process.env.ALLOWED_MODELS || DEFAULT_MODEL).split(",").map((m) => m.trim()).filter(Boolean),
 );
 /** What the UI preselects: DEFAULT_MODEL if allowed, else the first allowed one. */
 export const PREFERRED_MODEL = ALLOWED_MODELS.has(DEFAULT_MODEL) ? DEFAULT_MODEL : [...ALLOWED_MODELS][0];

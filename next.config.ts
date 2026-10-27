@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Self-contained server for the container image (Dockerfile): .next/standalone/server.js + traced node_modules.
+  output: "standalone",
   // Runtime data and local model files must never land in a build/standalone output (audit S12).
   outputFileTracingExcludes: { "*": [".cache/**", ".venv-docling/**", "kurum-ai/**", ".env*"] },
   // CSP is per-request (nonce) in proxy.ts; these are static and cover API routes too.

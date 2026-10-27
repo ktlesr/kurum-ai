@@ -1,0 +1,12 @@
+# Never in the build context: runtime data, local venvs, secrets, the pilot stack, local builds.
+.cache
+.venv-docling
+.env*
+kurum-ai
+node_modules
+.next
+.git
+docs
+tests
+*.log
+graphify-out
