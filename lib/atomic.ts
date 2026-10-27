@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeSync } from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -16,7 +16,7 @@ export function writeFileAtomic(file: string, data: string, rename = renameSync)
   try {
     const fd = openSync(tmp, "wx");
     try {
-      writeSync(fd, data);
+      writeFileSync(fd, data); // loops until every byte is written (writeSync may write only part)
       fsyncSync(fd);
     } finally {
       closeSync(fd);
@@ -30,13 +30,12 @@ export function writeFileAtomic(file: string, data: string, rename = renameSync)
 }
 
 function syncDir(dir: string) {
-  let fd: number | undefined;
+  // Windows can't open a directory for fsync. Elsewhere a failure (EIO…) is a real durability error: let it throw.
+  if (process.platform === "win32") return;
+  const fd = openSync(dir, "r");
   try {
-    fd = openSync(dir, "r");
     fsyncSync(fd);
-  } catch {
-    // Windows can't open/fsync a directory; nothing more to do there.
   } finally {
-    if (fd !== undefined) closeSync(fd);
+    closeSync(fd);
   }
 }

@@ -12,11 +12,24 @@ test("valid lines reach onLine; exit 0 resolves", async () => {
   assert.deepEqual(got, [{ p: 1 }, { p: 2 }]);
 });
 
-test("bad line rejects after the process exited; later lines are ignored", async () => {
-  const got: unknown[] = [];
-  // Bad JSON, then a valid line in the same buffer, then the process keeps running until killed.
-  await assert.rejects(run(`const nl=String.fromCharCode(10);process.stdout.write("{bozuk"+nl+JSON.stringify({p:2})+nl);setInterval(()=>{},1000)`, (v) => got.push(v)), /proc_bad_output/);
-  assert.deepEqual(got, []);
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("bad line rejects only after the process exited; later lines are ignored", async () => {
+  const got: { pid?: number; p?: number }[] = [];
+  // Own pid, then bad JSON and a valid line in the same buffer, then it would run forever unless killed.
+  await assert.rejects(
+    run(`const nl=String.fromCharCode(10);process.stdout.write(JSON.stringify({pid:process.pid})+nl+"{bozuk"+nl+JSON.stringify({p:2})+nl);setInterval(()=>{},1000)`, (v) => got.push(v as { pid: number })),
+    /proc_bad_output/,
+  );
+  assert.equal(got.length, 1, "only the line before the bad one");
+  assert.equal(alive(got[0].pid!), false, "child already gone when the promise settled");
 });
 
 test("a throw from onLine rejects instead of escaping", async () => {

@@ -24,6 +24,14 @@ test("atomic write replaces content and leaves no temp files", () =>
     assert.deepEqual(readdirSync(path.dirname(f)), ["a.json"]);
   }));
 
+test("large content round-trips byte for byte", () =>
+  withDir((dir) => {
+    const f = path.join(dir, "b.json");
+    const big = "ğüşiöç".repeat(1_000_000); // ~12 MB of multibyte text
+    writeFileAtomic(f, big);
+    assert.equal(readFileSync(f, "utf8"), big);
+  }));
+
 test("replacing an existing file fails → old content kept, temp file removed", () =>
   withDir((dir) => {
     const f = path.join(dir, "a.json");
