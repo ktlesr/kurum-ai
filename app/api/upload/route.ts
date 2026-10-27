@@ -1,6 +1,7 @@
 import { deleteDoc, docsOf, MAX_BYTES, MAX_DOCS_PER_USER, saveDoc, toMeta, type Doc } from "@/lib/server";
 import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
+import { logError } from "@/lib/log";
 
 export const runtime = "nodejs";
 
@@ -53,7 +54,7 @@ export async function POST(req: Request) {
         send({ type: "done", doc: toMeta(doc) });
       } catch (e) {
         if (req.signal.aborted) return;
-        if (!(e instanceof UserError)) console.error(e);
+        if (!(e instanceof UserError)) logError("upload", e);
         send({ type: "error", error: e instanceof UserError ? e.message : "Dosya okunamadı. Bozuk ya da parola korumalı olabilir." });
       } finally {
         release();

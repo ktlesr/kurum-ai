@@ -24,4 +24,12 @@
 
 **Rollback:** `proxy.ts`'i sil, `next.config.ts` başlıklarını geri al.
 
-**Codex bulguları ve karar:** _bekliyor_
+**Codex bulguları ve karar**
+
+- Tur 1 — CHANGES REQUIRED (P0/P1 yok). Hepsi düzeltildi:
+  - P2 N9 sürüyordu: boş sohbet ekranında "Her şey bu bilgisayarda" → kurum sunucusu metni.
+  - P2 S10 eski kayıtlar: önceki sürümün ham vision uyarısı `toMeta`'da güvenli metne çevriliyor.
+  - P2 loglarda içerik: kendi hatalarımız sabit kodlarla atılıyor (`ollama_http_500`, `docling_exit_1`, `embed_http_…`, `vision_http_…`); sağlayıcı gövdesi ve Docling stderr hiç tutulmuyor; `lib/log.ts` yalnız bu kodları, diğer hatalarda yalnız tür adını (ör. `SyntaxError`) logluyor (test: `JSON.parse` hatası içeriği loga taşımıyor).
+  - P2 dış bağlantıyla kullanıcı tıklamalı sızıntı: Markdown'da yalnızca `#…` ve `/…` bağlantı kalıyor; `https:`, `//host`, `mailto:`, `javascript:` devre dışı ("dış bağlantı devre dışı").
+  - P3 prefetch başlığı CSP'yi atlatıyordu: matcher'dan istisna kaldırıldı. Doğrulandı: `purpose: prefetch` ile de CSP geliyor.
+  - HSTS yorumu düzeltildi; `style-src-attr` gerekçesi netleştirildi.

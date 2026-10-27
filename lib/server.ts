@@ -102,8 +102,12 @@ export function recordTokens(model: string, chars: number, tokens: number) {
   if (tokens > 2000) charsPerToken.set(model, (chars / tokens) * 0.95);
 }
 
+// Docs saved before PR-1c may carry the raw provider error in their warning ("Görsel model (x) çalışmadı: <body>").
+const LEGACY_VISION_WARNING = /^Görsel model \(.*\) çalışmadı:/;
+
 export function toMeta(doc: Doc): DocMeta {
   const meta: DocMeta & { text?: string; chunks?: Chunk[]; ownerId?: string } = { ...doc };
+  if (meta.warning && LEGACY_VISION_WARNING.test(meta.warning)) meta.warning = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
   delete meta.text;
   delete meta.chunks;
   delete meta.ownerId;

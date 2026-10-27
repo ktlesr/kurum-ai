@@ -69,7 +69,7 @@ export async function requireApiUser(req: Request): Promise<User | Response> {
     if (expected === null || (origin !== null && origin !== expected)) return Response.json({ error: "Geçersiz istek kaynağı." }, { status: 403 });
   }
   const user = await getUser().catch((e) => {
-    console.error("auth:", (e as Error).message);
+    console.error(`auth: ${(e as Error).name}`);
     return null;
   });
   return user ?? Response.json({ error: "Oturum açmanız gerekiyor." }, { status: 401 });

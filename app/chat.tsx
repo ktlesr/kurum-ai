@@ -373,7 +373,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
               <p className="text-base font-medium">Bir dosya bırakın ve soru sorun</p>
               <p className="max-w-sm text-sm text-muted">
-                Cevaplar yalnızca yüklediğiniz dosyalara dayanır. Her şey bu bilgisayarda, Ollama üzerinde çalışır.
+                Cevaplar yalnızca yüklediğiniz dosyalara dayanır. Dosyalar kurum sunucusunda işlenir; harici AI servisine gönderilmez.
               </p>
             </div>
           ) : (
@@ -462,6 +462,14 @@ function Bubble({ m, live }: { m: Message; live: boolean }) {
             table: ({ children }) => <div className="table-wrap"><table>{children}</table></div>,
             // Never load images a model answer points to: a URL can carry document text off-site (audit N1). CSP blocks them too.
             img: ({ alt }) => <span className="text-muted">[görsel: {alt || "adsız"}]</span>,
+            // External links aren't clickable either: a click would hand the URL (and anything the model put in it) to that site.
+            a: ({ href, children }) =>
+              // Only same-site paths and anchors stay links; any scheme (https:, mailto:, …) or //host does not.
+              href && /^(#|\/(?!\/))/.test(href) ? (
+                <a href={href}>{children}</a>
+              ) : (
+                <span title={href}>{children} <span className="text-xs text-muted">(dış bağlantı devre dışı)</span></span>
+              ),
           }}
         >
           {m.content}

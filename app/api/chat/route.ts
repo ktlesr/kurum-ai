@@ -1,6 +1,7 @@
 import { requireApiUser } from "@/lib/auth";
 import { ALLOWED_MODELS, cptFor, getDoc, NUM_CTX, OLLAMA_URL, recordTokens, type Doc } from "@/lib/server";
 import { parseChatRequest } from "@/lib/validate";
+import { logError } from "@/lib/log";
 import { contextBudget, contextRatio, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { verifyNumbers } from "@/lib/checks";
 import { EMBED_MODEL, retrieve, TOP_K, windows } from "@/lib/rag";
@@ -61,7 +62,7 @@ async function streamChat(
       messages,
     }),
   });
-  if (!res.ok || !res.body) throw new Error(`Ollama hata döndürdü (${res.status}): ${(await res.text().catch(() => "")).slice(0, 300)}`);
+  if (!res.ok || !res.body) throw new Error(`ollama_http_${res.status}`);
   const decoder = new TextDecoder();
   let buf = "";
   let text = "";
@@ -69,7 +70,7 @@ async function streamChat(
   const handle = (line: string) => {
     if (!line.trim()) return;
     const j = JSON.parse(line) as { message?: { content?: string; thinking?: string }; error?: string; done?: boolean; done_reason?: string; prompt_eval_count?: number };
-    if (j.error) throw new Error(j.error);
+    if (j.error) throw new Error("ollama_stream_error");
     if (j.message?.thinking) onThinking(++thought);
     if (j.message?.content) {
       text += j.message.content;
@@ -163,7 +164,7 @@ export async function POST(req: Request) {
               if (signal.aborted) throw e;
               const ratio = contextRatio(totalChars, NUM_CTX, cptFor(model));
               meta.mode = "truncated";
-              console.error(`rag: ${EMBED_MODEL}: ${(e as Error).message}`);
+              logError(`rag ${EMBED_MODEL}`, e);
               meta.note = `Parça arama çalışmadı; dosyaların yalnızca ilk %${Math.floor(ratio * 100)}'i kullanıldı.`;
               context = selected.map((d) => `<doküman ad="${d.name}">\n${d.text.slice(0, Math.floor(d.chars * ratio))}\n</doküman>`).join("\n\n");
             }
@@ -183,7 +184,7 @@ export async function POST(req: Request) {
       } catch (e) {
         if (!signal.aborted) {
           // Raw provider text stays in the server log; the user gets a fixed message (audit S10).
-          console.error(`chat: ${(e as Error).message}`);
+          logError("chat", e);
           send("\n\n**Hata:** Model sunucusu cevap üretemedi. Tekrar deneyin; sorun sürerse yöneticinize bildirin.");
         }
       }

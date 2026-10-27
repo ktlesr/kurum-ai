@@ -15,7 +15,7 @@ const nextConfig: NextConfig = {
           { key: "Referrer-Policy", value: "no-referrer" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
           { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-          // Browsers ignore it over plain http, so it's safe on LAN tests too.
+          // Ignored over plain http. But a hostname that once answered over HTTPS stays HTTPS-only in that browser for a year.
           ...(process.env.NODE_ENV === "production" ? [{ key: "Strict-Transport-Security", value: "max-age=31536000" }] : []),
         ],
       },

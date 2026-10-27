@@ -8,7 +8,8 @@ export function proxy(request: NextRequest) {
   const csp = [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${dev ? " 'unsafe-eval'" : ""}`,
-    // Dev HMR injects <style> tags. style-src-attr: React's style={{…}} props; CSS can't run code.
+    // Dev HMR injects <style> tags. style-src-attr: React's style={{…}} props (progress bar width). Inline style
+    // attributes can't load remote resources here: img-src/font-src stay 'self'.
     `style-src 'self' ${dev ? "'unsafe-inline'" : `'nonce-${nonce}'`}`,
     "style-src-attr 'unsafe-inline'",
     "img-src 'self' data: blob:",
@@ -30,12 +31,7 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    {
-      source: "/((?!api|_next/static|_next/image|favicon.ico).*)",
-      missing: [
-        { type: "header", key: "next-router-prefetch" },
-        { type: "header", key: "purpose", value: "prefetch" },
-      ],
-    },
+    // No prefetch exemption (unlike the guide): a request header must not be able to switch the CSP off.
+    "/((?!api|_next/static|_next/image|favicon.ico).*)",
   ],
 };

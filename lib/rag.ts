@@ -67,7 +67,7 @@ async function embed(input: string[], signal: AbortSignal): Promise<number[][]> 
     body: JSON.stringify({ model: EMBED_MODEL, input, truncate: true }),
   });
   const j = (await res.json()) as { embeddings?: number[][]; error?: string };
-  if (!res.ok || !j.embeddings) throw new Error(j.error ?? `HTTP ${res.status}`);
+  if (!res.ok || !j.embeddings) throw new Error(`embed_http_${res.status}`);
   return j.embeddings;
 }
 

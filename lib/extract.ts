@@ -8,6 +8,7 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { checkCriteria, checkMaxRows, markUncertain } from "./checks";
 import { NUM_CTX, OLLAMA_URL } from "./server";
+import { logError } from "./log";
 
 export const DOCLING_PYTHON =
   process.env.DOCLING_PYTHON ??
@@ -76,7 +77,7 @@ async function readStrip(png: string, signal: AbortSignal): Promise<string> {
     }),
   });
   const j = (await res.json()) as { message?: { content: string }; error?: string };
-  if (!res.ok || !j.message) throw new Error(j.error ?? `HTTP ${res.status}`);
+  if (!res.ok || !j.message) throw new Error(`vision_http_${res.status}`);
   const text = j.message.content.trim();
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, text);
@@ -89,11 +90,11 @@ function runDocling(file: string, signal: AbortSignal, onLine: (l: PageLine) => 
     // Offline by default: models must already be on disk (README → kapalı ağ); nothing is fetched at runtime.
     const offline = DOCLING_OFFLINE ? { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1" } : {};
     const proc = spawn(/*turbopackIgnore: true*/ DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8" } });
-    let stderr = "";
-    proc.stderr.on("data", (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)));
+    // stderr is drained but never kept: Docling tracebacks can quote document text.
+    proc.stderr.resume();
     createInterface({ input: proc.stdout }).on("line", (l) => l.trim() && onLine(JSON.parse(l) as PageLine));
     proc.on("error", reject);
-    proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`Docling çıkış kodu ${code}: ${stderr.slice(-500)}`))));
+    proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`docling_exit_${code}`))));
   });
 }
 
@@ -160,7 +161,7 @@ export async function extractWithDocling(
         second = (await Promise.all(t.strips.map((s) => readStrip(s, signal)))).join("\n\n");
       } catch (e) {
         if (signal.aborted) throw e;
-        console.error(`vision: ${VISION_MODEL}: ${(e as Error).message}`);
+        logError(`vision ${VISION_MODEL}`, e);
         verify.skipped = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
         continue;
       }
