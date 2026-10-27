@@ -45,6 +45,10 @@ test("user B can never see, use or delete user A's document", { skip: !BASE && "
     assert.deepEqual(listB, [], "B, A'nın dokümanını görmez");
 
     assert.equal((await call(B, `/api/upload?id=${id}`, { method: "DELETE" })).status, 404, "B silemez");
+    assert.equal((await call(B, `/api/upload?id=${id}`)).status, 404, "B metni okuyamaz");
+    const own = (await (await call(A, `/api/upload?id=${id}`)).json()) as { sections: { text: string }[]; ownerId?: string };
+    assert.match(own.sections[0].text, /izolasyon deneme 123/, "A kendi metnini okur");
+    assert.equal(own.ownerId, undefined);
     const msg = [{ role: "user", content: "özetle" }];
     assert.equal((await chat(B, { model: MODEL, fileIds: [id], messages: msg })).status, 409, "B sohbette kullanamaz");
     // 200 with a model server, 503 without one (CI): either way the ownership check let A through.

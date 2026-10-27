@@ -9,8 +9,8 @@ export const metadata: Metadata = {
   description: "Dokümanlarınız hakkında soru sorun. İşleme kurum sunucusunda yapılır; harici AI servisine gönderilmez.",
 };
 
-// Runs before paint: stored choice wins, otherwise follow the OS.
-const themeScript = `try{var t=localStorage.getItem("theme");if(t==="dark"||(!t&&matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.classList.add("dark")}catch(e){}`;
+// Runs before paint. Light by default (plan §3.1); "system" follows the OS; the stored choice wins.
+const themeScript = `try{var t=localStorage.getItem("theme");if(t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.classList.add("dark")}catch(e){}`;
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   // Set by proxy.ts; the inline theme script must carry it or the CSP blocks it.
