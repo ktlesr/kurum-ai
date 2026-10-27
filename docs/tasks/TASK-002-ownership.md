@@ -43,4 +43,5 @@
   - P2 200 mesaj sınırı istemciyi kilitliyordu → istemci son 8 mesajı gönderiyor (sunucu zaten 8 kullanıyor). 20 dosya sınırı yüklemede uygulanıyor (409).
   - P2 varsayılan model izin listesi dışında kalabiliyordu → `PREFERRED_MODEL` izinli olandan seçiliyor; istemci listeden düşen seçimi yeniliyor.
   - Otomatik güvenlik incelemesi (MEDIUM): paralel yüklemeler 20 dosya sınırını aşabiliyordu (kontrol ile `saveDoc` arasında await) → kullanıcı başına işlemdeki yükleme sayacı, kontrol+rezerv tek senkron adım, `finally` ile iade. Doğrulandı: 25 paralel yükleme → 20 başarılı, 5 × 409, listede 20.
+- Tur 2 — CHANGES REQUIRED: P2 CI restart'ı garanti değildi (`pkill -f "next start"` `next-server` sürecini kaçırabilir; eski süreç bellekten cevap verip testi yanlış geçirebilir) → `setsid` süreç grubu, `kill -- -PID`, portun kapandığı doğrulanmadan yeni süreç başlatılmıyor. P2 paralel dosya sınırı → `923d4c9` ile zaten düzeltilmişti.
   - Açık not: deterministik model sağlayıcıyla gerçek sohbet/RAG uçtan uca testi, sağlayıcı soyutlamasıyla (PR-3a) gelecek.
