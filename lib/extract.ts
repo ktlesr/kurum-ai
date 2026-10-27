@@ -88,7 +88,7 @@ function runDocling(file: string, signal: AbortSignal, onLine: (l: PageLine) => 
     const script = path.join(process.cwd(), "scripts", "extract.py");
     // Offline by default: models must already be on disk (README → kapalı ağ); nothing is fetched at runtime.
     const offline = DOCLING_OFFLINE ? { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1" } : {};
-    const proc = spawn(DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8" } });
+    const proc = spawn(/*turbopackIgnore: true*/ DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8" } });
     let stderr = "";
     proc.stderr.on("data", (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)));
     createInterface({ input: proc.stdout }).on("line", (l) => l.trim() && onLine(JSON.parse(l) as PageLine));
@@ -118,7 +118,8 @@ export async function extractWithDocling(
   onProgress: (p: Progress) => void,
   signal: AbortSignal,
 ): Promise<Extracted | null> {
-  if (!existsSync(DOCLING_PYTHON)) return null;
+  // turbopackIgnore: runtime paths; otherwise the build traces the whole project (.cache with user text, model files)
+  if (!existsSync(/*turbopackIgnore: true*/ DOCLING_PYTHON)) return null;
 
   const hash = createHash("sha256").update(buf).digest("hex");
   const cacheFile = path.join(CACHE_DIR, `${hash}-${PIPELINE}-${VISION_VERIFY ? VISION_MODEL.replace(/[^\w.-]/g, "_") : "noverify"}.json`);

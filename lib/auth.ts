@@ -63,9 +63,10 @@ function appOrigin(req: Request): string | null {
  * Mutations must come from this origin (SameSite=lax already stops cross-site POST cookies; this is the second layer).
  */
 export async function requireApiUser(req: Request): Promise<User | Response> {
-  const origin = req.headers.get("origin");
-  if (req.method !== "GET" && req.method !== "HEAD" && origin !== null && origin !== appOrigin(req)) {
-    return Response.json({ error: "Geçersiz istek kaynağı." }, { status: 403 });
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const expected = appOrigin(req); // null = misconfigured production: refuse all mutations, Origin or not
+    const origin = req.headers.get("origin");
+    if (expected === null || (origin !== null && origin !== expected)) return Response.json({ error: "Geçersiz istek kaynağı." }, { status: 403 });
   }
   const user = await getUser().catch((e) => {
     console.error("auth:", (e as Error).message);
