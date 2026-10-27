@@ -1,14 +1,16 @@
 // Where server-side document bytes and derived text live while a user's doc exists (plan §4.3, audit S3/S4/S9/N3).
 // No "server-only": pure fs so node --test can exercise it.
 import { mkdirSync, mkdtempSync, readdirSync, rmdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 
-/** Only this app's jobs live here, so sweeping it on start can't touch anyone else's temp files. */
-export const JOBS_ROOT = path.join(tmpdir(), "kurumai-jobs");
+/**
+ * Only this app's jobs live here, so sweeping it on start can't touch anyone else's files. Inside the app's own
+ * .cache, not the shared OS temp dir: there another local user could pre-create the fixed name as a symlink.
+ */
+export const JOBS_ROOT = path.join(process.cwd(), ".cache", "jobs");
 export const EXTRACT_ROOT = path.join(process.cwd(), ".cache", "extract");
 
 /**

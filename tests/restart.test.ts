@@ -11,8 +11,8 @@ import { hashPassword, newToken, tokenHash } from "../lib/password.ts";
 const BASE = process.env.SMOKE_URL?.replace(/\/$/, "");
 const PHASE = process.env.SMOKE_PHASE;
 const STATE = path.join(tmpdir(), "kurumai-restart-test.json");
-// Crash leftovers the server must sweep on start (lib/workspace). Server and test share this machine's tmpdir and cwd.
-const CRASHED_JOB = path.join(tmpdir(), "kurumai-jobs", "job-restart-test");
+// Crash leftovers the server must sweep on start (lib/workspace). Server and test share this cwd.
+const CRASHED_JOB = path.join(".cache", "jobs", "job-restart-test");
 const orphanExtract = (userId: string) => path.join(".cache", "extract", userId, "d".repeat(64));
 
 test(`docs survive restart (${PHASE})`, { skip: !(BASE && PHASE) && "SMOKE_URL/SMOKE_PHASE yok" }, async () => {
