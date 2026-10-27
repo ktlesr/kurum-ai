@@ -33,4 +33,5 @@
   - P2 dış bağlantıyla kullanıcı tıklamalı sızıntı: Markdown'da yalnızca `#…` ve `/…` bağlantı kalıyor; `https:`, `//host`, `mailto:`, `javascript:` devre dışı ("dış bağlantı devre dışı").
   - P3 prefetch başlığı CSP'yi atlatıyordu: matcher'dan istisna kaldırıldı. Doğrulandı: `purpose: prefetch` ile de CSP geliyor.
   - HSTS yorumu düzeltildi; `style-src-attr` gerekçesi netleştirildi.
+- Tur 3 — **APPROVED WITH NOTES.**
 - Tur 2 — CHANGES REQUIRED, tek P2: aynı ham metin `verify.skipped`'te de duruyordu → o da yanıt sınırında temizleniyor. Uçtan uca doğrulandı: ham sağlayıcı metinli sahte eski kayıt → `GET /api/upload` çıktısında ham metin 0 kez.
