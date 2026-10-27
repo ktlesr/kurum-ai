@@ -18,6 +18,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+      - run: pnpm exec next typegen # LayoutProps vb. route tipleri; temiz checkout'ta yok
       - run: pnpm exec tsc --noEmit
       - run: pnpm lint
       - run: pnpm build
