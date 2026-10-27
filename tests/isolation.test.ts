@@ -1,11 +1,14 @@
 // User A/B isolation against a running server (plan §11.1, journey 2).
 // Run: SMOKE_URL=http://localhost:3999 pnpm test:isolation   (needs DATABASE_URL, same DB as the server)
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { db } from "../lib/db.ts";
 import { hashPassword, newToken, tokenHash } from "../lib/password.ts";
 
 const BASE = process.env.SMOKE_URL?.replace(/\/$/, "");
+// One shared client (lib/db caches it); close it once, after every test.
+after(async () => (await db()).end());
+
 const MODEL = (process.env.ALLOWED_MODELS ?? process.env.DEFAULT_MODEL ?? "gemma4:12b").split(",")[0].trim();
 
 test("user B can never see, use or delete user A's document", { skip: !BASE && "SMOKE_URL yok" }, async () => {
@@ -54,6 +57,28 @@ test("user B can never see, use or delete user A's document", { skip: !BASE && "
     assert.deepEqual(await (await call(A, "/api/upload")).json(), []);
   } finally {
     await sql`DELETE FROM users WHERE id IN ${sql(users.map((u) => u.id))}`;
-    await sql.end();
+  }
+});
+
+test("parallel uploads can't overshoot the per-user doc cap", { skip: !BASE && "SMOKE_URL yok" }, async () => {
+  const sql = await db();
+  const [u] = await sql<{ id: string }[]>`INSERT INTO users (username, pass_hash, status) VALUES (${`iso-cap-${Date.now().toString(36)}`}, ${await hashPassword("izolasyon-testi")}, 'active') RETURNING id`;
+  const token = newToken();
+  await sql`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (${tokenHash(token)}, ${u.id}, now() + interval '10 minutes')`;
+  const headers = { origin: BASE!, cookie: `kai_session=${token}` };
+  try {
+    const statuses = await Promise.all(
+      Array.from({ length: 25 }, async (_, i) => {
+        const form = new FormData();
+        form.append("file", new Blob([`sınır ${i}\n`], { type: "text/plain" }), `${i}.txt`);
+        return (await fetch(`${BASE}/api/upload`, { method: "POST", body: form, headers })).status;
+      }),
+    );
+    const list = (await (await fetch(`${BASE}/api/upload`, { headers })).json()) as { id: string }[];
+    assert.equal(statuses.filter((s) => s === 409).length, 5, "fazlası 409");
+    assert.equal(list.length, 20, "sınır 20");
+    for (const d of list) await fetch(`${BASE}/api/upload?id=${d.id}`, { method: "DELETE", headers });
+  } finally {
+    await sql`DELETE FROM users WHERE id = ${u.id}`;
   }
 });
