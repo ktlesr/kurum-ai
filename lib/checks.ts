@@ -2,9 +2,15 @@
 
 const NUM = /-?\d+(?:[.,]\d+)*/g;
 
-/** "1.234.567" → "1234567", "94,7" → "94.7" */
+/**
+ * Turkish first, English tolerated: "1.234,56" → "1234.56", "1.234.567" → "1234567", "1.234" → "1234",
+ * "94,7" → "94.7", "1,234.56" → "1234.56", "12.5" → "12.5". With both separators the last one is the decimal.
+ */
 export function normNum(s: string): string {
-  if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) return s.replace(/\./g, "");
+  const dot = s.lastIndexOf("."), comma = s.lastIndexOf(",");
+  if (dot >= 0 && comma >= 0) return dot > comma ? s.replace(/,/g, "") : s.replace(/\./g, "").replace(",", ".");
+  // Grouped thousands: any dots ("1.234"), or several commas ("1,234,567"). One comma stays a decimal ("12,345").
+  if (/^-?\d{1,3}([.,]\d{3})+$/.test(s) && (dot >= 0 || s.indexOf(",") !== comma)) return s.replace(/[.,]/g, "");
   return s.replace(",", ".");
 }
 
@@ -59,7 +65,7 @@ function tables(md: string): { title: string; rows: Row[] }[] {
 }
 
 const firstNum = (cell: string) => {
-  const m = cell.replace(/\(\?\)/g, "").match(/-?\d+(?:[.,]\d+)?/);
+  const m = cell.replace(/\(\?\)/g, "").match(/-?\d+(?:[.,]\d+)*/);
   return m ? toFloat(m[0]) : null;
 };
 
@@ -141,4 +147,21 @@ export function verifyNumbers(answer: string, source: string): { unverified: str
     (shaky.has(n) ? uncertain : unverified).add(raw);
   }
   return { unverified: [...unverified], uncertain: [...uncertain] };
+}
+
+/**
+ * Drops Docling's image placeholders and normalises separator rows. Equal neighbouring cells are kept: the markdown
+ * can't tell a merged cell's repeat from two real equal values, and losing real data is worse than a repeat (N4).
+ */
+export function compactTables(md: string): string {
+  return md
+    .replace(/\s*<!-- image -->/g, "")
+    .split("\n")
+    .map((line) => {
+      if (!line.startsWith("|")) return line;
+      const cells = line.replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      if (cells.every((c) => /^:?-+:?$/.test(c))) return `|${" --- |".repeat(cells.length)}`;
+      return `| ${cells.join(" | ")} |`;
+    })
+    .join("\n");
 }
