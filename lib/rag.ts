@@ -4,7 +4,7 @@ import type { Doc } from "./server";
 import { embedProvider } from "./provider";
 import { admission } from "./admission";
 
-export const EMBED_MODEL = process.env.EMBED_MODEL ?? "embeddinggemma";
+export const EMBED_MODEL = process.env.EMBED_MODEL || "embeddinggemma";
 const CHUNK = Math.round(800 * DEFAULT_CHARS_PER_TOKEN);
 export const TOP_K = 6;
 

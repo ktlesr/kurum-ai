@@ -14,9 +14,9 @@ import { Busy } from "./limits";
 import { UserError } from "./errors";
 
 export const DOCLING_PYTHON =
-  process.env.DOCLING_PYTHON ??
+  process.env.DOCLING_PYTHON ||
   path.join(process.cwd(), ".venv-docling", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
-export const VISION_MODEL = process.env.VISION_MODEL ?? "gemma4:12b";
+export const VISION_MODEL = process.env.VISION_MODEL || "gemma4:12b";
 // ponytail: fixed cap; a table strip is a few hundred tokens of markdown
 const VISION_MAX_TOKENS = 4096;
 const VISION_VERIFY = process.env.VISION_VERIFY !== "false";

@@ -23,6 +23,7 @@ jobs:
       - run: pnpm exec tsc --noEmit
       - run: pnpm lint
       - run: pnpm build
+      - run: node scripts/check-trace.mjs # S12: .cache/.env/.venv-docling çıktıya girmez
 
   isolation:
     # Kullanıcı A/B izolasyonu gerçek sunucu + Postgres'e karşı (tests/isolation.test.ts)
@@ -69,3 +70,47 @@ jobs:
       - run: SMOKE_PHASE=after pnpm test:restart
       - if: failure()
         run: cat server.log
+
+  image:
+    # Konteyner imajı: derlenir, içinde yasak dosya yok, gerçek Postgres'e karşı sağlıklı ve izolasyon testleri geçer.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: ci, POSTGRES_PASSWORD: ci, POSTGRES_DB: ci }
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+      SMOKE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build bağlamına secret girmez
+        run: |
+          # Dokploy writes deploy/.env next to the compose file: it must never reach any build stage.
+          M=$(openssl rand -hex 16) # random, so it can't match itself anywhere in the repo
+          echo "$M" > deploy/.env
+          echo "$M" > .env.local
+          docker build --target build -t kai-build .
+          docker run --rm -e M="$M" --entrypoint sh kai-build -c '! grep -rqs "$M" /src --exclude-dir=node_modules'
+          rm deploy/.env .env.local
+      - run: docker build --target app -t kai .
+      - name: İmajda yasak dosya yok
+        run: |
+          out=$(docker run --rm --entrypoint sh kai -c 'find / -xdev \( -name ".env*" -o -name ".venv-docling" -o -name "kurum-ai" \) -not -path "/proc/*"; ls -A /app/.cache')
+          [ -z "$out" ] || { echo "$out"; exit 1; }
+      - name: Konteyneri başlat
+        run: |
+          docker run -d --name kai --network host -e DATABASE_URL -e APP_ORIGIN=http://localhost:3000 -e UPLOAD_PER_MIN=100 kai
+          for i in $(seq 1 60); do [ "$(docker inspect -f '{{.State.Health.Status}}' kai)" = healthy ] && exit 0; sleep 2; done
+          docker logs kai; exit 1
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:isolation
+      - if: failure()
+        run: docker logs kai

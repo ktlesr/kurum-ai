@@ -3,9 +3,18 @@ import postgres from "postgres";
 // No "server-only": scripts/create-admin.ts uses it too. Accounts, sessions, roles only — never chat or document content (plan §4.3).
 const g = globalThis as typeof globalThis & { __sql?: postgres.Sql; __migrated?: Promise<void> };
 
+/**
+ * DATABASE_URL, or the standard PGHOST/PGUSER/PGPASSWORD/PGDATABASE variables (the container setup uses those, so a
+ * password with URL-special characters needs no encoding).
+ */
+export function connect(opts: postgres.Options<Record<string, postgres.PostgresType>>) {
+  const url = process.env.DATABASE_URL;
+  if (!url && !process.env.PGHOST) throw new Error("DATABASE_URL (ya da PGHOST/PGUSER/PGPASSWORD/PGDATABASE) tanımlı değil.");
+  return url ? postgres(url, opts) : postgres(opts);
+}
+
 function client() {
-  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL tanımlı değil.");
-  return (g.__sql ??= postgres(process.env.DATABASE_URL, { max: 5, onnotice: () => {} }));
+  return (g.__sql ??= connect({ max: 5, onnotice: () => {} }));
 }
 
 // Append only; never edit an applied step. Index = version.

@@ -129,3 +129,18 @@ Tüm uçlar oturum ister (yoksa `401`); GET dışı isteklerde farklı `Origin` 
 - `GET /api/models`: sohbet modelleri; embedding, whisper ve bulut modelleri filtrelenir. Arayüz bunu 15 saniyede bir yoklayarak Ollama'nın açık olup olmadığını izler.
 
 Kısayollar: Enter gönderir, Shift+Enter yeni satır ekler, Esc cevabı durdurur.
+
+## Konteyner / Dokploy
+
+```bash
+docker build --target app -t kurum-ai-web .          # Docling'siz (PDF metni unpdf ile)
+docker build --target app-docling -t kurum-ai-web .  # Docling imajın içinde
+```
+
+Dokploy'da **Docker Compose** uygulaması olarak `deploy/compose.yml` kullanılır. Environment sekmesinde en az `POSTGRES_PASSWORD` ve `APP_ORIGIN` (ör. `https://ai.ornek.com`) tanımlanır; model ayarları (`MODEL_PROVIDER`, `MODEL_URL`, `ALLOWED_MODELS` …) yukarıdaki tablodan. Alan adı ve HTTPS Domains sekmesinden `app:3000`'e verilir. Kullanıcı belgeleri `appdata` volume'ünde (`/app/.cache`) durur; yedeklenmelidir. İlk yönetici:
+
+```bash
+docker compose exec app sh -c 'ADMIN_PASSWORD=… node scripts/create-admin.ts admin'
+```
+
+`app-docling` ilk açılışta modelleri indirmek için bir kez `DOCLING_OFFLINE=false` ile çalıştırılır; sonra `true`.
