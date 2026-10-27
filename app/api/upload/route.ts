@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { extractDir, holdExtract } from "@/lib/workspace";
-import { deleteDoc, dropExtractIfUnused, docsOf, MAX_BYTES, MAX_DOCS_PER_USER, saveDoc, toMeta, type Doc } from "@/lib/server";
+import { deleteDoc, dropExtractIfUnused, docsOf, getDoc, MAX_BYTES, MAX_DOCS_PER_USER, saveDoc, toMeta, uniqueName, type Doc } from "@/lib/server";
+import { docSections } from "@/lib/context";
 import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
 import { logError } from "@/lib/log";
@@ -96,7 +97,7 @@ async function accept(req: Request, user: User, releaseSlot: () => void): Promis
       };
       try {
         const parsed = await parseFile(file.name, buf, (p) => send({ type: "progress", ...p }), req.signal, extractDir(user.id, sourceHash));
-        const doc: Doc = { id: crypto.randomUUID(), ownerId: user.id, sourceHash, name: file.name, size: file.size, chars: parsed.text.length, ...parsed };
+        const doc: Doc = { id: crypto.randomUUID(), ownerId: user.id, sourceHash, name: uniqueName(user.id, file.name), size: file.size, chars: parsed.text.length, ...parsed };
         if (!doc.chars && !doc.warning) doc.warning = "Dosyadan metin çıkarılamadı.";
         saveDoc(doc);
         send({ type: "done", doc: toMeta(doc) });
@@ -120,6 +121,12 @@ async function accept(req: Request, user: User, releaseSlot: () => void): Promis
 export async function GET(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
+  // ?id=…: one doc's extracted text by page/sheet, for the source panel. Someone else's doc is a plain 404.
+  const id = new URL(req.url).searchParams.get("id");
+  if (id) {
+    const d = getDoc(user.id, id);
+    return d ? Response.json({ ...toMeta(d), sections: docSections(d.text) }) : fail("Dosya bulunamadı.", 404);
+  }
   return Response.json(docsOf(user.id).map(toMeta));
 }
 

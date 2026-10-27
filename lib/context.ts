@@ -30,3 +30,32 @@ export interface ChatMeta {
   uncertain: string[];
   note?: string;
 }
+
+export interface DocSection {
+  /** "Sayfa 4", "Sheet: Bütçe", "Başlangıç" (outline before the first page), or "" for unmarked text. */
+  label: string;
+  text: string;
+}
+
+/** The extracted text split on the same page/sheet markers the RAG chunker uses, for the source panel. */
+export function docSections(text: string): DocSection[] {
+  const parts = text.split(/^(--- Sayfa \d+ ---|## Sheet: .+)$/m);
+  const out: DocSection[] = [];
+  if (parts[0].trim()) out.push({ label: parts.length > 1 ? "Başlangıç" : "", text: parts[0].trim() });
+  for (let i = 1; i < parts.length; i += 2) {
+    out.push({ label: parts[i].startsWith("---") ? parts[i].replace(/-/g, "").trim() : parts[i].slice(3), text: (parts[i + 1] ?? "").trim() });
+  }
+  return out;
+}
+
+/**
+ * Which doc and section a source chip points at. Chips look like "Sayfa 4", "Sayfa 3 – 5", "Sheet: X", a doc name
+ * (whole document), or "<doc> · <label>" when several docs were in context.
+ */
+export function parseSource(chip: string, docNames: string[]): { doc: string; label?: string } | null {
+  const sep = chip.indexOf(" · ");
+  const [doc, rest] = sep >= 0 ? [chip.slice(0, sep), chip.slice(sep + 3)] : docNames.includes(chip) ? [chip, undefined] : [docNames[0], chip];
+  if (!doc || !docNames.includes(doc)) return null;
+  // A range points at its first page.
+  return { doc, label: rest?.replace(/^(Sayfa \d+)\s*–.*$/, "$1") };
+}

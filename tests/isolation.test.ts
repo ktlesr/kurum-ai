@@ -45,6 +45,16 @@ test("user B can never see, use or delete user A's document", { skip: !BASE && "
     assert.deepEqual(listB, [], "B, A'nın dokümanını görmez");
 
     assert.equal((await call(B, `/api/upload?id=${id}`, { method: "DELETE" })).status, 404, "B silemez");
+    assert.equal((await call(B, `/api/upload?id=${id}`)).status, 404, "B metni okuyamaz");
+    // Same name again: the server keeps names unique per user (source chips are matched by name).
+    const again = new FormData();
+    again.append("file", new Blob(["ikinci\n"], { type: "text/plain" }), "a.txt");
+    const second = (await (await call(A, "/api/upload", { method: "POST", body: again })).text()).trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "done");
+    assert.equal(second.doc.name, "a (2).txt", "aynı ad tekrar kullanılmaz");
+    assert.equal((await call(A, `/api/upload?id=${second.doc.id}`, { method: "DELETE" })).status, 204);
+    const own = (await (await call(A, `/api/upload?id=${id}`)).json()) as { sections: { text: string }[]; ownerId?: string };
+    assert.match(own.sections[0].text, /izolasyon deneme 123/, "A kendi metnini okur");
+    assert.equal(own.ownerId, undefined);
     const msg = [{ role: "user", content: "özetle" }];
     assert.equal((await chat(B, { model: MODEL, fileIds: [id], messages: msg })).status, 409, "B sohbette kullanamaz");
     // 200 with a model server, 503 without one (CI): either way the ownership check let A through.
