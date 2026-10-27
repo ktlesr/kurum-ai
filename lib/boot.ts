@@ -26,7 +26,15 @@ export async function boot() {
     onclose: () => die("kilit bağlantısı kapandı (instance kilidi kaybedildi)"),
     onnotice: () => {},
   });
-  const [{ ok }] = await lock<{ ok: boolean }[]>`SELECT pg_try_advisory_lock(${LOCK_KEY}) AS ok`;
+  // A just-stopped predecessor (restart, rolling deploy) can hold the lock for a moment after its port closed:
+  // keep trying for a while before refusing to start.
+  const waitUntil = Date.now() + (Number(process.env.INSTANCE_LOCK_WAIT_MS) || 30_000);
+  let ok = false;
+  for (;;) {
+    [{ ok }] = await lock<{ ok: boolean }[]>`SELECT pg_try_advisory_lock(${LOCK_KEY}) AS ok`;
+    if (ok || Date.now() >= waitUntil) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
   if (!ok) die("aynı veritabanında başka bir Kurum AI instance'ı çalışıyor; bu instance başlatılmadı");
   g.__instanceLock = lock;
 

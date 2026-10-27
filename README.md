@@ -52,6 +52,8 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 | `DOCLING_CONCURRENCY` / `DOCLING_QUEUE` | `1` / `8` | Aynı anda çalışan Docling işi ve kuyruk uzunluğu |
 | `DOCLING_TIMEOUT_MS` | `1200000` (20 dk) | Tek dosyanın okunma süresi sınırı (kuyrukta bekleme sayılmaz) |
 | `DOCLING_MAX_PAGES` | `500` | Sayfa sınırı; aşan PDF reddedilir |
+| `UPLOAD_CONCURRENCY` / `UPLOAD_QUEUE` | `4` / `16` | Aynı anda işlenen yükleme (gövde okumadan sonuca kadar) ve kuyruk; bellek tepe değerini sınırlar |
+| `INSTANCE_LOCK_WAIT_MS` | `30000` | Açılışta, önceki sürecin veritabanı kilidini bırakmasını bekleme süresi; sonra açılış reddedilir |
 | `CHAT_PER_MIN` / `UPLOAD_PER_MIN` | `20` / `20` | Kullanıcı başına dakikalık soru / yükleme sınırı (429) |
 | `COOKIE_SECURE` | `true` (üretimde) | Yalnızca HTTPS'siz ağ testinde `false`; üretimde HTTPS arkasında açık kalmalı |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama adresi |

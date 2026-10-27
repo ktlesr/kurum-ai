@@ -27,9 +27,20 @@
 | 40 MB `Content-Length`, 1 bayt gövde (ham TCP) | 413, gövde beklenmeden ✅ (e2e) |
 | 40 MB chunked gövde | 413; Node istemcisi ~31 MB'ta kesildi ✅ (e2e; curl ile de 413) |
 | 21. sohbet isteği / dk | ilk 20 → 400 (doğrulama), 21. → 429 ✅ (e2e) |
-| `pnpm test` 36/36, izolasyon 3/3, restart, `tsc`, `lint`, `build` | ✅ |
+| `pnpm test` 39/39, izolasyon 3/3, restart, `tsc`, `lint`, `build` | ✅ |
 | Docling süre/sayfa sınırı, model kuyruğu dolması | birim + kod incelemesi; Ollama bu makinede yok, uçtan uca tetiklenmedi |
 
 **Rollback:** Branch'i geri al; veri biçimi değişmedi.
 
-**Codex bulguları ve karar:** _bekliyor_
+**Codex bulguları ve karar**
+
+- Otomatik güvenlik incelemesi (3 × MEDIUM): `.xls` ZIP yolunda zip denetimi yoktu; zip denetimi beyan edilen boyutlara güveniyordu; büyük sayfa kontrolü Docling sayfayı işledikten sonraydı → düzeltildi (aşağıda).
+- Codex tur 1 — CHANGES REQUIRED:
+  - P1 ZIP atlatma (EOCD kayıt sayısı 0, `.xls` ZIP, sahte EOCD) → merkezi dizin **katı** okunuyor: EOCD dosyayı tam bitirmeli (yorumdaki sahte kayıt belirsizlik → red), iki kayıt sayısı eşit ve > 0, dizin beyan edilen bayt boyutuyla yürünüp tam o sayıda kayıt bulunmalı, ZIP64 red. Ardından her girdi **gerçekten açılıyor** (`zlib.inflateRaw` + `maxOutputLength`, async), gerçek toplam > 200 MB → red. `.xls` ZIP ise aynı denetim. Testler: 1 KB beyan edip 300 MB açılan bomba yakalanıyor (ağda < 1 MB); sayısı sıfırlanmış, ikisi sıfırlanmış, yorumunda sahte EOCD olan ve yorum uzunluğu tutarsız dizinler reddediliyor; gerçek DOCX/XLSX geçiyor.
+  - P1 60 MP kontrolü geç → tüm sayfa boyutları Docling'e hiçbir sayfa verilmeden kontrol, aşan dosya çıkış kodu 4 → "olağandışı büyük bir sayfa". Gerçek 14400×14400 pt PDF ile doğrulandı.
+  - P1 timeout'ta kesin sonlandırma yok → `runJsonLines` iptali kendisi yönetiyor: SIGTERM, 5 sn sonra SIGKILL; POSIX'te süreç grubu (`detached` + `kill(-pid)`). Test: SIGTERM'i yok sayan çocuk iptal edilince öldürülüyor ve Promise yalnızca çıktıktan sonra sonuçlanıyor (yükseltme Linux CI'da gerçekten sınanır; Windows'ta SIGTERM zaten zorla sonlandırır).
+  - P2 toplam bellek sınırsız → küresel yükleme slotu (`UPLOAD_CONCURRENCY`=4, `UPLOAD_QUEUE`=16; gövde okunmadan alınır, son ilerleme olayına kadar tutulur; erken dönüşlerde bırakılır), `Content-Length` reddi slot almadan.
+  - P2 sayfa sınırı tüm yollarda değil → unpdf yedeğinde metin çıkarmadan önce sayfa sayısı (doğrulandı: 501 sayfa 0,1 sn'de red), önbellekten dönen sonuçta da.
+  - P2 vision slotu erken bırakılıyordu → yanıt gövdesinin okunması da slotun içinde.
+  - P2 Busy sözleşmesi → kuyruk zaten doluysa akıştan önce 429 + `Retry-After` (sohbet; PDF/DOCX yükleme); akış başladıktan sonraki hata `ERROR_SEP` ile işaretleniyor, istemci bunu hata turu olarak gösterip sonraki isteğin geçmişine katmıyor.
+- CI yan bulgusu: restart'ta eski sürecin veritabanı kilidi port kapandıktan sonra bir an daha tutulabiliyor → `boot` kilidi `INSTANCE_LOCK_WAIT_MS` (30 sn) boyunca yeniden deniyor (rolling deploy için de gerekli); CI restart bekleme 60 sn. Yerelde anında restart ve ikinci instance reddi (bekleme 3 sn ile) doğrulandı.

@@ -9,6 +9,11 @@ function make() {
   return {
     /** Every Ollama/vLLM call: chat, classify, scan, embeddings, vision. */
     model: new Semaphore(num("MODEL_CONCURRENCY", 2), num("MODEL_QUEUE", 32)),
+    /**
+     * Whole uploads, from reading the body to the final answer: bounds how many request bodies (and their parsed
+     * copies, ~3× the file) sit in memory at once (audit S5).
+     */
+    upload: new Semaphore(num("UPLOAD_CONCURRENCY", 4), num("UPLOAD_QUEUE", 16)),
     /** Docling runs (CPU/GPU heavy, minutes per document). */
     docling: new Semaphore(num("DOCLING_CONCURRENCY", 1), num("DOCLING_QUEUE", 8)),
     chatPerUser: new RateLimiter(num("CHAT_PER_MIN", 20), 60_000),

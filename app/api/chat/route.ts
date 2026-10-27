@@ -2,9 +2,9 @@ import { requireApiUser } from "@/lib/auth";
 import { ALLOWED_MODELS, cptFor, getDoc, NUM_CTX, OLLAMA_URL, recordTokens, type Doc } from "@/lib/server";
 import { parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
-import { admission, tooMany } from "@/lib/admission";
+import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
-import { contextBudget, contextRatio, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
+import { contextBudget, contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { verifyNumbers } from "@/lib/checks";
 import { EMBED_MODEL, retrieve, TOP_K, windows } from "@/lib/rag";
 
@@ -104,6 +104,8 @@ export async function POST(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
   if (!admission.chatPerUser.allow(user.id)) return tooMany("soru");
+  // Queue already full: say so with a proper 429 before the stream starts (later Busy goes through ERROR_SEP).
+  if (admission.model.saturated) return busy();
   const parsed = parseChatRequest(await req.json().catch(() => null), ALLOWED_MODELS);
   if (typeof parsed === "string") return fail(parsed, 400);
   // scope "all" = question needs the whole document (suggestion buttons know this); otherwise classified.
@@ -193,9 +195,10 @@ export async function POST(req: Request) {
           // Raw provider text stays in the server log; the user gets a fixed message (audit S10).
           logError("chat", e);
           send(
-            e instanceof Busy
-              ? "\n\n**Hata:** Sunucu şu an çok yoğun. Biraz sonra tekrar deneyin."
-              : "\n\n**Hata:** Model sunucusu cevap üretemedi. Tekrar deneyin; sorun sürerse yöneticinize bildirin.",
+            ERROR_SEP +
+              (e instanceof Busy
+                ? "Sunucu şu an çok yoğun. Biraz sonra tekrar deneyin."
+                : "Model sunucusu cevap üretemedi. Tekrar deneyin; sorun sürerse yöneticinize bildirin."),
           );
         }
       }

@@ -1,9 +1,9 @@
 import "server-only";
-import { extractText } from "unpdf";
+import { extractText, getDocumentProxy } from "unpdf";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import type { DocKind } from "./server";
-import { extractWithDocling, type Extracted, type Progress } from "./extract";
+import { extractWithDocling, MAX_PAGES, tooManyPages, type Extracted, type Progress } from "./extract";
 
 export interface Parsed {
   kind: DocKind;
@@ -53,7 +53,10 @@ export async function parseFile(name: string, buf: Buffer, onProgress: (p: Progr
 }
 
 async function parsePdf(buf: Buffer): Promise<Parsed> {
-  const { totalPages, text } = await extractText(new Uint8Array(buf), { mergePages: false });
+  // Count pages before extracting any text, so a 10,000-page file is refused cheaply.
+  const pdf = await getDocumentProxy(new Uint8Array(buf));
+  if (pdf.numPages > MAX_PAGES) throw new UserError(tooManyPages());
+  const { totalPages, text } = await extractText(pdf, { mergePages: false });
   const body = text
     .map((t, i) => `--- Sayfa ${i + 1} ---\n${t.trim()}`)
     .join("\n\n");

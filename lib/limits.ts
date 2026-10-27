@@ -20,6 +20,11 @@ export class Semaphore {
     this.maxQueue = maxQueue;
   }
 
+  /** True when a new caller would be refused outright (all slots busy and the queue full). */
+  get saturated() {
+    return this.used >= this.slots && this.waiting.length >= this.maxQueue;
+  }
+
   /** True when a caller would have to wait (lets the UI say "sırada"). */
   get full() {
     return this.used >= this.slots;

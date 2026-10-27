@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
-import { contextRatio, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
+import { contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import type { DocKind, DocMeta } from "@/lib/server";
 
 type Card = Partial<DocMeta> & {
@@ -195,12 +195,15 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         if (done) break;
         raw += value;
         // Progress lines (STATUS_SEP…STATUS_SEP) are shown while waiting and never become part of the answer.
-        const body = raw.split(META_SEP)[0];
+        const body = raw.split(META_SEP)[0].split(ERROR_SEP)[0];
         const statuses = body.match(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"));
         const content = body.replace(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"), "");
         const status = statuses ? statuses[statuses.length - 1].slice(1, -1) : undefined;
         setLast((m) => ({ ...m, content, status }));
       }
+      // A failure mid-answer: show it as an error turn, which also keeps it out of the next request's history.
+      const failure = raw.split(ERROR_SEP)[1];
+      if (failure !== undefined) return setLast(() => ({ role: "assistant", content: failure, error: true }));
       const [, metaJson] = raw.split(META_SEP);
       if (metaJson) setLast((m) => ({ ...m, meta: JSON.parse(metaJson) as ChatMeta }));
     } catch (e) {

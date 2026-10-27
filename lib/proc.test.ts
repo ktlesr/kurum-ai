@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runJsonLines } from "./proc.ts";
+import { KILL_GRACE_MS, runJsonLines } from "./proc.ts";
 
 // Fake child processes: this same node binary running a one-liner.
 const run = (script: string, onLine: (v: unknown) => void = () => {}) => runJsonLines(process.execPath, ["-e", script], {}, onLine);
@@ -42,4 +42,18 @@ test("non-zero exit rejects with a code, stderr is not in the error", async () =
 
 test("missing executable rejects", async () => {
   await assert.rejects(runJsonLines("bu-komut-yok-123", [], {}, () => {}));
+});
+
+test("abort stops a child that ignores SIGTERM (escalates to SIGKILL) and settles after it exited", async () => {
+  const got: { pid?: number }[] = [];
+  const ac = new AbortController();
+  const started = Date.now();
+  const q = runJsonLines(process.execPath, ["-e", `process.on("SIGTERM",()=>{});console.log(JSON.stringify({pid:process.pid}));setInterval(()=>{},1000)`], { signal: ac.signal }, (v) => {
+    got.push(v as { pid: number });
+    ac.abort(new Error("zaman_asimi"));
+  });
+  await assert.rejects(q, /zaman_asimi/);
+  const pid = got.at(-1)!.pid!;
+  assert.equal(alive(pid), false, "child is gone");
+  assert.ok(Date.now() - started < KILL_GRACE_MS + 5_000, "within the grace period");
 });

@@ -61,7 +61,8 @@ jobs:
           for i in $(seq 1 30); do curl -s -o /dev/null http://localhost:3000/login || break; sleep 1; done
           if curl -s -o /dev/null http://localhost:3000/login; then echo "eski sunucu kapanmadı"; exit 1; fi
           setsid pnpm start >> server.log 2>&1 & echo $! > server.pid
-          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:3000/login && exit 0; sleep 1; done
+          # Up to 60 s: boot waits (INSTANCE_LOCK_WAIT_MS) until the database has released the old process's lock.
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/login && exit 0; sleep 1; done
           echo "sunucu yeniden başlamadı"; exit 1
       - run: SMOKE_PHASE=after pnpm test:restart
       - if: failure()

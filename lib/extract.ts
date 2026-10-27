@@ -20,8 +20,11 @@ export const VISION_MODEL = process.env.VISION_MODEL ?? "gemma4:12b";
 const VISION_VERIFY = process.env.VISION_VERIFY !== "false";
 const DOCLING_OFFLINE = process.env.DOCLING_OFFLINE !== "false";
 const PIPELINE = "v8"; // bump to invalidate cached extractions
-const DOCLING_MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
+/** Page limit for every PDF path: Docling, the unpdf fallback, and cached results. */
+export const MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
+export const tooManyPages = () => `Dosya çok fazla sayfa içeriyor (en fazla ${MAX_PAGES}). Dosyayı bölerek yükleyin.`;
 const TOO_MANY_PAGES_EXIT = 3; // scripts/extract.py
+const PAGE_TOO_LARGE_EXIT = 4;
 
 export interface Progress {
   stage: string;
@@ -68,7 +71,9 @@ async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Pr
   const file = path.join(cacheDir, "strips", `${createHash("sha256").update(VISION_MODEL + VISION_PROMPT + png).digest("hex")}.txt`);
   const hit = await readFile(file, "utf8").catch(() => null);
   if (hit !== null) return hit;
-  const res = await admission.model.run(() => fetch(`${OLLAMA_URL}/api/chat`, {
+  // The slot covers the whole call, body included: a provider that sends headers early is still "busy".
+  const text = await admission.model.run(async () => {
+    const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: "POST",
     signal,
     body: JSON.stringify({
@@ -79,10 +84,11 @@ async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Pr
       options: { temperature: 0, num_ctx: NUM_CTX },
       messages: [{ role: "user", content: VISION_PROMPT, images: [png] }],
     }),
-  }), signal);
-  const j = (await res.json()) as { message?: { content: string }; error?: string };
-  if (!res.ok || !j.message) throw new Error(`vision_http_${res.status}`);
-  const text = j.message.content.trim();
+    });
+    const j = (await res.json()) as { message?: { content: string }; error?: string };
+    if (!res.ok || !j.message) throw new Error(`vision_http_${res.status}`);
+    return j.message.content.trim();
+  }, signal);
   writeFileAtomic(file, text);
   return text;
 }
@@ -92,7 +98,7 @@ function runDocling(file: string, signal: AbortSignal, onLine: (l: PageLine) => 
   // Offline by default: models must already be on disk (README → kapalı ağ); nothing is fetched at runtime.
   const offline = DOCLING_OFFLINE ? { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1" } : {};
   // Settles only after Docling exited, so the caller's temp-file cleanup never races the running process.
-  return runJsonLines<PageLine>(/*turbopackIgnore: true*/ DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8", DOCLING_MAX_PAGES: String(DOCLING_MAX_PAGES) } }, onLine);
+  return runJsonLines<PageLine>(/*turbopackIgnore: true*/ DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8", DOCLING_MAX_PAGES: String(MAX_PAGES) } }, onLine);
 }
 
 /** "## X" lines that open a section rather than title a table (next content line isn't a table). */
@@ -123,7 +129,11 @@ export async function extractWithDocling(
 
   const cacheFile = path.join(cacheDir, `result-${PIPELINE}-${VISION_VERIFY ? VISION_MODEL.replace(/[^\w.-]/g, "_") : "noverify"}.json`);
   const cached = await readFile(cacheFile, "utf8").catch(() => null);
-  if (cached) return JSON.parse(cached) as Extracted;
+  if (cached) {
+    const hit = JSON.parse(cached) as Extracted;
+    if ((hit.pages ?? 0) > MAX_PAGES) throw new UserError(tooManyPages());
+    return hit;
+  }
 
   // Private random job dir; removed even if writing the input fails, and swept on start after a crash (audit S9/N3).
   const lines: PageLine[] = [];
@@ -150,7 +160,8 @@ export async function extractWithDocling(
     if (signal.aborted) throw e;
     if (e instanceof Busy) throw new UserError("Sunucu şu an çok yoğun; dosya okunamadı. Biraz sonra tekrar deneyin.");
     if (timedOut) throw new UserError(`Dosyanın okunması ${Math.round(DOCLING_TIMEOUT_MS / 60_000)} dakika sınırını aştı. Dosyayı bölerek yükleyin.`);
-    if ((e as Error).message === `proc_exit_${TOO_MANY_PAGES_EXIT}`) throw new UserError(`Dosya çok fazla sayfa içeriyor (en fazla ${DOCLING_MAX_PAGES}). Dosyayı bölerek yükleyin.`);
+    if ((e as Error).message === `proc_exit_${PAGE_TOO_LARGE_EXIT}`) throw new UserError("Dosyada olağandışı büyük bir sayfa var; güvenlik nedeniyle okunmadı.");
+    if ((e as Error).message === `proc_exit_${TOO_MANY_PAGES_EXIT}`) throw new UserError(tooManyPages());
     throw e;
   }
 

@@ -20,6 +20,8 @@ export function contextRatio(totalChars: number, numCtx: number, charsPerToken =
 export const META_SEP = "\u001e";
 /** Progress lines inside the chat stream: STATUS_SEP + text + STATUS_SEP. The client strips them from the answer. */
 export const STATUS_SEP = "\u001d";
+/** A failure after the stream started: ERROR_SEP + message, then the stream ends. The client shows it as an error turn. */
+export const ERROR_SEP = "\u001f";
 
 export interface ChatMeta {
   mode: "full" | "rag" | "scan" | "truncated";

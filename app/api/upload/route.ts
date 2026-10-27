@@ -4,7 +4,9 @@ import { deleteDoc, dropExtractIfUnused, docsOf, MAX_BYTES, MAX_DOCS_PER_USER, s
 import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
 import { logError } from "@/lib/log";
-import { admission, tooMany } from "@/lib/admission";
+import { admission, busy, tooMany } from "@/lib/admission";
+import { Busy } from "@/lib/limits";
+import type { User } from "@/lib/auth";
 import { contentProblem, readLimited } from "@/lib/filetype";
 
 export const runtime = "nodejs";
@@ -19,26 +21,46 @@ const inflight = new Map<string, number>();
  * Streams NDJSON: {type:"progress",stage,done,total}… then {type:"done",doc} or {type:"error",error}.
  * Extraction with table verification can take minutes, so the card needs live progress.
  */
+const MAX_BODY = MAX_BYTES + 1024 * 1024; // file + multipart overhead
+const tooBig = () => fail("Dosya 25 MB sınırını aşıyor.", 413);
+
 export async function POST(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
   if (!admission.uploadPerUser.allow(user.id)) return tooMany("yükleme");
+  // Refuse by header before taking a slot or reading anything (audit S5).
+  if (Number(req.headers.get("content-length")) > MAX_BODY) return tooBig();
 
-  // Never buffer more than the limit plus multipart overhead (audit S5): refuse by header, then cap while reading.
-  const maxBody = MAX_BYTES + 1024 * 1024;
-  const tooBig = () => fail("Dosya 25 MB sınırını aşıyor.", 413);
-  if (Number(req.headers.get("content-length")) > maxBody) return tooBig();
-  const raw = await readLimited(req.body, maxBody).catch(() => undefined);
-  if (raw === null) return tooBig();
+  // A global upload slot is held from reading the body until the last progress event: it bounds how many
+  // bodies and their copies are in memory at once. Released here on early returns, by the stream otherwise.
+  let releaseSlot: () => void;
+  try {
+    releaseSlot = await admission.upload.acquire(req.signal);
+  } catch (e) {
+    if (e instanceof Busy) return busy();
+    throw e;
+  }
+  const out = await accept(req, user, releaseSlot).catch((e) => {
+    releaseSlot();
+    throw e;
+  });
+  if (!out.streaming) releaseSlot();
+  return out.res;
+}
+
+async function accept(req: Request, user: User, releaseSlot: () => void): Promise<{ res: Response; streaming: boolean }> {
+  const done = (res: Response) => ({ res, streaming: false });
+  const raw = await readLimited(req.body, MAX_BODY).catch(() => undefined);
+  if (raw === null) return done(tooBig());
   const form = raw && (await new Response(raw, { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData().catch(() => null));
   const file = form?.get("file");
-  if (!(file instanceof File)) return fail("Dosya bulunamadı.");
-  if (file.size > MAX_BYTES) return tooBig();
-  if (file.size === 0) return fail("Dosya boş.");
+  if (!(file instanceof File)) return done(fail("Dosya bulunamadı."));
+  if (file.size > MAX_BYTES) return done(tooBig());
+  if (file.size === 0) return done(fail("Dosya boş."));
   // Check and reserve in one synchronous step (no await between), released when parsing ends either way.
-  const busy = inflight.get(user.id) ?? 0;
-  if (docsOf(user.id).length + busy >= MAX_DOCS_PER_USER) return fail(`En fazla ${MAX_DOCS_PER_USER} dosya yüklenebilir. Önce bir dosyayı kaldırın.`, 409);
-  inflight.set(user.id, busy + 1);
+  const pending = inflight.get(user.id) ?? 0;
+  if (docsOf(user.id).length + pending >= MAX_DOCS_PER_USER) return done(fail(`En fazla ${MAX_DOCS_PER_USER} dosya yüklenebilir. Önce bir dosyayı kaldırın.`, 409));
+  inflight.set(user.id, pending + 1);
   const release = () => {
     const n = (inflight.get(user.id) ?? 1) - 1;
     if (n > 0) inflight.set(user.id, n);
@@ -52,10 +74,16 @@ export async function POST(req: Request) {
     throw e;
   }
   // The extension picks the parser; the bytes must agree (and a docx/xlsx must not inflate into a bomb).
-  const problem = contentProblem(file.name.toLowerCase().split(".").pop() ?? "", buf);
+  const ext = file.name.toLowerCase().split(".").pop() ?? "";
+  const problem = await contentProblem(ext, buf).catch(() => "Dosya okunamadı. Bozuk olabilir.");
   if (problem) {
     release();
-    return fail(problem, 415);
+    return done(fail(problem, 415));
+  }
+  // Docling queue already full: a clean 429 now beats an error event minutes later.
+  if ((ext === "pdf" || ext === "docx") && admission.docling.saturated) {
+    release();
+    return done(busy());
   }
 
   const sourceHash = createHash("sha256").update(buf).digest("hex");
@@ -80,11 +108,12 @@ export async function POST(req: Request) {
         release();
         // Last upload of this content done: if no doc kept it (failed, cancelled, or deleted meanwhile), drop it.
         if (releaseExtract()) dropExtractIfUnused(user.id, sourceHash);
+        releaseSlot();
       }
       try { ctrl.close(); } catch {}
     },
   });
-  return new Response(body, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8" } });
+  return { res: new Response(body, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8" } }), streaming: true };
 }
 
 /** Docs uploaded earlier (they survive restarts), so the page can restore its file list. */
