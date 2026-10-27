@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { checkCriteria, checkMaxRows, markUncertain } from "./checks";
+import { checkCriteria, checkMaxRows, compactTables, markUncertain } from "./checks";
 import { NUM_CTX, OLLAMA_URL } from "./server";
 import { logError } from "./log";
 import { writeFileAtomic } from "./atomic";
@@ -19,7 +19,7 @@ export const DOCLING_PYTHON =
 export const VISION_MODEL = process.env.VISION_MODEL ?? "gemma4:12b";
 const VISION_VERIFY = process.env.VISION_VERIFY !== "false";
 const DOCLING_OFFLINE = process.env.DOCLING_OFFLINE !== "false";
-const PIPELINE = "v8"; // bump to invalidate cached extractions
+const PIPELINE = "v9"; // bump to invalidate cached extractions
 /** Page limit for every PDF path: Docling, the unpdf fallback, and cached results. */
 export const MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
 export const tooManyPages = () => `Dosya çok fazla sayfa içeriyor (en fazla ${MAX_PAGES}). Dosyayı bölerek yükleyin.`;
@@ -52,19 +52,6 @@ const VISION_PROMPT = `Bu görüntü bir teknik rapordaki tablonun bir kesitidir
 - Kesitin kenarında yarım kalmış satırları atla.
 - Yorum ekleme.`;
 
-/** Collapse Docling's space-padded tables and repeated colspan cells — same content, far fewer tokens. */
-export function compactTables(md: string): string {
-  return md
-    .replace(/\s*<!-- image -->/g, "")
-    .split("\n")
-    .map((line) => {
-      if (!line.startsWith("|")) return line;
-      const cells = line.replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
-      if (cells.every((c) => /^:?-+:?$/.test(c))) return `|${" --- |".repeat(cells.length)}`;
-      return `| ${cells.map((c, i) => (i > 0 && c === cells[i - 1] ? "" : c)).join(" | ")} |`;
-    })
-    .join("\n");
-}
 
 /** One vision read per image strip; cached (in this doc's own cache dir) so pipeline changes don't redo minutes of work. */
 async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Promise<string> {

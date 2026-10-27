@@ -1,12 +1,40 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkCriteria, checkMaxRows, markUncertain, normNum, verifyNumbers } from "./checks.ts";
+import { checkCriteria, checkMaxRows, compactTables, markUncertain, normNum, verifyNumbers } from "./checks.ts";
 
 test("normNum handles Turkish thousands and decimal comma", () => {
   assert.equal(normNum("698.264.164"), "698264164");
   assert.equal(normNum("94,7"), "94.7");
   assert.equal(normNum("94.7"), "94.7");
+  // N5 regressions
+  assert.equal(normNum("1.234,56"), "1234.56");
+  assert.equal(normNum("1.234.567"), "1234567");
+  assert.equal(normNum("-12,5"), "-12.5");
+  assert.equal(normNum("-1.234,5"), "-1234.5");
+  assert.equal(normNum("1.234"), "1234", "Turkish thousands");
+  assert.equal(normNum("1,234.56"), "1234.56");
+  assert.equal(normNum("1,234,567"), "1234567");
+  assert.equal(normNum("12,345"), "12.345", "a single comma stays a decimal comma");
+  assert.equal(parseFloat(normNum("1.234,56")), 1234.56);
+  assert.equal(normNum("0.123"), "0.123", "leading zero: decimal, not thousands");
+  assert.equal(normNum("-0,5"), "-0.5");
+});
+
+test("mixed separators still match across the two readings", () => {
+  assert.equal(markUncertain("| 1.234,56 | 7 |", "| 1234,56 | 7 |").uncertain, 0);
+  assert.equal(markUncertain("| 1.234,56 | 7 |", "| 1.234,65 | 7 |").uncertain, 1);
+});
+
+test("Maksimum check reads whole Turkish numbers (firstNum, N5b)", () => {
+  const md = "| İl | Değer |\n| --- | --- |\n| A | 1.234,56 |\n| B | 999 |\n| Maksimum | 1.234,56 |";
+  assert.deepEqual(checkMaxRows(md), [], "1.234,56 is 1234.56, not 1.234");
+  const wrong = md.replace("| Maksimum | 1.234,56 |", "| Maksimum | %94,7 |");
+  assert.match(checkMaxRows(wrong).join(), /Maksimum 94\.7, satırlardan 1234\.56/);
+});
+
+test("compactTables keeps equal neighbouring cells (N4)", () => {
+  assert.equal(compactTables("| a | 100 | 100 |\n|:--|--:|---|\n<!-- image -->"), "| a | 100 | 100 |\n| --- | --- | --- |");
 });
 
 test("markUncertain flags numbers the second reading doesn't confirm", () => {
