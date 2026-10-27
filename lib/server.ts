@@ -92,6 +92,18 @@ export function getDoc(userId: string, id: string): Doc | undefined {
 export const MAX_DOCS_PER_USER = 20; // = chat fileIds limit (lib/validate.ts)
 export const docsOf = (userId: string) => [...docs.values()].filter((d) => d.ownerId === userId);
 
+/**
+ * Names are unique per user ("rapor.pdf", "rapor (2).pdf"), so a source chip like "rapor.pdf · Sayfa 3" always points
+ * at one document. Call it in the same synchronous block as saveDoc: then two uploads can't pick the same name.
+ */
+export function uniqueName(userId: string, name: string): string {
+  const taken = new Set(docsOf(userId).map((d) => d.name));
+  if (!taken.has(name)) return name;
+  const dot = name.lastIndexOf(".");
+  const [base, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  for (let i = 2; ; i++) if (!taken.has(`${base} (${i})${ext}`)) return `${base} (${i})${ext}`;
+}
+
 export function saveDoc(doc: Doc) {
   writeFileAtomic(path.join(DOCS_DIR, doc.ownerId, `${doc.id}.json`), JSON.stringify({ ...doc, chunks: undefined }));
   // Only after the file is safely on disk: a failed write must not leave a doc that vanishes on restart (audit R3).

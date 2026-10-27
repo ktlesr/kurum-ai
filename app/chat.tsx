@@ -92,6 +92,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const [renaming, setRenaming] = useState<string | null>(null);
   const [backupNote, setBackupNote] = useState<string | null>(null);
   const [source, setSource] = useState<{ serverId: string; label?: string } | null>(null);
+  const mobile = useMedia("(max-width: 767px)");
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -235,16 +236,15 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       setMessages((ms) => [...ms.slice(0, -1), m]);
     };
     // Saved before the answer starts (a closed tab keeps the question) and again when it ends.
+    // Read-modify-write: a rename or pin made while the answer streams (or in another tab) is kept.
     const id = chatId ?? crypto.randomUUID();
-    const prev = chatId ? local.chats.find((c) => c.id === chatId) : undefined;
-    const createdAt = prev?.createdAt ?? Date.now();
+    const docIds = ready.map((f) => f.serverId!).filter(Boolean);
     const persist = (msgs: Message[]) =>
-      local.save({
-        id, createdAt, updatedAt: Date.now(), pinned: prev?.pinned, model,
-        title: prev?.title ?? titleFrom(q),
-        docIds: ready.map((f) => f.serverId!).filter(Boolean),
+      local.upsert(id, (cur) => ({
+        ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
+        updatedAt: Date.now(), model, docIds,
         messages: msgs.filter((m) => m.content || m.error).map(({ role, content, error, meta }) => ({ role, content, ...(error ? { error } : {}), ...(meta ? { meta } : {}) })),
-      });
+      }));
     setChatId(id);
     persist(history);
 
@@ -550,11 +550,15 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       onDrop={(e) => { e.preventDefault(); setDragging(false); upload(e.dataTransfer.files); }}
     >
       {drawer && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setDrawer(false)} />}
-      <aside className={`fixed inset-y-0 left-0 z-40 w-72 border-r border-line bg-side transition-transform md:static md:translate-x-0 ${drawer ? "translate-x-0" : "-translate-x-full"}`}>
+      {/* Closed drawer: invisible, so its controls leave the tab order. An open layer makes what's behind it inert. */}
+      <aside
+        inert={mobile && !!source}
+        className={`fixed inset-y-0 left-0 z-40 w-72 border-r border-line bg-side transition-transform md:static md:visible md:translate-x-0 ${drawer ? "translate-x-0" : "invisible -translate-x-full"}`}
+      >
         {sidebar}
       </aside>
 
-      <main className="relative flex min-w-0 flex-1 flex-col bg-bg">
+      <main inert={mobile && (drawer || !!source)} className="relative flex min-w-0 flex-1 flex-col bg-bg">
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line bg-panel/80 px-3 backdrop-blur md:px-4">
           <button className="rounded-md p-1.5 text-muted hover:bg-subtle md:hidden" onClick={() => setDrawer(true)} aria-label="Menüyü aç">
             <Menu size={18} />
@@ -658,6 +662,18 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   );
 }
 
+function useMedia(query: string) {
+  const [match, setMatch] = useState(false);
+  useEffect(() => {
+    const mq = matchMedia(query);
+    const on = () => setMatch(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [query]);
+  return match;
+}
+
 function Banner({ children }: { children: ReactNode }) {
   return (
     <div role="alert" className="flex items-start gap-2 border-b border-line bg-warn-bg px-4 py-2.5 text-sm text-warn-fg">
@@ -733,8 +749,8 @@ const mdComponents: Components = {
   img: ({ alt }) => <span className="text-muted">[görsel: {alt || "adsız"}]</span>,
   // External links aren't clickable either: a click would hand the URL (and anything the model put in it) to that site.
   a: ({ href, children }) =>
-    // Only same-site paths and anchors stay links; any scheme (https:, mailto:, …) or //host does not.
-    href && /^(#|\/(?!\/))/.test(href) ? (
+    // Only in-page anchors stay links. Paths don't: a backslash path like /\host resolves to another site in browsers.
+    href && /^#[^\\]*$/.test(href) ? (
       <a href={href}>{children}</a>
     ) : (
       <span title={href}>{children} <span className="text-xs text-muted">(dış bağlantı devre dışı)</span></span>
@@ -745,6 +761,9 @@ const mdComponents: Components = {
 function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: string; onClose: () => void }) {
   const [doc, setDoc] = useState<{ name: string; sections: DocSection[] } | "error" | null>(null);
   const target = useRef<HTMLElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  // Full-screen on phones: focus moves into the panel (and Esc / the close button bring it back out).
+  useEffect(() => close.current?.focus({ preventScroll: true }), []);
   useEffect(() => {
     api(`/api/upload?id=${serverId}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
@@ -762,7 +781,7 @@ function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: s
           <p className="truncate text-sm font-medium">{doc && doc !== "error" ? doc.name : "Kaynak"}</p>
           {label && <p className="text-xs text-muted">{label}</p>}
         </div>
-        <button onClick={onClose} className="rounded-md p-1.5 text-muted hover:bg-subtle hover:text-fg" aria-label="Kaynak panelini kapat (Esc)" title="Kapat (Esc)">
+        <button ref={close} onClick={onClose} className="rounded-md p-1.5 text-muted hover:bg-subtle hover:text-fg" aria-label="Kaynak panelini kapat (Esc)" title="Kapat (Esc)">
           <X size={18} />
         </button>
       </div>

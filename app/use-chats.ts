@@ -1,27 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isQuotaError, makeBackup, mergeChats, openStore, parseBackup, sortChats, type LocalStore, type StoredChat } from "@/lib/local-store";
+import { isQuotaError, makeBackup, MAX_BACKUP_BYTES, openStore, parseBackup, sortChats, type LocalStore, type StoredChat } from "@/lib/local-store";
 
 const UNDO_MS = 8000;
 
 /**
  * The user's chats in this browser (IndexedDB), kept in sync across tabs with a BroadcastChannel.
- * onExternalChange fires when another tab changed a chat, so an open chat can be reloaded.
+ * onChanged fires for every chat changed outside the normal send flow (another tab, a restore), so an open chat
+ * can be reloaded.
  */
-export function useChats(user: string, onExternalChange: (id: string) => void) {
+export function useChats(user: string, onChanged: (id: string) => void) {
   const [chats, setChats] = useState<StoredChat[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<StoredChat | null>(null);
   const [storage, setStorage] = useState<{ persisted: boolean; usage?: number; quota?: number } | null>(null);
-  const store = useRef<LocalStore | null>(null);
+  // Every write awaits this: a question sent before the database finished opening is still saved.
+  const store = useRef<Promise<LocalStore> | null>(null);
   const channel = useRef<BroadcastChannel | null>(null);
   const deleteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const external = useRef(onExternalChange);
-  useEffect(() => { external.current = onExternalChange; });
+  const changed = useRef(onChanged);
+  useEffect(() => { changed.current = onChanged; });
 
   const reload = useCallback(async () => {
-    if (store.current) setChats(sortChats(await store.current.list()));
+    const s = await store.current?.catch(() => null);
+    if (s) setChats(sortChats(await s.list()));
   }, []);
 
   const refreshStorage = useCallback(async () => {
@@ -31,61 +34,59 @@ export function useChats(user: string, onExternalChange: (id: string) => void) {
   }, []);
 
   useEffect(() => {
-    let alive = true;
     const ch = new BroadcastChannel(`kurum-ai:${user}`);
     channel.current = ch;
-    ch.onmessage = (e: MessageEvent<{ id?: string }>) => {
+    ch.onmessage = (e: MessageEvent<{ ids?: string[] }>) => {
       reload();
-      if (e.data.id) external.current(e.data.id);
+      for (const id of e.data.ids ?? []) changed.current(id);
     };
-    openStore(user)
-      .then((s) => {
-        if (!alive) return;
-        store.current = s;
-        reload();
-        refreshStorage();
-      })
-      .catch(() => setError("Tarayıcı depolaması açılamadı (gizli pencere ya da depolama kapalı olabilir). Sohbetler kaydedilmeyecek."));
-    return () => {
-      alive = false;
-      ch.close();
-    };
+    store.current = openStore(user);
+    store.current.then(
+      () => { reload(); refreshStorage(); },
+      () => setError("Tarayıcı depolaması açılamadı (gizli pencere ya da depolama kapalı olabilir). Sohbetler kaydedilmeyecek."),
+    );
+    return () => ch.close();
   }, [user, reload, refreshStorage]);
 
-  const write = useCallback(async (fn: (s: LocalStore) => Promise<void>, id?: string) => {
-    if (!store.current) return false;
+  /** Runs a write, reports failure in the banner, tells the other tabs which chats changed. */
+  const write = useCallback(async (fn: (s: LocalStore) => Promise<void>, ids: string[]) => {
     try {
-      await fn(store.current);
+      const s = await store.current!;
+      await fn(s);
       setError(null);
     } catch (e) {
       setError(isQuotaError(e) ? "Tarayıcı depolama alanı dolu: eski sohbetleri silin ya da yedek alıp temizleyin." : "Sohbet kaydedilemedi.");
       return false;
     }
-    channel.current?.postMessage({ id });
+    channel.current?.postMessage({ ids });
     reload();
     return true;
   }, [reload]);
 
-  const save = useCallback(async (chat: StoredChat) => {
-    const ok = await write((s) => s.put(chat), chat.id);
+  /** Read-modify-write of one chat; fn gets the stored copy (or undefined for a new chat). */
+  const upsert = useCallback(async (id: string, fn: (cur: StoredChat | undefined) => StoredChat) => {
+    const ok = await write((s) => s.upsert(id, fn), [id]);
     // First real save: ask the browser not to evict this origin's data under storage pressure.
     if (ok && storage && !storage.persisted) navigator.storage?.persist?.().then(refreshStorage, () => {});
     return ok;
   }, [write, storage, refreshStorage]);
 
-  const patch = useCallback(async (id: string, p: Partial<StoredChat>) => {
-    const cur = await store.current?.get(id);
-    if (cur) await write((s) => s.put({ ...cur, ...p }), id);
-  }, [write]);
+  const patch = useCallback(
+    (id: string, p: Partial<StoredChat>) => write((s) => s.upsert(id, (cur) => {
+      if (!cur) throw new Error("gone");
+      return { ...cur, ...p };
+    }), [id]),
+    [write],
+  );
 
   /** Hidden at once, really deleted after the undo window. A closed tab in between keeps the chat (safe side). */
   const remove = useCallback((chat: StoredChat) => {
     clearTimeout(deleteTimer.current);
-    if (pendingDelete) write((s) => s.remove(pendingDelete.id), pendingDelete.id);
+    if (pendingDelete) write((s) => s.remove(pendingDelete.id), [pendingDelete.id]);
     setPendingDelete(chat);
     setChats((cs) => cs.filter((c) => c.id !== chat.id));
     deleteTimer.current = setTimeout(() => {
-      write((s) => s.remove(chat.id), chat.id);
+      write((s) => s.remove(chat.id), [chat.id]);
       setPendingDelete(null);
     }, UNDO_MS);
   }, [pendingDelete, write]);
@@ -97,8 +98,9 @@ export function useChats(user: string, onExternalChange: (id: string) => void) {
   }, [reload]);
 
   const exportBackup = useCallback(async () => {
-    if (!store.current) return;
-    const blob = new Blob([JSON.stringify(makeBackup(await store.current.list()))], { type: "application/json" });
+    const s = await store.current?.catch(() => null);
+    if (!s) return;
+    const blob = new Blob([JSON.stringify(makeBackup(await s.list()))], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `kurum-ai-yedek-${new Date().toISOString().slice(0, 10)}.json`;
@@ -108,16 +110,18 @@ export function useChats(user: string, onExternalChange: (id: string) => void) {
 
   /** Returns a user-facing result line. */
   const importBackup = useCallback(async (file: File): Promise<string> => {
-    if (!store.current) return "Tarayıcı depolaması açık değil.";
+    if (file.size > MAX_BACKUP_BYTES) return "Yedek dosyası çok büyük.";
     const parsed = parseBackup(await file.text());
     if (typeof parsed === "string") return parsed;
-    const fresh = mergeChats(await store.current.list(), parsed);
-    if (!(await write((s) => s.putMany(fresh)))) return "Yedek yüklenemedi.";
+    let fresh: StoredChat[] = [];
+    if (!(await write(async (s) => { fresh = await s.mergeIn(parsed); }, parsed.map((c) => c.id)))) return "Yedek yüklenemedi.";
+    // This tab too: an open chat that the backup replaced must show the restored version.
+    for (const c of fresh) changed.current(c.id);
     refreshStorage();
     return `${fresh.length} sohbet geri yüklendi${parsed.length > fresh.length ? ` (${parsed.length - fresh.length} tanesi zaten güncel)` : ""}.`;
   }, [write, refreshStorage]);
 
-  const get = useCallback((id: string) => store.current?.get(id), []);
+  const get = useCallback(async (id: string) => (await store.current?.catch(() => null))?.get(id), []);
 
-  return { chats, error, storage, pendingDelete, save, patch, remove, undoDelete, exportBackup, importBackup, get };
+  return { chats, error, storage, pendingDelete, upsert, patch, remove, undoDelete, exportBackup, importBackup, get };
 }

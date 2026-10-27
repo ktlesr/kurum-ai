@@ -23,6 +23,22 @@ test("bad backups are refused whole, with a user-facing reason", () => {
   assert.match(parseBackup(JSON.stringify(bad)) as string, /bozuk/);
 });
 
+test("backup meta is rebuilt from known fields; malformed meta is dropped, not stored", () => {
+  const meta = { mode: "rag", sources: ["Sayfa 1", 5], unverified: [], uncertain: ["9"], note: "n", extra: "x" };
+  const back = parseBackup(JSON.stringify(makeBackup([chat("a", 1, { messages: [
+    { role: "assistant", content: "x", meta: meta as never },
+    { role: "assistant", content: "y", meta: {} as never },
+  ] })]))) as StoredChat[];
+  assert.deepEqual(back[0].messages[0].meta, { mode: "rag", sources: ["Sayfa 1"], unverified: [], uncertain: ["9"], note: "n" });
+  assert.equal(back[0].messages[1].meta, undefined);
+});
+
+test("duplicate ids in a backup: the newest copy wins; oversized backups are refused", () => {
+  const back = parseBackup(JSON.stringify(makeBackup([chat("a", 30), chat("a", 20)]))) as StoredChat[];
+  assert.deepEqual(back.map((c) => c.updatedAt), [30]);
+  assert.match(parseBackup(" ".repeat(50 * 1024 * 1024 + 1)) as string, /çok büyük/);
+});
+
 test("restore adds new chats and newer copies, never overwrites newer local ones", () => {
   const local = [chat("a", 10), chat("b", 10)];
   const incoming = [chat("a", 5), chat("b", 20), chat("c", 1)];

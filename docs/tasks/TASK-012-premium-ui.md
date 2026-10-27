@@ -22,3 +22,4 @@
 **Bilinen sınırlar:** dar ekran görünümü bu oturumda tarayıcıda ölçülemedi (pencere yeniden boyutlanmadı); Playwright ile mobil/klavye E2E sonraki iş. Orijinal PDF sayfa görüntüsü yok — panel çıkarılmış metni gösterir (açıkça belirtiliyor).
 
 **Codex bulguları ve karar**
+- Codex tur 1 — CHANGES REQUIRED: **P1** dış bağlantı filtresi `/\example.org` ile aşılıyordu (önceki sürümden kalma) → yalnızca `#` çapaları bağlantı kalır, ters eğik çizgi yok; tarayıcıda doğrulandı. **P2** mobilde kapalı çekmece Tab sırasındaydı, tam ekran panelde odak taşınmıyordu → kapalı çekmece `invisible`, açık katmanın arkası `inert`, panel açılınca odak kapat düğmesinde. **P2** aynı adlı belgelerde yanlış kaynak → sunucu adları kullanıcı başına benzersiz yapar (`a (2).txt`), izolasyon testine eklendi (geçti).
