@@ -9,6 +9,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4 # sürümü package.json → packageManager
@@ -26,6 +27,7 @@ jobs:
   isolation:
     # Kullanıcı A/B izolasyonu gerçek sunucu + Postgres'e karşı (tests/isolation.test.ts)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17-alpine

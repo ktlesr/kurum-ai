@@ -1,6 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { KILL_GRACE_MS, runJsonLines } from "./proc.ts";
 
 // Fake child processes: this same node binary running a one-liner.
@@ -15,9 +16,14 @@ test("valid lines reach onLine; exit 0 resolves", async () => {
 const alive = (pid: number) => {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
+  }
+  // A killed orphan nobody reaped yet (e.g. PID 1 in a container is not an init) is a zombie: dead, not running.
+  try {
+    return readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1]?.[0] !== "Z";
+  } catch {
+    return true;
   }
 };
 
@@ -78,7 +84,7 @@ test("after the main child exits, helpers left in its group are killed too (POSI
 
 test("a child that exits normally doesn't leave helpers behind either (POSIX)", { skip: process.platform === "win32" && "süreç grupları yok" }, async () => {
   const helper = `setInterval(()=>{},1000)`;
-  const main = `const {spawn}=require("child_process");const h=spawn(process.execPath,["-e",${JSON.stringify(helper)}],{stdio:"ignore"});console.log(JSON.stringify({pid:h.pid}));`;
+  const main = `const {spawn}=require("child_process");const h=spawn(process.execPath,["-e",${JSON.stringify(helper)}],{stdio:"ignore"});h.unref();console.log(JSON.stringify({pid:h.pid}));`;
   let helperPid = 0;
   await runJsonLines(process.execPath, ["-e", main], {}, (v: { pid: number }) => (helperPid = v.pid));
   await new Promise((r) => setTimeout(r, 300));
