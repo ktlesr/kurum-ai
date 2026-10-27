@@ -1,6 +1,7 @@
 import "server-only";
 import { DEFAULT_CHARS_PER_TOKEN } from "./context";
-import { OLLAMA_URL, type Doc } from "./server";
+import type { Doc } from "./server";
+import { embedProvider } from "./provider";
 import { admission } from "./admission";
 
 export const EMBED_MODEL = process.env.EMBED_MODEL ?? "embeddinggemma";
@@ -62,16 +63,7 @@ const asQuery = (q: string) => `task: search result | query: ${q}`;
 const asDoc = (c: Chunk) => `title: ${c.doc} ${c.label} | text: ${c.text}`;
 
 async function embed(input: string[], signal: AbortSignal): Promise<number[][]> {
-  return admission.model.run(async () => {
-    const res = await fetch(`${OLLAMA_URL}/api/embed`, {
-      method: "POST",
-      signal,
-      body: JSON.stringify({ model: EMBED_MODEL, input, truncate: true }),
-    });
-    const j = (await res.json()) as { embeddings?: number[][]; error?: string };
-    if (!res.ok || !j.embeddings) throw new Error(`embed_http_${res.status}`);
-    return j.embeddings;
-  }, signal);
+  return admission.model.run(() => embedProvider.embed(EMBED_MODEL, input, signal), signal);
 }
 
 const cosine = (a: number[], b: number[]) => {

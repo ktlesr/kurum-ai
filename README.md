@@ -56,9 +56,12 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 | `INSTANCE_LOCK_WAIT_MS` | `30000` | Açılışta, önceki sürecin veritabanı kilidini bırakmasını bekleme süresi; sonra açılış reddedilir |
 | `CHAT_PER_MIN` / `UPLOAD_PER_MIN` | `20` / `20` | Kullanıcı başına dakikalık soru / yükleme sınırı (429) |
 | `COOKIE_SECURE` | `true` (üretimde) | Yalnızca HTTPS'siz ağ testinde `false`; üretimde HTTPS arkasında açık kalmalı |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama adresi |
+| `MODEL_PROVIDER` | `ollama` | `ollama` (geliştirme) ya da `vllm`/`openai` (GB10'da vLLM, OpenAI uyumlu API) |
+| `MODEL_URL` | `http://localhost:11434` (ollama) / `http://localhost:8000/v1` (vllm) | Sohbet modeli sunucusu. Eski `OLLAMA_URL` de okunur. vLLM için `/v1` dahil |
+| `EMBED_URL` / `VISION_URL` | `MODEL_URL` | vLLM her süreçte tek model sunar: embedding ve görsel model ayrı süreçteyse adresleri |
+| `MODEL_API_KEY` | — | vLLM `--api-key` ile açıldıysa |
 | `DEFAULT_MODEL` | `gemma4:12b` | Açılışta seçili sohbet modeli |
-| `NUM_CTX` | `16384` | Bağlam penceresi (token). gemma4 kayan pencereli dikkat kullandığı için bellek neredeyse artmıyor (RTX 5090'da 64k: 9,2 GB, 128k: 9,5 GB, 256k: ~8,3 GB). Bu makinede `131072` kullanılıyor (~380 bin karakter) |
+| `NUM_CTX` | `16384` | Bağlam penceresi (token). vLLM'de sunucunun `--max-model-len` değeriyle aynı verilmeli (Ollama'da istekle gönderilir). gemma4 kayan pencereli dikkat kullandığı için bellek neredeyse artmıyor (RTX 5090'da 64k: 9,2 GB, 128k: 9,5 GB, 256k: ~8,3 GB). Bu makinede `131072` kullanılıyor (~380 bin karakter) |
 | `EMBED_MODEL` | `embeddinggemma` | Bağlama sığmayan dosyalarda parça arama modeli |
 | `VISION_MODEL` | `gemma4:12b` | Görsel tabloların ikinci okuması için görsel model |
 | `VISION_VERIFY` | `true` | `false` yapılırsa ikinci okuma atlanır (hızlı ama doğrulamasız) |

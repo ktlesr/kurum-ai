@@ -7,7 +7,6 @@ import path from "node:path";
 import { DEFAULT_CHARS_PER_TOKEN } from "./context";
 import type { Chunk } from "./rag";
 
-export const OLLAMA_URL = (process.env.OLLAMA_URL ?? "http://localhost:11434").replace(/\/$/, "");
 export const DEFAULT_MODEL = process.env.DEFAULT_MODEL ?? "gemma4:12b";
 export const NUM_CTX = Number(process.env.NUM_CTX) || 16384;
 export const MAX_BYTES = 25 * 1024 * 1024;

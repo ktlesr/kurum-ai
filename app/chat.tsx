@@ -54,7 +54,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const [think, setThink] = useState(true);
   const [numCtx, setNumCtx] = useState(16384);
   const [cpt, setCpt] = useState<Record<string, number>>({});
-  const [ollamaOk, setOllamaOk] = useState(true);
+  const [modelOk, setModelOk] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -65,24 +65,24 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const fileInput = useRef<HTMLInputElement>(null);
   const uploads = useRef(new Map<string, AbortController>());
 
-  const checkOllama = useCallback(async () => {
+  const checkModels = useCallback(async () => {
     const r = (await api("/api/models").then((res) => res.json())) as {
       ok: boolean; models: string[]; defaultModel: string; numCtx: number; charsPerToken: Record<string, number>;
     };
-    setOllamaOk(r.ok);
+    setModelOk(r.ok);
     setModels(r.models);
     setNumCtx(r.numCtx);
     setCpt(r.charsPerToken);
-    // Keep the choice only while the server still offers it (allowlist can change, Ollama can come back with fewer models).
+    // Keep the choice only while the server still offers it (allowlist can change, the model server can come back with fewer models).
     setModel((cur) => (r.models.includes(cur) ? cur : r.models.includes(r.defaultModel) ? r.defaultModel : (r.models[0] ?? r.defaultModel)));
   }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch, then poll
-    checkOllama();
-    const t = setInterval(checkOllama, 15000);
+    checkModels();
+    const t = setInterval(checkModels, 15000);
     return () => clearInterval(t);
-  }, [checkOllama]);
+  }, [checkModels]);
 
   // Files uploaded earlier are kept on the server; bring their cards back.
   useEffect(() => {
@@ -183,7 +183,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       });
       if (!res.ok || !res.body) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
-        if (res.status === 503) setOllamaOk(false);
+        if (res.status === 503) setModelOk(false);
         setLast(() => ({ role: "assistant", content: j.error ?? `Beklenmeyen hata (${res.status}).`, error: true }));
         return;
       }
@@ -208,8 +208,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       if (metaJson) setLast((m) => ({ ...m, meta: JSON.parse(metaJson) as ChatMeta }));
     } catch (e) {
       if (!(e instanceof DOMException && e.name === "AbortError")) {
-        setLast(() => ({ role: "assistant", content: "Bağlantı koptu. Ollama çalışıyor mu?", error: true }));
-        checkOllama();
+        setLast(() => ({ role: "assistant", content: "Bağlantı koptu. Lütfen tekrar deneyin.", error: true }));
+        checkModels();
       }
     } finally {
       setStreaming(false);
@@ -358,10 +358,10 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           <ThemeToggle />
         </header>
 
-        {!ollamaOk && (
+        {!modelOk && (
           <div role="alert" className="flex items-center gap-2 border-b border-line bg-warn-bg px-4 py-2.5 text-sm text-warn-fg">
             <AlertTriangle size={16} className="shrink-0" />
-            <span>Ollama çalışmıyor — <code className="font-mono">ollama serve</code> komutunu çalıştırın.</span>
+            <span>Model sunucusuna ulaşılamıyor. Yöneticinize bildirin.</span>
           </div>
         )}
         {ratio < 1 && (
