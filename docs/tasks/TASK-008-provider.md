@@ -27,3 +27,4 @@
 **Codex bulguları ve karar**
 - Codex tur 1 — CHANGES REQUIRED (P2 ×2): kesilmiş görsel okuma başarılı sayılıyordu → `truncated` ise hata (önbelleğe yazılmaz, doğrulama "atlandı" olur); boş `MODEL_URL`/`EMBED_URL`/`VISION_URL` göreli adres üretiyordu → `||` ile varsayılana düşer. Eksik testler eklendi: `Authorization` başlığı, Ollama gpt-oss `low`/`high`, iptal. 51/51.
 - Not: vLLM'de düşünme parçalarının ayrışması için sunucu `--reasoning-parser` ile başlatılmalı (deploy notu).
+- Codex tur 2 — **APPROVED WITH NOTES**: iki P2 kapandı. Notlar (onayı engellemiyor, sonraki iş): boş URL ve görsel kesilme için doğrudan regresyon testi (görsel yol `server-only` modülde), akış okunurken iptal testi.
