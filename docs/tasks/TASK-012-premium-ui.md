@@ -23,3 +23,4 @@
 
 **Codex bulguları ve karar**
 - Codex tur 1 — CHANGES REQUIRED: **P1** dış bağlantı filtresi `/\example.org` ile aşılıyordu (önceki sürümden kalma) → yalnızca `#` çapaları bağlantı kalır, ters eğik çizgi yok; tarayıcıda doğrulandı. **P2** mobilde kapalı çekmece Tab sırasındaydı, tam ekran panelde odak taşınmıyordu → kapalı çekmece `invisible`, açık katmanın arkası `inert`, panel açılınca odak kapat düğmesinde. **P2** aynı adlı belgelerde yanlış kaynak → sunucu adları kullanıcı başına benzersiz yapar (`a (2).txt`), izolasyon testine eklendi (geçti).
+- Codex tur 2 (FAZ 2+3 birlikte) — **APPROVED WITH NOTES**: tüm bulgular kapandı. Not uygulandı: kaynak paneli kapanınca odak açan öğeye döner. Mobil çekmecede klavye odak dönüşü ve dar ekran görünümü, Playwright E2E ile sonraki işte doğrulanacak.

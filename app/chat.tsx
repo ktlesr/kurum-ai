@@ -763,7 +763,12 @@ function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: s
   const target = useRef<HTMLElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   // Full-screen on phones: focus moves into the panel (and Esc / the close button bring it back out).
-  useEffect(() => close.current?.focus({ preventScroll: true }), []);
+  useEffect(() => {
+    // Focus goes back to whatever opened the panel (a source chip, a document card) when it closes.
+    const opener = document.activeElement as HTMLElement | null;
+    close.current?.focus({ preventScroll: true });
+    return () => opener?.focus({ preventScroll: true });
+  }, []);
   useEffect(() => {
     api(`/api/upload?id=${serverId}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
