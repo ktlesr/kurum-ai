@@ -36,7 +36,8 @@ export async function contentProblem(ext: string, buf: Uint8Array): Promise<stri
 
 async function zipProblem(buf: Uint8Array): Promise<string | null> {
   const z = zipTotals(buf);
-  if (!z) return "Dosya bozuk görünüyor (ZIP yapısı okunamadı).";
+  // Also ZIP64-format archives: never written by Word/Excel/LibreOffice for files this size; re-saving fixes it.
+  if (!z) return "Dosyanın iç yapısı desteklenmiyor ya da bozuk. Dosyayı Word/Excel'de açıp yeniden kaydederek tekrar deneyin.";
   const tooBig = "Dosya açıldığında çok büyük (sıkıştırılmış içerik sınırı aşıldı).";
   if (z.entries > ZIP_LIMITS.entries || z.uncompressed > ZIP_LIMITS.totalBytes) return tooBig;
   // Declared sizes are the uploader's word. Inflate for real, capped, before any parser sees the file.
@@ -108,12 +109,31 @@ export function zipEntries(buf: Uint8Array): ZipEntry[] | null {
     if (p + 46 > eocd || v.getUint32(p, true) !== 0x02014b50) return null;
     const e = { method: v.getUint16(p + 10, true), flags: v.getUint16(p + 8, true), csize: v.getUint32(p + 20, true), usize: v.getUint32(p + 24, true), local: v.getUint32(p + 42, true) };
     if (e.csize === 0xffffffff || e.usize === 0xffffffff || e.local === 0xffffffff) return null;
+    const nameLen = v.getUint16(p + 28, true), extraLen = v.getUint16(p + 30, true);
+    if (p + 46 + nameLen + extraLen > eocd || zip64Disagrees(v, p + 46 + nameLen, extraLen, [e.usize, e.csize, e.local])) return null;
     out.push(e);
-    p += 46 + v.getUint16(p + 28, true) + v.getUint16(p + 30, true) + v.getUint16(p + 32, true);
+    p += 46 + nameLen + extraLen + v.getUint16(p + 32, true);
     if (p > cdOffset + cdSize) return null;
   }
   if (out.length !== count || !localsAgree(v, out, cdOffset)) return null;
   return out;
+}
+
+/**
+ * ZIP64 extended-information extra field (id 0x0001). Some office tools write one even for small files, so it is
+ * allowed only as a redundant copy: every 64-bit value in it must equal the 32-bit field we already checked
+ * (in order: uncompressed size, compressed size, local header offset). Anything else could show a parser other sizes.
+ */
+function zip64Disagrees(v: DataView, start: number, len: number, checked: number[]): boolean {
+  for (let x = start; x + 4 <= start + len; x += 4 + v.getUint16(x + 2, true)) {
+    if (v.getUint16(x, true) !== 0x0001) continue;
+    const size = v.getUint16(x + 2, true);
+    if (size % 8 !== 0 || size / 8 > checked.length || x + 4 + size > start + len) return true;
+    for (let i = 0; i < size / 8; i++) {
+      if (v.getBigUint64(x + 4 + i * 8, true) !== BigInt(checked[i])) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -129,16 +149,19 @@ function localsAgree(v: DataView, entries: ZipEntry[], cdOffset: number): boolea
     const flags = v.getUint16(l + 6, true), method = v.getUint16(l + 8, true);
     const csize = v.getUint32(l + 18, true), usize = v.getUint32(l + 22, true);
     const nameLen = v.getUint16(l + 26, true), extraLen = v.getUint16(l + 28, true);
-    const descriptor = (flags & 0x8) !== 0; // sizes follow the data instead (then local sizes are 0)
+    const descriptor = (flags & 0x8) !== 0; // sizes also follow the data in a descriptor
     if (method !== e.method || ((flags ^ e.flags) & 0x8) !== 0) return false;
-    if (!descriptor && (csize !== e.csize || usize !== e.usize)) return false;
-    if (descriptor && (csize !== 0 && csize !== e.csize)) return false;
-    // ZIP64 extra field (id 0x0001) in the local header: sizes we didn't check.
-    for (let x = l + 30 + nameLen; x + 4 <= l + 30 + nameLen + extraLen; x += 4 + v.getUint16(x + 2, true)) {
-      if (v.getUint16(x, true) === 0x0001) return false;
-    }
+    // Local sizes: equal to the directory's, or 0 when a descriptor carries them. Never anything else.
+    const sizesOk = (c: number, u: number) => c === e.csize && u === e.usize;
+    if (!(sizesOk(csize, usize) || (descriptor && csize === 0 && usize === 0))) return false;
+    if (zip64Disagrees(v, l + 30 + nameLen, extraLen, [usize, csize])) return false;
     expect = l + 30 + nameLen + extraLen + e.csize;
-    if (descriptor) expect += expect + 4 <= cdOffset && v.getUint32(expect, true) === 0x08074b50 ? 16 : 12;
+    if (descriptor) {
+      // Optional signature, then crc, csize, usize: those sizes must match the directory too.
+      const sig = expect + 4 <= cdOffset && v.getUint32(expect, true) === 0x08074b50 ? 4 : 0;
+      if (expect + sig + 12 > cdOffset || !sizesOk(v.getUint32(expect + sig + 4, true), v.getUint32(expect + sig + 8, true))) return false;
+      expect += sig + 12;
+    }
   }
   return expect === cdOffset;
 }

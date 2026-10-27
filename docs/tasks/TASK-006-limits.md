@@ -27,7 +27,7 @@
 | 40 MB `Content-Length`, 1 bayt gövde (ham TCP) | 413, gövde beklenmeden ✅ (e2e) |
 | 40 MB chunked gövde | 413; Node istemcisi ~31 MB'ta kesildi ✅ (e2e; curl ile de 413) |
 | 21. sohbet isteği / dk | ilk 20 → 400 (doğrulama), 21. → 429 ✅ (e2e) |
-| `pnpm test` 40/40 (+1 yalnız POSIX), izolasyon 3/3, restart, `tsc`, `lint`, `build` | ✅ |
+| `pnpm test` 41/41 (+2 yalnız POSIX), izolasyon 3/3, restart, `tsc`, `lint`, `build` | ✅ |
 | Docling süre/sayfa sınırı, model kuyruğu dolması | birim + kod incelemesi; Ollama bu makinede yok, uçtan uca tetiklenmedi |
 
 **Rollback:** Branch'i geri al; veri biçimi değişmedi.
@@ -47,4 +47,6 @@
   - P1 ZIP: merkezi dizin "stored, küçük", yerel başlık "deflate" diyebiliyordu (SheetJS yereli kullanır; 1 MiB açtı) → yerel ve merkezi başlıkta yöntem, veri tanımlayıcı bayrağı ve boyutlar eşit olmalı; yerel başlıkta ZIP64 ek alanı red; yerel girdiler arşivi 0. bayttan merkezi dizine **boşluksuz** kaplamalı (aradaki gizli girdi red). Testler: yöntem/boyut uyuşmazlığı, ZIP64 ek alanı, girdiler arası gizli bayt reddediliyor; veri tanımlayıcılı geçerli arşiv kabul ediliyor; gerçek DOCX/XLSX geçiyor.
   - P2 ana süreç kapanınca grup SIGKILL'i iptal oluyordu → sonlandırma başlatıldıysa ana çocuğun `close`'unda da gruba SIGKILL. Test (yalnız POSIX, CI'da): SIGTERM'i yok sayan ve boru tutmayan yardımcı süreç, iptal sonrası ölü.
   - P2 unpdf belgesi kapatılmıyordu → `try/finally` ile `pdf.loadingTask.destroy()` (unpdf'in kendi yaptığı gibi).
+- Codex tur 3 + otomatik inceleme — CHANGES REQUIRED: P1 veri tanımlayıcılı girdide yerel boyut ve merkezi dizindeki ZIP64 ek alanı denetlenmiyordu (126 / 150 baytlık repro, SheetJS 1 MiB ayırdı); grup SIGKILL'i yalnızca hata durumundaydı → yerel boyutlar ya dizinle aynı ya da (tanımlayıcı varsa) 0 olmalı; tanımlayıcıdaki boyutlar da dizinle aynı olmalı; ZIP64 ek alanı (yerel veya merkezi) yalnızca denetlenen 32 bit değerlerin birebir kopyasıysa kabul. Grup, ana çocuk nasıl biterse bitsin SIGKILL alır. İki repro + yalan tanımlayıcı + gereksiz-ama-tutarlı ZIP64 ek alanı testleri; normal çıkışta geride kalan yardımcı süreç testi (POSIX).
+  - **Bilinen sınır:** gerçek ZIP64 biçimli arşivler (32 bit alanlar 0xFFFFFFFF; ör. Python `force_zip64`) reddedilir — Word/Excel/LibreOffice bu boyuttaki dosyalarda yazmaz. Mesaj: "iç yapısı desteklenmiyor ya da bozuk… yeniden kaydedin". Denendi: böyle bir XLSX reddedildi (SheetJS okuyabiliyordu).
 - CI yan bulgusu: restart'ta eski sürecin veritabanı kilidi port kapandıktan sonra bir an daha tutulabiliyor → `boot` kilidi `INSTANCE_LOCK_WAIT_MS` (30 sn) boyunca yeniden deniyor (rolling deploy için de gerekli); CI restart bekleme 60 sn. Yerelde anında restart ve ikinci instance reddi (bekleme 3 sn ile) doğrulandı.

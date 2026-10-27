@@ -75,3 +75,13 @@ test("after the main child exits, helpers left in its group are killed too (POSI
   assert.ok(helperPid > 0);
   assert.equal(alive(helperPid), false, "helper killed with the group");
 });
+
+test("a child that exits normally doesn't leave helpers behind either (POSIX)", { skip: process.platform === "win32" && "süreç grupları yok" }, async () => {
+  const helper = `setInterval(()=>{},1000)`;
+  const main = `const {spawn}=require("child_process");const h=spawn(process.execPath,["-e",${JSON.stringify(helper)}],{stdio:"ignore"});console.log(JSON.stringify({pid:h.pid}));`;
+  let helperPid = 0;
+  await runJsonLines(process.execPath, ["-e", main], {}, (v: { pid: number }) => (helperPid = v.pid));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(helperPid > 0);
+  assert.equal(alive(helperPid), false, "helper killed when the main child exited");
+});

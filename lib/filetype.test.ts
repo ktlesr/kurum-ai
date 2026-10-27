@@ -21,6 +21,11 @@ type Entry = {
   gap?: number;
   /** Sizes in a trailing data descriptor (flag bit 3), local sizes 0. */
   descriptor?: boolean;
+  /** Tampering with a descriptor entry: non-zero local uncompressed size / lying descriptor size. */
+  localDescUsize?: number;
+  descriptorUsize?: number;
+  /** ZIP64 extra field in the central directory entry only, holding this uncompressed size. */
+  cdZip64Extra?: number;
 };
 function zip(entries: Entry[]): Uint8Array {
   const locals: Buffer[] = [], cds: Buffer[] = [];
@@ -31,20 +36,21 @@ function zip(entries: Entry[]): Uint8Array {
     const size = e.declared ?? e.data.byteLength;
     const method = e.stored ? 0 : 8;
     const flags = e.descriptor ? 0x8 : 0;
-    const extra = e.zip64Extra ? Buffer.from([0x01, 0x00, 0x10, 0x00, ...Array(16).fill(0)]) : Buffer.alloc(0);
+    // Local ZIP64 extra claiming 1 MiB (usize) and 1 MiB (csize): disagrees with the 32-bit fields.
+    const extra = e.zip64Extra ? Buffer.from([0x01, 0x00, 0x10, 0x00, 0, 0, 0x10, 0, 0, 0, 0, 0, 0, 0, 0x10, 0, 0, 0, 0, 0]) : Buffer.alloc(0);
     const lh = Buffer.alloc(30);
     lh.writeUInt32LE(0x04034b50, 0);
     lh.writeUInt16LE(flags, 6);
     lh.writeUInt16LE(e.localMethod ?? method, 8);
     lh.writeUInt32LE(e.descriptor ? 0 : body.length, 18);
-    lh.writeUInt32LE(e.descriptor ? 0 : (e.localSize ?? size), 22);
+    lh.writeUInt32LE(e.descriptor ? (e.localDescUsize ?? 0) : (e.localSize ?? size), 22);
     lh.writeUInt16LE(name.length, 26);
     lh.writeUInt16LE(extra.length, 28);
     const dd = Buffer.alloc(e.descriptor ? 16 : 0);
     if (e.descriptor) {
       dd.writeUInt32LE(0x08074b50, 0);
       dd.writeUInt32LE(body.length, 8);
-      dd.writeUInt32LE(size, 12);
+      dd.writeUInt32LE(e.descriptorUsize ?? size, 12);
     }
     const gap = Buffer.alloc(e.gap ?? 0, 0x41);
     locals.push(lh, name, extra, body, dd, gap);
@@ -54,9 +60,16 @@ function zip(entries: Entry[]): Uint8Array {
     ch.writeUInt16LE(method, 10);
     ch.writeUInt32LE(body.length, 20);
     ch.writeUInt32LE(size, 24);
+    const cdExtra = Buffer.alloc(e.cdZip64Extra === undefined ? 0 : 12);
+    if (e.cdZip64Extra !== undefined) {
+      cdExtra.writeUInt16LE(0x0001, 0);
+      cdExtra.writeUInt16LE(8, 2);
+      cdExtra.writeBigUInt64LE(BigInt(e.cdZip64Extra), 4);
+    }
     ch.writeUInt16LE(name.length, 28);
+    ch.writeUInt16LE(cdExtra.length, 30);
     ch.writeUInt32LE(offset, 42);
-    cds.push(ch, name);
+    cds.push(ch, name, cdExtra);
     offset += 30 + name.length + extra.length + body.length + dd.length + gap.length;
   });
   const cd = Buffer.concat(cds);
@@ -152,7 +165,19 @@ test("local headers must agree with the directory and tile the archive", async (
   // Codex repro: directory says "stored, small", local says "deflate" — SheetJS would inflate by the local one.
   assert.equal(zipTotals(zip([{ data: bytes(1024 * 1024), declared: 1034, localMethod: 0 }])), null, "method mismatch");
   assert.equal(zipTotals(zip([{ data: bytes(10), localSize: 999 }])), null, "size mismatch");
-  assert.equal(zipTotals(zip([{ data: bytes(10), zip64Extra: true }])), null, "ZIP64 extra in local header");
+  assert.equal(zipTotals(zip([{ data: bytes(10), zip64Extra: true }])), null, "ZIP64 extra in local header with other sizes");
   assert.equal(zipTotals(zip([{ data: bytes(10), gap: 64 }, { data: bytes(10) }])), null, "bytes hidden between entries");
   assert.notEqual(await contentProblem("xlsx", zip([{ data: bytes(10), gap: 64 }])), null);
+});
+
+test("descriptor entries and directory extras can't smuggle sizes past the check (Codex round 3 repros)", () => {
+  // Directory declares 0 bytes; the local header of a descriptor entry claims 1 MiB.
+  assert.equal(zipTotals(zip([{ data: bytes(10), descriptor: true, declared: 0, localDescUsize: 1024 * 1024 }])), null);
+  // Descriptor itself lying about the size.
+  assert.equal(zipTotals(zip([{ data: bytes(10), descriptor: true, descriptorUsize: 1024 * 1024 }])), null);
+  // ZIP64 extra only in the central directory entry, claiming another size: refused.
+  assert.equal(zipTotals(zip([{ data: bytes(10), cdZip64Extra: 1024 * 1024 }])), null);
+  // ...but a redundant ZIP64 extra that repeats the checked size is fine (some office tools always write one).
+  assert.notEqual(zipTotals(zip([{ data: bytes(10), cdZip64Extra: 10 }])), null);
+  assert.notEqual(zipTotals(zip([{ data: bytes(10), descriptor: true }])), null, "an honest descriptor still passes");
 });
