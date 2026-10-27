@@ -171,9 +171,10 @@ export function makeProvider(kind: ProviderKind, url: string, opts: { apiKey?: s
 const env = process.env;
 export const PROVIDER_KIND: ProviderKind = env.MODEL_PROVIDER === "openai" || env.MODEL_PROVIDER === "vllm" ? "openai" : "ollama";
 /** Chat server. vLLM serves one model per process, so embeddings and vision may live elsewhere (EMBED_URL, VISION_URL). */
-export const MODEL_URL = env.MODEL_URL ?? env.OLLAMA_URL ?? (PROVIDER_KIND === "openai" ? "http://localhost:8000/v1" : "http://localhost:11434");
+// `||`, not `??`: an empty variable (compose "X=") means unset.
+export const MODEL_URL = env.MODEL_URL || env.OLLAMA_URL || (PROVIDER_KIND === "openai" ? "http://localhost:8000/v1" : "http://localhost:11434");
 const numCtx = Number(env.NUM_CTX) || 16384;
 const make = (url: string) => makeProvider(PROVIDER_KIND, url, { apiKey: env.MODEL_API_KEY, numCtx });
 export const chatProvider = make(MODEL_URL);
-export const embedProvider = make(env.EMBED_URL ?? MODEL_URL);
-export const visionProvider = make(env.VISION_URL ?? MODEL_URL);
+export const embedProvider = make(env.EMBED_URL || MODEL_URL);
+export const visionProvider = make(env.VISION_URL || MODEL_URL);

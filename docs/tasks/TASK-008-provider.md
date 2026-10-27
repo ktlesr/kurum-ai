@@ -25,3 +25,5 @@
 **Rollback:** branch'i geri al; ortam değişkenleri geriye uyumlu (`OLLAMA_URL`).
 
 **Codex bulguları ve karar**
+- Codex tur 1 — CHANGES REQUIRED (P2 ×2): kesilmiş görsel okuma başarılı sayılıyordu → `truncated` ise hata (önbelleğe yazılmaz, doğrulama "atlandı" olur); boş `MODEL_URL`/`EMBED_URL`/`VISION_URL` göreli adres üretiyordu → `||` ile varsayılana düşer. Eksik testler eklendi: `Authorization` başlığı, Ollama gpt-oss `low`/`high`, iptal. 51/51.
+- Not: vLLM'de düşünme parçalarının ayrışması için sunucu `--reasoning-parser` ile başlatılmalı (deploy notu).

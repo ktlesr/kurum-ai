@@ -1,17 +1,17 @@
 // Run: pnpm test
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { makeProvider } from "./provider.ts";
 
 /** Fake model server: records each request body, answers from `routes`. */
-const seen: { path: string; body: Record<string, unknown> }[] = [];
+const seen: { path: string; body: Record<string, unknown>; headers: IncomingHttpHeaders }[] = [];
 const routes: Record<string, (res: ServerResponse) => void> = {};
 const server = createServer(async (req: IncomingMessage, res) => {
   let raw = "";
   for await (const c of req) raw += c;
-  seen.push({ path: req.url!, body: raw ? JSON.parse(raw) : {} });
+  seen.push({ path: req.url!, body: raw ? JSON.parse(raw) : {}, headers: req.headers });
   (routes[req.url!] ?? ((r) => r.writeHead(404).end()))(res);
 });
 await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -44,6 +44,23 @@ test("ollama: streamed text, thinking count, truncation, prompt tokens, vision i
   assert.equal(body.think, false);
 });
 
+test("ollama: gpt-oss gets an effort instead of on/off", async () => {
+  routes["/api/chat"] = send(['{"done":true}']);
+  const p = makeProvider("ollama", base, { numCtx: 1 });
+  await p.chat({ model: "gpt-oss:20b", messages: [], think: true, maxTokens: 1, signal });
+  assert.equal((seen.at(-1)!.body as { think: unknown }).think, "high");
+  await p.chat({ model: "gpt-oss:20b", messages: [], think: false, maxTokens: 1, signal });
+  assert.equal((seen.at(-1)!.body as { think: unknown }).think, "low");
+});
+
+test("abort reaches the request", async () => {
+  routes["/api/chat"] = () => {}; // never answers
+  const ac = new AbortController();
+  const q = makeProvider("ollama", base, { numCtx: 1 }).chat({ model: "m", messages: [], maxTokens: 1, signal: ac.signal });
+  ac.abort(new Error("iptal"));
+  await assert.rejects(q, /iptal/);
+});
+
 test("ollama: models drops cloud and non-chat models; embed; health", async () => {
   routes["/api/tags"] = send([JSON.stringify({ models: [{ name: "a" }, { name: "b:cloud", remote_host: "x" }, { name: "e", capabilities: ["embedding"] }] })]);
   routes["/api/embed"] = send([JSON.stringify({ embeddings: [[1, 2]] })]);
@@ -72,6 +89,7 @@ test("openai (vLLM): SSE deltas, reasoning, finish_reason, usage, images as data
   assert.deepEqual(body.chat_template_kwargs, { enable_thinking: true });
   assert.equal(body.messages[0].content, "s");
   assert.deepEqual(body.messages[1].content, [{ type: "text", text: "x" }, { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } }]);
+  assert.equal(seen.at(-1)!.headers.authorization, "Bearer k");
 });
 
 test("openai (vLLM): embeddings keep input order, models, http errors", async () => {

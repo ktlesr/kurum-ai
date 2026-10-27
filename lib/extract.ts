@@ -61,10 +61,12 @@ async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Pr
   const hit = await readFile(file, "utf8").catch(() => null);
   if (hit !== null) return hit;
   // The slot covers the whole call, body included: a provider that sends headers early is still "busy".
-  const text = await admission.model.run(
-    async () => (await visionProvider.chat({ model: VISION_MODEL, messages: [{ role: "user", content: VISION_PROMPT, images: [png] }], maxTokens: VISION_MAX_TOKENS, signal })).text.trim(),
-    signal,
-  );
+  const text = await admission.model.run(async () => {
+    const r = await visionProvider.chat({ model: VISION_MODEL, messages: [{ role: "user", content: VISION_PROMPT, images: [png] }], maxTokens: VISION_MAX_TOKENS, signal });
+    // A cut-off reading is a failed reading: never cached, never compared (the caller marks verification skipped).
+    if (r.truncated) throw new Error("vision_truncated");
+    return r.text.trim();
+  }, signal);
   writeFileAtomic(file, text);
   return text;
 }
