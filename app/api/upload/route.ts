@@ -1,4 +1,6 @@
-import { deleteDoc, docsOf, MAX_BYTES, MAX_DOCS_PER_USER, saveDoc, toMeta, type Doc } from "@/lib/server";
+import { createHash } from "node:crypto";
+import { extractDir } from "@/lib/workspace";
+import { deleteDoc, dropExtractIfUnused, docsOf, MAX_BYTES, MAX_DOCS_PER_USER, saveDoc, toMeta, type Doc } from "@/lib/server";
 import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
 import { logError } from "@/lib/log";
@@ -40,6 +42,7 @@ export async function POST(req: Request) {
     throw e;
   }
 
+  const sourceHash = createHash("sha256").update(buf).digest("hex");
   const enc = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
     async start(ctrl) {
@@ -47,12 +50,13 @@ export async function POST(req: Request) {
         try { ctrl.enqueue(enc.encode(JSON.stringify(o) + "\n")); } catch { /* client went away */ }
       };
       try {
-        const parsed = await parseFile(file.name, buf, (p) => send({ type: "progress", ...p }), req.signal);
-        const doc: Doc = { id: crypto.randomUUID(), ownerId: user.id, name: file.name, size: file.size, chars: parsed.text.length, ...parsed };
+        const parsed = await parseFile(file.name, buf, (p) => send({ type: "progress", ...p }), req.signal, extractDir(user.id, sourceHash));
+        const doc: Doc = { id: crypto.randomUUID(), ownerId: user.id, sourceHash, name: file.name, size: file.size, chars: parsed.text.length, ...parsed };
         if (!doc.chars && !doc.warning) doc.warning = "Dosyadan metin çıkarılamadı.";
         saveDoc(doc);
         send({ type: "done", doc: toMeta(doc) });
       } catch (e) {
+        dropExtractIfUnused(user.id, sourceHash); // a failed or cancelled upload leaves no derived text behind
         if (req.signal.aborted) return;
         if (!(e instanceof UserError)) logError("upload", e);
         send({ type: "error", error: e instanceof UserError ? e.message : "Dosya okunamadı. Bozuk ya da parola korumalı olabilir." });

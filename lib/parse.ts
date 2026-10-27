@@ -20,13 +20,13 @@ export class UserError extends Error {}
 
 const NO_DOCLING = "Docling kurulu değil: görsel olarak gömülü tablolar okunamaz (README → Docling kurulumu).";
 
-export async function parseFile(name: string, buf: Buffer, onProgress: (p: Progress) => void, signal: AbortSignal): Promise<Parsed> {
+export async function parseFile(name: string, buf: Buffer, onProgress: (p: Progress) => void, signal: AbortSignal, cacheDir: string): Promise<Parsed> {
   const ext = name.toLowerCase().split(".").pop() ?? "";
   switch (ext) {
     case "pdf":
     case "docx": {
       const kind = ext;
-      const d = await extractWithDocling(name, buf, onProgress, signal);
+      const d = await extractWithDocling(name, buf, onProgress, signal, cacheDir);
       if (d) return { kind, ...d, warning: d.verify?.skipped };
       if (kind === "pdf") {
         const p = await parsePdf(buf);

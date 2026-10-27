@@ -1,14 +1,14 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkCriteria, checkMaxRows, markUncertain } from "./checks";
 import { NUM_CTX, OLLAMA_URL } from "./server";
 import { logError } from "./log";
 import { writeFileAtomic } from "./atomic";
 import { runJsonLines } from "./proc";
+import { withJobDir } from "./workspace";
 
 export const DOCLING_PYTHON =
   process.env.DOCLING_PYTHON ??
@@ -16,7 +16,6 @@ export const DOCLING_PYTHON =
 export const VISION_MODEL = process.env.VISION_MODEL ?? "gemma4:12b";
 const VISION_VERIFY = process.env.VISION_VERIFY !== "false";
 const DOCLING_OFFLINE = process.env.DOCLING_OFFLINE !== "false";
-const CACHE_DIR = path.join(process.cwd(), ".cache");
 const PIPELINE = "v8"; // bump to invalidate cached extractions
 
 export interface Progress {
@@ -59,9 +58,9 @@ export function compactTables(md: string): string {
     .join("\n");
 }
 
-/** One vision read per image strip; cached by image hash so pipeline changes don't redo minutes of work. */
-async function readStrip(png: string, signal: AbortSignal): Promise<string> {
-  const file = path.join(CACHE_DIR, "strips", `${createHash("sha256").update(VISION_MODEL + VISION_PROMPT + png).digest("hex")}.txt`);
+/** One vision read per image strip; cached (in this doc's own cache dir) so pipeline changes don't redo minutes of work. */
+async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Promise<string> {
+  const file = path.join(cacheDir, "strips", `${createHash("sha256").update(VISION_MODEL + VISION_PROMPT + png).digest("hex")}.txt`);
   const hit = await readFile(file, "utf8").catch(() => null);
   if (hit !== null) return hit;
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
@@ -111,26 +110,26 @@ export async function extractWithDocling(
   buf: Buffer,
   onProgress: (p: Progress) => void,
   signal: AbortSignal,
+  /** Per user + source file (lib/workspace extractDir): never shared between users. */
+  cacheDir: string,
 ): Promise<Extracted | null> {
   // turbopackIgnore: runtime paths; otherwise the build traces the whole project (.cache with user text, model files)
   if (!existsSync(/*turbopackIgnore: true*/ DOCLING_PYTHON)) return null;
 
-  const hash = createHash("sha256").update(buf).digest("hex");
-  const cacheFile = path.join(CACHE_DIR, `${hash}-${PIPELINE}-${VISION_VERIFY ? VISION_MODEL.replace(/[^\w.-]/g, "_") : "noverify"}.json`);
+  const cacheFile = path.join(cacheDir, `result-${PIPELINE}-${VISION_VERIFY ? VISION_MODEL.replace(/[^\w.-]/g, "_") : "noverify"}.json`);
   const cached = await readFile(cacheFile, "utf8").catch(() => null);
   if (cached) return JSON.parse(cached) as Extracted;
 
-  const tmp = path.join(tmpdir(), `localdocs-${hash}${path.extname(name).toLowerCase()}`);
-  await writeFile(tmp, buf);
+  // Private random job dir; removed even if writing the input fails, and swept on start after a crash (audit S9/N3).
   const lines: PageLine[] = [];
-  try {
-    await runDocling(tmp, signal, (l) => {
+  await withJobDir(async (dir) => {
+    const input = path.join(dir, `input${path.extname(name).toLowerCase().replace(/[^.\w]/g, "")}`);
+    await writeFile(input, buf, { mode: 0o600 });
+    await runDocling(input, signal, (l) => {
       lines.push(l);
       if (l.page) onProgress({ stage: "Sayfalar okunuyor", done: l.page, total: l.total });
     });
-  } finally {
-    await rm(tmp, { force: true });
-  }
+  });
 
   const totalTables = lines.reduce((n, l) => n + l.tables.length, 0);
   const verify = { tables: totalTables, numbers: 0, uncertain: 0, skipped: undefined as string | undefined };
@@ -151,7 +150,7 @@ export async function extractWithDocling(
       if (!VISION_VERIFY || verify.skipped) continue;
       let second: string;
       try {
-        second = (await Promise.all(t.strips.map((s) => readStrip(s, signal)))).join("\n\n");
+        second = (await Promise.all(t.strips.map((s) => readStrip(s, signal, cacheDir)))).join("\n\n");
       } catch (e) {
         if (signal.aborted) throw e;
         logError(`vision ${VISION_MODEL}`, e);

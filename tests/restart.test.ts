@@ -2,7 +2,7 @@
 //   SMOKE_PHASE=before → upload as a fresh user, remember it;  restart;  SMOKE_PHASE=after → it's still listed.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { db } from "../lib/db.ts";
@@ -11,6 +11,9 @@ import { hashPassword, newToken, tokenHash } from "../lib/password.ts";
 const BASE = process.env.SMOKE_URL?.replace(/\/$/, "");
 const PHASE = process.env.SMOKE_PHASE;
 const STATE = path.join(tmpdir(), "kurumai-restart-test.json");
+// Crash leftovers the server must sweep on start (lib/workspace). Server and test share this machine's tmpdir and cwd.
+const CRASHED_JOB = path.join(tmpdir(), "kurumai-jobs", "job-restart-test");
+const orphanExtract = (userId: string) => path.join(".cache", "extract", userId, "d".repeat(64));
 
 test(`docs survive restart (${PHASE})`, { skip: !(BASE && PHASE) && "SMOKE_URL/SMOKE_PHASE yok" }, async () => {
   const sql = await db();
@@ -32,11 +35,16 @@ test(`docs survive restart (${PHASE})`, { skip: !(BASE && PHASE) && "SMOKE_URL/S
       // Sentinel: a *valid* doc in a .tmp name. If loadDocs ever stopped skipping *.tmp, it would show up in the list.
       const ghost = { ...done.doc, id: "00000000-0000-4000-8000-00000000beef", ownerId: u.id, text: "yarım yazım" };
       writeFileSync(path.join(dir, `${ghost.id}.json.0000.tmp`), JSON.stringify(ghost));
+      mkdirSync(CRASHED_JOB, { recursive: true });
+      writeFileSync(path.join(CRASHED_JOB, "input.pdf"), "yarım kalmış yükleme");
+      mkdirSync(orphanExtract(u.id), { recursive: true });
     } else {
       const { userId, token, docId } = JSON.parse(readFileSync(STATE, "utf8"));
       try {
         const list = (await (await fetch(`${BASE}/api/upload`, { headers: { cookie: `kai_session=${token}` } })).json()) as { id: string }[];
         assert.deepEqual(list.map((d) => d.id), [docId], "yeniden başlatmadan sonra doküman listede; bozuk kayıt ve .tmp artığı onu gizlemedi");
+        assert.ok(!existsSync(CRASHED_JOB), "çökme artığı iş dizini açılışta silindi");
+        assert.ok(!existsSync(orphanExtract(userId)), "hiçbir dokümana ait olmayan önbellek açılışta silindi");
         await fetch(`${BASE}/api/upload?id=${docId}`, { method: "DELETE", headers: { origin: BASE!, cookie: `kai_session=${token}` } });
       } finally {
         await sql`DELETE FROM users WHERE id = ${userId}`;

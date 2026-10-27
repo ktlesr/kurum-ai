@@ -1,6 +1,7 @@
 import "server-only";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { writeFileAtomic } from "./atomic";
+import { extractDir, removeIfEmpty, sweepExtract, sweepJobs } from "./workspace";
 import path from "node:path";
 import { DEFAULT_CHARS_PER_TOKEN } from "./context";
 import type { Chunk } from "./rag";
@@ -27,6 +28,8 @@ export interface DocMeta {
 
 export interface Doc extends DocMeta {
   ownerId: string;
+  /** sha256 of the uploaded bytes: names the doc's extract cache dir. */
+  sourceHash?: string;
   text: string;
   chunks?: Chunk[];
 }
@@ -37,7 +40,16 @@ const DOCS_DIR = path.join(process.cwd(), ".cache", "userdocs");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const g = globalThis as typeof globalThis & { __docs?: Map<string, Doc>; __cpt?: Map<string, number> };
 // Must come after every const loadDocs touches (TDZ: a ReferenceError here used to load zero docs on restart).
-const docs = (g.__docs ??= loadDocs());
+const docs = (g.__docs ??= startup());
+
+/** Once per process: load docs, then drop what a crash or a deleted doc left behind. Legacy .cache files are not touched. */
+function startup(): Map<string, Doc> {
+  const map = loadDocs();
+  const jobs = sweepJobs();
+  const extracts = sweepExtract(new Set([...map.values()].filter((d) => d.sourceHash).map((d) => `${d.ownerId}/${d.sourceHash}`)));
+  if (jobs || extracts) console.error(`cleanup: ${jobs} yarım iş, ${extracts} sahipsiz önbellek silindi`);
+  return map;
+}
 
 function loadDocs(): Map<string, Doc> {
   const map = new Map<string, Doc>();
@@ -91,7 +103,17 @@ export function deleteDoc(userId: string, id: string): boolean {
   if (!d) return false;
   docs.delete(id);
   rmSync(path.join(DOCS_DIR, d.ownerId, `${d.id}.json`), { force: true });
+  removeIfEmpty(path.join(DOCS_DIR, d.ownerId));
+  if (d.sourceHash) dropExtractIfUnused(userId, d.sourceHash);
   return true;
+}
+
+/** The extract cache goes with the user's last doc of that content (audit S3: deleted means deleted). */
+export function dropExtractIfUnused(userId: string, sourceHash: string) {
+  if (docsOf(userId).some((d) => d.sourceHash === sourceHash)) return;
+  const dir = extractDir(userId, sourceHash);
+  rmSync(dir, { recursive: true, force: true });
+  removeIfEmpty(path.dirname(dir));
 }
 
 /** Chars per token, measured from Ollama's prompt_eval_count per model (tokenizers differ a lot on Turkish). */
@@ -106,7 +128,7 @@ export function recordTokens(model: string, chars: number, tokens: number) {
 const LEGACY_VISION_WARNING = /^Görsel model \(.*\) çalışmadı:/;
 
 export function toMeta(doc: Doc): DocMeta {
-  const meta: DocMeta & { text?: string; chunks?: Chunk[]; ownerId?: string } = { ...doc };
+  const meta: DocMeta & { text?: string; chunks?: Chunk[]; ownerId?: string; sourceHash?: string } = { ...doc };
   const safe = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
   if (meta.warning && LEGACY_VISION_WARNING.test(meta.warning)) meta.warning = safe;
   // The same raw text was also stored in verify.skipped.
@@ -114,6 +136,7 @@ export function toMeta(doc: Doc): DocMeta {
   delete meta.text;
   delete meta.chunks;
   delete meta.ownerId;
+  delete meta.sourceHash;
   return meta;
 }
 
