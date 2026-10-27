@@ -163,7 +163,8 @@ export async function POST(req: Request) {
               if (signal.aborted) throw e;
               const ratio = contextRatio(totalChars, NUM_CTX, cptFor(model));
               meta.mode = "truncated";
-              meta.note = `Parça arama çalışmadı (${EMBED_MODEL}: ${(e as Error).message}); dosyaların yalnızca ilk %${Math.floor(ratio * 100)}'i kullanıldı.`;
+              console.error(`rag: ${EMBED_MODEL}: ${(e as Error).message}`);
+              meta.note = `Parça arama çalışmadı; dosyaların yalnızca ilk %${Math.floor(ratio * 100)}'i kullanıldı.`;
               context = selected.map((d) => `<doküman ad="${d.name}">\n${d.text.slice(0, Math.floor(d.chars * ratio))}\n</doküman>`).join("\n\n");
             }
           }
@@ -181,8 +182,9 @@ export async function POST(req: Request) {
         send(META_SEP + JSON.stringify(meta));
       } catch (e) {
         if (!signal.aborted) {
-          console.error(e);
-          send(`\n\n**Hata:** ${(e as Error).message}`);
+          // Raw provider text stays in the server log; the user gets a fixed message (audit S10).
+          console.error(`chat: ${(e as Error).message}`);
+          send("\n\n**Hata:** Model sunucusu cevap üretemedi. Tekrar deneyin; sorun sürerse yöneticinize bildirin.");
         }
       }
       try { ctrl.close(); } catch {}

@@ -231,7 +231,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-[15px] font-semibold tracking-tight">Doküman Asistanı</h1>
-          <p className="text-xs text-muted">Yerel · veriler cihazdan çıkmaz</p>
+          <p className="text-xs text-muted">Kurum sunucusunda işlenir · harici AI servisine gönderilmez</p>
         </div>
         <button className="rounded-md p-1.5 text-muted hover:bg-subtle md:hidden" onClick={() => setDrawer(false)} aria-label="Paneli kapat">
           <X size={18} />
@@ -458,7 +458,11 @@ function Bubble({ m, live }: { m: Message; live: boolean }) {
       <div className={`md ${live ? "streaming" : ""}`}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
-          components={{ table: ({ children }) => <div className="table-wrap"><table>{children}</table></div> }}
+          components={{
+            table: ({ children }) => <div className="table-wrap"><table>{children}</table></div>,
+            // Never load images a model answer points to: a URL can carry document text off-site (audit N1). CSP blocks them too.
+            img: ({ alt }) => <span className="text-muted">[görsel: {alt || "adsız"}]</span>,
+          }}
         >
           {m.content}
         </ReactMarkdown>

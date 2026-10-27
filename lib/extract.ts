@@ -160,7 +160,8 @@ export async function extractWithDocling(
         second = (await Promise.all(t.strips.map((s) => readStrip(s, signal)))).join("\n\n");
       } catch (e) {
         if (signal.aborted) throw e;
-        verify.skipped = `Görsel model (${VISION_MODEL}) çalışmadı: ${(e as Error).message}`;
+        console.error(`vision: ${VISION_MODEL}: ${(e as Error).message}`);
+        verify.skipped = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
         continue;
       }
       const a = markUncertain(primary, second);

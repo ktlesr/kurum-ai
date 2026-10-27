@@ -1,8 +1,26 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  poweredByHeader: false,
   // Runtime data and local model files must never land in a build/standalone output (audit S12).
   outputFileTracingExcludes: { "*": [".cache/**", ".venv-docling/**", "kurum-ai/**", ".env*"] },
+  // CSP is per-request (nonce) in proxy.ts; these are static and cover API routes too.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          // Browsers ignore it over plain http, so it's safe on LAN tests too.
+          ...(process.env.NODE_ENV === "production" ? [{ key: "Strict-Transport-Security", value: "max-age=31536000" }] : []),
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

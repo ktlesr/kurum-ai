@@ -1,21 +1,24 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Yerel Doküman Asistanı",
-  description: "Dosyalarınız hakkında soru sorun — tamamen yerel, Ollama ile.",
+  title: "Kurum AI",
+  description: "Dokümanlarınız hakkında soru sorun. İşleme kurum sunucusunda yapılır; harici AI servisine gönderilmez.",
 };
 
 // Runs before paint: stored choice wins, otherwise follow the OS.
 const themeScript = `try{var t=localStorage.getItem("theme");if(t==="dark"||(!t&&matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.classList.add("dark")}catch(e){}`;
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // Set by proxy.ts; the inline theme script must carry it or the CSP blocks it.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang="tr" suppressHydrationWarning className={`${GeistSans.variable} ${GeistMono.variable} h-full antialiased`}>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className="h-full">{children}</body>
     </html>

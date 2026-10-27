@@ -1,6 +1,6 @@
 # Yerel Doküman Asistanı
 
-Dosya yükleyip hakkında soru sorabileceğiniz tek sayfalık arayüz. Tamamen yerel: metin sunucu belleğinde tutulur, modeller Ollama üzerinde çalışır, hiçbir veri dışarı çıkmaz (Ollama'daki `:cloud` modeller listede gösterilmez).
+Dosya yükleyip hakkında soru sorabileceğiniz arayüz. Dosyalar ve sorular kurumun kendi sunucusunda işlenir; harici bir AI servisine gönderilmez. Kullanılabilecek modeller sunucuda `ALLOWED_MODELS` ile sınırlanır. Not: dosyalar şu an işlendikten sonra sunucuda saklanır; yalnızca kendi kullanıcınız görür. Cihazda saklama FAZ 2'de gelecek.
 
 ## Gereksinimler
 
