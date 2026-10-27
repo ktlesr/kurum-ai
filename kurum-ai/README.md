@@ -253,7 +253,7 @@ nano .env    # DOMAIN, CADDY_TLS ve gerekiyorsa LDAP ayarlarını düzenleyin
 | `HF_EMBEDDING_MODEL` | Doküman araması için embedding modeli (varsayılan `BAAI/bge-m3`, Türkçe destekli) |
 | `ENABLE_LDAP` ve `LDAP_*` | Bkz. "LDAP / Active Directory ile giriş" |
 
-**LDAP kullanılacaksa `.env`'deki LDAP ayarlarını ilk başlatmadan önce doldurun** (Open WebUI bunları yalnızca ilk açılışta okur).
+**LDAP kullanılacaksa `.env`'deki LDAP ayarlarını ilk başlatmadan önce doldurun** (Open WebUI bunları yalnızca ilk açılışta okur). Open WebUI varsayılan olarak dışarı çıkışı olmayan ağdadır; LDAP sunucusuna ulaşması için `docker compose -f compose.prod.yml -f compose.ldap.yml up -d` ile başlatın ve host güvenlik duvarında yalnızca LDAP sunucusuna izin verin.
 
 ### 3. Modelleri indirme (tek seferlik, internet gerekir)
 
