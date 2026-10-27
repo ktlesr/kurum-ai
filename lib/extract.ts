@@ -1,15 +1,14 @@
 import "server-only";
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createInterface } from "node:readline";
 import { checkCriteria, checkMaxRows, markUncertain } from "./checks";
 import { NUM_CTX, OLLAMA_URL } from "./server";
 import { logError } from "./log";
 import { writeFileAtomic } from "./atomic";
+import { runJsonLines } from "./proc";
 
 export const DOCLING_PYTHON =
   process.env.DOCLING_PYTHON ??
@@ -85,26 +84,11 @@ async function readStrip(png: string, signal: AbortSignal): Promise<string> {
 }
 
 function runDocling(file: string, signal: AbortSignal, onLine: (l: PageLine) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const script = path.join(process.cwd(), "scripts", "extract.py");
-    // Offline by default: models must already be on disk (README → kapalı ağ); nothing is fetched at runtime.
-    const offline = DOCLING_OFFLINE ? { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1" } : {};
-    const proc = spawn(/*turbopackIgnore: true*/ DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8" } });
-    // stderr is drained but never kept: Docling tracebacks can quote document text.
-    proc.stderr.resume();
-    // A throw inside this callback would escape the Promise (audit N2): turn it into a rejection and stop Docling.
-    createInterface({ input: proc.stdout }).on("line", (l) => {
-      if (!l.trim()) return;
-      try {
-        onLine(JSON.parse(l) as PageLine);
-      } catch {
-        proc.kill();
-        reject(new Error("docling_bad_output"));
-      }
-    });
-    proc.on("error", reject);
-    proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`docling_exit_${code}`))));
-  });
+  const script = path.join(process.cwd(), "scripts", "extract.py");
+  // Offline by default: models must already be on disk (README → kapalı ağ); nothing is fetched at runtime.
+  const offline = DOCLING_OFFLINE ? { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1" } : {};
+  // Settles only after Docling exited, so the caller's temp-file cleanup never races the running process.
+  return runJsonLines<PageLine>(/*turbopackIgnore: true*/ DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8" } }, onLine);
 }
 
 /** "## X" lines that open a section rather than title a table (next content line isn't a table). */

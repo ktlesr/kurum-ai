@@ -19,9 +19,16 @@
 | Gerçek restart: kullanıcı dizininde bozuk JSON + `.tmp` artığı | asıl doküman listede; log: "1 kayıt okunamadı, atlandı" (içerik yok) ✅ (`tests/restart.test.ts`, yerel + CI) |
 | Yükleme sonrası `.tmp` artığı | 0 ✅ |
 | İzolasyon (2 test) | ✅ |
-| `pnpm test` 18/18, `tsc`, `lint`, `build` | ✅ |
+| `pnpm test` 23/23, `tsc`, `lint`, `build` | ✅ |
 | N2 (Docling bozuk çıktı) | Yalnızca kod incelemesi; sahte Docling süreciyle çalıştırma testi yok |
 
 **Rollback:** Branch'i geri al; disk biçimi değişmedi.
 
-**Codex bulguları ve karar:** _bekliyor_
+**Codex bulguları ve karar**
+
+- Tur 1 — CHANGES REQUIRED:
+  - P0 (koşullu) güç kesintisi: `writeFileAtomic` artık geçici dosyayı `wx` ile açıyor, rename öncesi `fsync`, sonra dizini `fsync` ediyor (POSIX; Windows'ta dizin fsync'i yok — NTFS rename'i journal'lıyor, son rename'in güç kesintisinde kaybı mümkün; kod yorumunda sınırlandırıldı). Gerçek güç kesme testi yapılmadı.
+  - P1 readline/stdout `error` dinlenmiyordu, P2 reject süreç kapanmadan geliyordu → `lib/proc.ts` `runJsonLines`: ilk hata saklanır, okuyucu kapatılır, süreç öldürülür; Promise yalnızca `close` sonrası sonuçlanır; sonraki satırlar yok sayılır; stderr tutulmaz. `runDocling` bunu kullanıyor. 5 birim testi gerçek alt süreçlerle: geçerli satırlar, bozuk satır sonrası satırların yok sayılıp sürecin kapanmasının beklenmesi, callback istisnası, çıkış kodu (stderr içeriği hata mesajında yok), olmayan komut.
+  - P2 testler dar → atomik yazma testi var olan hedef üzerinde enjekte edilmiş rename hatasıyla; restart testindeki `.tmp` artığı artık *geçerli* bir doküman JSON'u. **Mutasyon kontrolü:** `.json` filtresi kaldırılınca restart testi FAIL, geri konunca PASS.
+  - Gerçek Docling (yerel `.venv-docling`) ile üretilmiş Türkçe tablolu DOCX yüklemesi: 24,8 sn, `done`.
+  - Açık not: başarısız `saveDoc` için Map/inflight uçtan uca testi yok (yalnızca kod incelemesi).

@@ -29,7 +29,9 @@ test(`docs survive restart (${PHASE})`, { skip: !(BASE && PHASE) && "SMOKE_URL/S
       // Needs the server's cwd = this repo (true locally and in CI).
       const dir = path.join(".cache", "userdocs", u.id);
       writeFileSync(path.join(dir, "bozuk.json"), '{"id": "yarım');
-      writeFileSync(path.join(dir, `${done.doc.id}.json.0000.tmp`), "{");
+      // Sentinel: a *valid* doc in a .tmp name. If loadDocs ever stopped skipping *.tmp, it would show up in the list.
+      const ghost = { ...done.doc, id: "00000000-0000-4000-8000-00000000beef", ownerId: u.id, text: "yarım yazım" };
+      writeFileSync(path.join(dir, `${ghost.id}.json.0000.tmp`), JSON.stringify(ghost));
     } else {
       const { userId, token, docId } = JSON.parse(readFileSync(STATE, "utf8"));
       try {
