@@ -25,14 +25,20 @@ test(`docs survive restart (${PHASE})`, { skip: !(BASE && PHASE) && "SMOKE_URL/S
       const done = (await res.text()).trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "done");
       assert.ok(done?.doc?.id);
       writeFileSync(STATE, JSON.stringify({ userId: u.id, token, docId: done.doc.id }));
+      // What a crash can leave behind (audit R1/R3): a half-written temp file and a corrupt record.
+      // Needs the server's cwd = this repo (true locally and in CI).
+      const dir = path.join(".cache", "userdocs", u.id);
+      writeFileSync(path.join(dir, "bozuk.json"), '{"id": "yarım');
+      writeFileSync(path.join(dir, `${done.doc.id}.json.0000.tmp`), "{");
     } else {
       const { userId, token, docId } = JSON.parse(readFileSync(STATE, "utf8"));
       try {
         const list = (await (await fetch(`${BASE}/api/upload`, { headers: { cookie: `kai_session=${token}` } })).json()) as { id: string }[];
-        assert.deepEqual(list.map((d) => d.id), [docId], "yeniden başlatmadan sonra doküman listede");
+        assert.deepEqual(list.map((d) => d.id), [docId], "yeniden başlatmadan sonra doküman listede; bozuk kayıt ve .tmp artığı onu gizlemedi");
         await fetch(`${BASE}/api/upload?id=${docId}`, { method: "DELETE", headers: { origin: BASE!, cookie: `kai_session=${token}` } });
       } finally {
         await sql`DELETE FROM users WHERE id = ${userId}`;
+        rmSync(path.join(".cache", "userdocs", userId), { recursive: true, force: true });
         rmSync(STATE, { force: true });
       }
     }

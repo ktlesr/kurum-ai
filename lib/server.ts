@@ -1,5 +1,6 @@
 import "server-only";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { writeFileAtomic } from "./atomic";
 import path from "node:path";
 import { DEFAULT_CHARS_PER_TOKEN } from "./context";
 import type { Chunk } from "./rag";
@@ -56,7 +57,7 @@ function loadDocs(): Map<string, Doc> {
       failed++;
       continue;
     }
-    for (const f of files) {
+    for (const f of files.filter((n) => n.endsWith(".json"))) { // skips *.tmp left by a crash mid-write
       try {
         const d = JSON.parse(readFileSync(path.join(DOCS_DIR, owner, f), "utf8")) as Doc;
         if (d.ownerId === owner) map.set(d.id, d);
@@ -79,10 +80,9 @@ export const MAX_DOCS_PER_USER = 20; // = chat fileIds limit (lib/validate.ts)
 export const docsOf = (userId: string) => [...docs.values()].filter((d) => d.ownerId === userId);
 
 export function saveDoc(doc: Doc) {
+  writeFileAtomic(path.join(DOCS_DIR, doc.ownerId, `${doc.id}.json`), JSON.stringify({ ...doc, chunks: undefined }));
+  // Only after the file is safely on disk: a failed write must not leave a doc that vanishes on restart (audit R3).
   docs.set(doc.id, doc);
-  const dir = path.join(DOCS_DIR, doc.ownerId);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, `${doc.id}.json`), JSON.stringify({ ...doc, chunks: undefined }));
 }
 
 /** False when the doc doesn't exist or isn't userId's. */
