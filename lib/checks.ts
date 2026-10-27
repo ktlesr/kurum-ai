@@ -10,7 +10,8 @@ export function normNum(s: string): string {
   const dot = s.lastIndexOf("."), comma = s.lastIndexOf(",");
   if (dot >= 0 && comma >= 0) return dot > comma ? s.replace(/,/g, "") : s.replace(/\./g, "").replace(",", ".");
   // Grouped thousands: any dots ("1.234"), or several commas ("1,234,567"). One comma stays a decimal ("12,345").
-  if (/^-?\d{1,3}([.,]\d{3})+$/.test(s) && (dot >= 0 || s.indexOf(",") !== comma)) return s.replace(/[.,]/g, "");
+  // A leading 0 is never a thousands group: "0.123" is a decimal.
+  if (/^-?[1-9]\d{0,2}([.,]\d{3})+$/.test(s) && (dot >= 0 || s.indexOf(",") !== comma)) return s.replace(/[.,]/g, "");
   return s.replace(",", ".");
 }
 

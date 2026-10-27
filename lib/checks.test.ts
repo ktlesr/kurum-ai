@@ -17,6 +17,13 @@ test("normNum handles Turkish thousands and decimal comma", () => {
   assert.equal(normNum("1,234,567"), "1234567");
   assert.equal(normNum("12,345"), "12.345", "a single comma stays a decimal comma");
   assert.equal(parseFloat(normNum("1.234,56")), 1234.56);
+  assert.equal(normNum("0.123"), "0.123", "leading zero: decimal, not thousands");
+  assert.equal(normNum("-0,5"), "-0.5");
+});
+
+test("mixed separators still match across the two readings", () => {
+  assert.equal(markUncertain("| 1.234,56 | 7 |", "| 1234,56 | 7 |").uncertain, 0);
+  assert.equal(markUncertain("| 1.234,56 | 7 |", "| 1.234,65 | 7 |").uncertain, 1);
 });
 
 test("Maksimum check reads whole Turkish numbers (firstNum, N5b)", () => {

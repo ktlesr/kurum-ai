@@ -20,3 +20,4 @@
 **Rollback:** branch'i geri al; önbellek sürümü v8'e döner.
 
 **Codex bulguları ve karar**
+- Codex — **APPROVED WITH NOTES**: N4 kararı doğru; N5 Türkçe önceliği tutarlı. Notlar: `0.123` binlik sanılıyordu → başında 0 olan grup binlik sayılmaz (testli); karma biçimlerin iki okuma arasında eşleşmesi testi eklendi. İngilizce `1,234` (tek virgül) ondalık okunur — Türkçe öncelik gereği bilinçli. Kayıtlı `Doc.text` otomatik yenilenmez; düzeltilmiş çıkarım için belge yeniden yüklenmeli (PIPELINE v9 önbelleği zaten yeniler).
