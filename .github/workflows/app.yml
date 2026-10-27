@@ -1,0 +1,71 @@
+name: uygulama doğrulama
+
+on:
+  push:
+    paths-ignore: ["kurum-ai/**", "docs/**", "**.md"]
+  pull_request:
+    paths-ignore: ["kurum-ai/**", "docs/**", "**.md"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4 # sürümü package.json → packageManager
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm exec next typegen # LayoutProps vb. route tipleri; temiz checkout'ta yok
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm lint
+      - run: pnpm build
+
+  isolation:
+    # Kullanıcı A/B izolasyonu gerçek sunucu + Postgres'e karşı (tests/isolation.test.ts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: ci, POSTGRES_PASSWORD: ci, POSTGRES_DB: ci }
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+      APP_ORIGIN: http://localhost:3000
+      SMOKE_URL: http://localhost:3000
+      UPLOAD_PER_MIN: "100" # the cap test fires 25 uploads at once
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Sunucuyu başlat
+        run: |
+          # Own process group, so the restart below can kill pnpm and its next-server child together.
+          setsid pnpm start > server.log 2>&1 & echo $! > server.pid
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:3000/login && exit 0; sleep 1; done
+          echo "sunucu 30 sn içinde hazır olmadı"; exit 1
+      - run: pnpm test:isolation
+      - run: SMOKE_PHASE=before pnpm test:restart
+      - name: Sunucuyu yeniden başlat
+        run: |
+          kill -- -"$(cat server.pid)"
+          # The old process must really be gone, or the "after" phase would pass from its memory.
+          for i in $(seq 1 30); do curl -s -o /dev/null http://localhost:3000/login || break; sleep 1; done
+          if curl -s -o /dev/null http://localhost:3000/login; then echo "eski sunucu kapanmadı"; exit 1; fi
+          setsid pnpm start >> server.log 2>&1 & echo $! > server.pid
+          # Up to 60 s: boot waits (INSTANCE_LOCK_WAIT_MS) until the database has released the old process's lock.
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/login && exit 0; sleep 1; done
+          echo "sunucu yeniden başlamadı"; exit 1
+      - run: SMOKE_PHASE=after pnpm test:restart
+      - if: failure()
+        run: cat server.log

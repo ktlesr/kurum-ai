@@ -1,14 +1,14 @@
-import { cptFor, docs, NUM_CTX, OLLAMA_URL, recordTokens, type Doc } from "@/lib/server";
-import { contextBudget, contextRatio, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
+import { requireApiUser } from "@/lib/auth";
+import { ALLOWED_MODELS, cptFor, getDoc, NUM_CTX, OLLAMA_URL, recordTokens, type Doc } from "@/lib/server";
+import { parseChatRequest } from "@/lib/validate";
+import { logError } from "@/lib/log";
+import { admission, busy, tooMany } from "@/lib/admission";
+import { Busy } from "@/lib/limits";
+import { contextBudget, contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { verifyNumbers } from "@/lib/checks";
 import { EMBED_MODEL, retrieve, TOP_K, windows } from "@/lib/rag";
 
 export const runtime = "nodejs";
-
-interface Msg {
-  role: "user" | "assistant";
-  content: string;
-}
 
 type OllamaMsg = { role: "system" | "user" | "assistant"; content: string };
 
@@ -41,7 +41,7 @@ const thinkParam = (model: string, think: boolean) => (model.startsWith("gpt-oss
  * One Ollama chat call, always streamed: long generations would otherwise hit fetch's 5-minute
  * no-data timeout. onText gets answer pieces, onThinking the running count of reasoning chunks.
  */
-async function streamChat(
+async function streamChatUnqueued(
   model: string,
   messages: OllamaMsg[],
   think: boolean,
@@ -64,7 +64,7 @@ async function streamChat(
       messages,
     }),
   });
-  if (!res.ok || !res.body) throw new Error(`Ollama hata döndürdü (${res.status}): ${(await res.text().catch(() => "")).slice(0, 300)}`);
+  if (!res.ok || !res.body) throw new Error(`ollama_http_${res.status}`);
   const decoder = new TextDecoder();
   let buf = "";
   let text = "";
@@ -72,7 +72,7 @@ async function streamChat(
   const handle = (line: string) => {
     if (!line.trim()) return;
     const j = JSON.parse(line) as { message?: { content?: string; thinking?: string }; error?: string; done?: boolean; done_reason?: string; prompt_eval_count?: number };
-    if (j.error) throw new Error(j.error);
+    if (j.error) throw new Error("ollama_stream_error");
     if (j.message?.thinking) onThinking(++thought);
     if (j.message?.content) {
       text += j.message.content;
@@ -94,20 +94,25 @@ async function streamChat(
   return text;
 }
 
+/** Every model call waits for a slot on the shared GPU (lib/admission); a full queue throws Busy. */
+const streamChat = (...args: Parameters<typeof streamChatUnqueued>) => admission.model.run(() => streamChatUnqueued(...args), args[3]);
+
 const chatOnce = async (model: string, messages: OllamaMsg[], signal: AbortSignal, numPredict?: number) =>
   (await streamChat(model, messages, false, signal, undefined, undefined, numPredict)).trim();
 
 export async function POST(req: Request) {
-  const { model, fileIds, messages, think = false, scope } = (await req.json()) as {
-    model: string;
-    fileIds: string[];
-    messages: Msg[];
-    think?: boolean;
-    /** "all" = question needs the whole document (suggestion buttons know this); otherwise classified. */
-    scope?: "all";
-  };
+  const user = await requireApiUser(req);
+  if (user instanceof Response) return user;
+  if (!admission.chatPerUser.allow(user.id)) return tooMany("soru");
+  // Queue already full: say so with a proper 429 before the stream starts (later Busy goes through ERROR_SEP).
+  if (admission.model.saturated) return busy();
+  const parsed = parseChatRequest(await req.json().catch(() => null), ALLOWED_MODELS);
+  if (typeof parsed === "string") return fail(parsed, 400);
+  // scope "all" = question needs the whole document (suggestion buttons know this); otherwise classified.
+  const { model, fileIds, messages, think, scope } = parsed;
 
-  const selected = fileIds.map((id) => docs.get(id)) as Doc[];
+  // Another user's doc is indistinguishable from a missing one.
+  const selected = fileIds.map((id) => getDoc(user.id, id)) as Doc[];
   if (selected.some((d) => !d)) {
     return fail("Dosya sunucuda bulunamadı. Dosyayı kaldırıp tekrar yükleyin.", 409);
   }
@@ -167,11 +172,13 @@ export async function POST(req: Request) {
               if (signal.aborted) throw e;
               const ratio = contextRatio(totalChars, NUM_CTX, cptFor(model));
               meta.mode = "truncated";
-              meta.note = `Parça arama çalışmadı (${EMBED_MODEL}: ${(e as Error).message}); dosyaların yalnızca ilk %${Math.floor(ratio * 100)}'i kullanıldı.`;
+              logError(`rag ${EMBED_MODEL}`, e);
+              meta.note = `Parça arama çalışmadı; dosyaların yalnızca ilk %${Math.floor(ratio * 100)}'i kullanıldı.`;
               context = selected.map((d) => `<doküman ad="${d.name}">\n${d.text.slice(0, Math.floor(d.chars * ratio))}\n</doküman>`).join("\n\n");
             }
           }
         }
+        if (admission.model.full) status("Sırada bekleniyor…");
         if (think) status("Düşünüyor…");
         const final: OllamaMsg[] = [{ role: "system", content: `${SYSTEM}${hint}\n\n${context}` }, ...history];
         answer = await streamChat(model, final, think, signal, send, (n) => {
@@ -185,8 +192,14 @@ export async function POST(req: Request) {
         send(META_SEP + JSON.stringify(meta));
       } catch (e) {
         if (!signal.aborted) {
-          console.error(e);
-          send(`\n\n**Hata:** ${(e as Error).message}`);
+          // Raw provider text stays in the server log; the user gets a fixed message (audit S10).
+          logError("chat", e);
+          send(
+            ERROR_SEP +
+              (e instanceof Busy
+                ? "Sunucu şu an çok yoğun. Biraz sonra tekrar deneyin."
+                : "Model sunucusu cevap üretemedi. Tekrar deneyin; sorun sürerse yöneticinize bildirin."),
+          );
         }
       }
       try { ctrl.close(); } catch {}

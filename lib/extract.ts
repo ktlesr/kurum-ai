@@ -1,13 +1,17 @@
 import "server-only";
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createInterface } from "node:readline";
 import { checkCriteria, checkMaxRows, markUncertain } from "./checks";
 import { NUM_CTX, OLLAMA_URL } from "./server";
+import { logError } from "./log";
+import { writeFileAtomic } from "./atomic";
+import { runJsonLines } from "./proc";
+import { withJobDir } from "./workspace";
+import { admission, DOCLING_TIMEOUT_MS } from "./admission";
+import { Busy } from "./limits";
+import { UserError } from "./errors";
 
 export const DOCLING_PYTHON =
   process.env.DOCLING_PYTHON ??
@@ -15,8 +19,12 @@ export const DOCLING_PYTHON =
 export const VISION_MODEL = process.env.VISION_MODEL ?? "gemma4:12b";
 const VISION_VERIFY = process.env.VISION_VERIFY !== "false";
 const DOCLING_OFFLINE = process.env.DOCLING_OFFLINE !== "false";
-const CACHE_DIR = path.join(process.cwd(), ".cache");
 const PIPELINE = "v8"; // bump to invalidate cached extractions
+/** Page limit for every PDF path: Docling, the unpdf fallback, and cached results. */
+export const MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
+export const tooManyPages = () => `Dosya çok fazla sayfa içeriyor (en fazla ${MAX_PAGES}). Dosyayı bölerek yükleyin.`;
+const TOO_MANY_PAGES_EXIT = 3; // scripts/extract.py
+const PAGE_TOO_LARGE_EXIT = 4;
 
 export interface Progress {
   stage: string;
@@ -58,12 +66,14 @@ export function compactTables(md: string): string {
     .join("\n");
 }
 
-/** One vision read per image strip; cached by image hash so pipeline changes don't redo minutes of work. */
-async function readStrip(png: string, signal: AbortSignal): Promise<string> {
-  const file = path.join(CACHE_DIR, "strips", `${createHash("sha256").update(VISION_MODEL + VISION_PROMPT + png).digest("hex")}.txt`);
+/** One vision read per image strip; cached (in this doc's own cache dir) so pipeline changes don't redo minutes of work. */
+async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Promise<string> {
+  const file = path.join(cacheDir, "strips", `${createHash("sha256").update(VISION_MODEL + VISION_PROMPT + png).digest("hex")}.txt`);
   const hit = await readFile(file, "utf8").catch(() => null);
   if (hit !== null) return hit;
-  const res = await fetch(`${OLLAMA_URL}/api/chat`, {
+  // The slot covers the whole call, body included: a provider that sends headers early is still "busy".
+  const text = await admission.model.run(async () => {
+    const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: "POST",
     signal,
     body: JSON.stringify({
@@ -74,27 +84,21 @@ async function readStrip(png: string, signal: AbortSignal): Promise<string> {
       options: { temperature: 0, num_ctx: NUM_CTX },
       messages: [{ role: "user", content: VISION_PROMPT, images: [png] }],
     }),
-  });
-  const j = (await res.json()) as { message?: { content: string }; error?: string };
-  if (!res.ok || !j.message) throw new Error(j.error ?? `HTTP ${res.status}`);
-  const text = j.message.content.trim();
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, text);
+    });
+    const j = (await res.json()) as { message?: { content: string }; error?: string };
+    if (!res.ok || !j.message) throw new Error(`vision_http_${res.status}`);
+    return j.message.content.trim();
+  }, signal);
+  writeFileAtomic(file, text);
   return text;
 }
 
 function runDocling(file: string, signal: AbortSignal, onLine: (l: PageLine) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const script = path.join(process.cwd(), "scripts", "extract.py");
-    // Offline by default: models must already be on disk (README → kapalı ağ); nothing is fetched at runtime.
-    const offline = DOCLING_OFFLINE ? { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1" } : {};
-    const proc = spawn(DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8" } });
-    let stderr = "";
-    proc.stderr.on("data", (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)));
-    createInterface({ input: proc.stdout }).on("line", (l) => l.trim() && onLine(JSON.parse(l) as PageLine));
-    proc.on("error", reject);
-    proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`Docling çıkış kodu ${code}: ${stderr.slice(-500)}`))));
-  });
+  const script = path.join(process.cwd(), "scripts", "extract.py");
+  // Offline by default: models must already be on disk (README → kapalı ağ); nothing is fetched at runtime.
+  const offline = DOCLING_OFFLINE ? { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1" } : {};
+  // Settles only after Docling exited, so the caller's temp-file cleanup never races the running process.
+  return runJsonLines<PageLine>(/*turbopackIgnore: true*/ DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8", DOCLING_MAX_PAGES: String(MAX_PAGES) } }, onLine);
 }
 
 /** "## X" lines that open a section rather than title a table (next content line isn't a table). */
@@ -117,24 +121,48 @@ export async function extractWithDocling(
   buf: Buffer,
   onProgress: (p: Progress) => void,
   signal: AbortSignal,
+  /** Per user + source file (lib/workspace extractDir): never shared between users. */
+  cacheDir: string,
 ): Promise<Extracted | null> {
-  if (!existsSync(DOCLING_PYTHON)) return null;
+  // turbopackIgnore: runtime paths; otherwise the build traces the whole project (.cache with user text, model files)
+  if (!existsSync(/*turbopackIgnore: true*/ DOCLING_PYTHON)) return null;
 
-  const hash = createHash("sha256").update(buf).digest("hex");
-  const cacheFile = path.join(CACHE_DIR, `${hash}-${PIPELINE}-${VISION_VERIFY ? VISION_MODEL.replace(/[^\w.-]/g, "_") : "noverify"}.json`);
+  const cacheFile = path.join(cacheDir, `result-${PIPELINE}-${VISION_VERIFY ? VISION_MODEL.replace(/[^\w.-]/g, "_") : "noverify"}.json`);
   const cached = await readFile(cacheFile, "utf8").catch(() => null);
-  if (cached) return JSON.parse(cached) as Extracted;
+  if (cached) {
+    const hit = JSON.parse(cached) as Extracted;
+    if ((hit.pages ?? 0) > MAX_PAGES) throw new UserError(tooManyPages());
+    return hit;
+  }
 
-  const tmp = path.join(tmpdir(), `localdocs-${hash}${path.extname(name).toLowerCase()}`);
-  await writeFile(tmp, buf);
+  // Private random job dir; removed even if writing the input fails, and swept on start after a crash (audit S9/N3).
   const lines: PageLine[] = [];
+  // One Docling run at a time (queue, then 429-style refusal), each with a hard time limit (audit S5/S7).
+  if (admission.docling.full) onProgress({ stage: "Sırada bekleniyor", done: 0, total: 1 });
+  let timedOut = false;
   try {
-    await runDocling(tmp, signal, (l) => {
-      lines.push(l);
-      if (l.page) onProgress({ stage: "Sayfalar okunuyor", done: l.page, total: l.total });
-    });
-  } finally {
-    await rm(tmp, { force: true });
+    await admission.docling.run(
+      () =>
+        withJobDir(async (dir) => {
+          // The clock starts once we have the slot: waiting in the queue doesn't count.
+          const timeout = AbortSignal.timeout(DOCLING_TIMEOUT_MS);
+          timeout.addEventListener("abort", () => (timedOut = true), { once: true });
+          const input = path.join(dir, `input${path.extname(name).toLowerCase().replace(/[^.\w]/g, "")}`);
+          await writeFile(input, buf, { mode: 0o600 });
+          await runDocling(input, AbortSignal.any([signal, timeout]), (l) => {
+            lines.push(l);
+            if (l.page) onProgress({ stage: "Sayfalar okunuyor", done: l.page, total: l.total });
+          });
+        }),
+      signal,
+    );
+  } catch (e) {
+    if (signal.aborted) throw e;
+    if (e instanceof Busy) throw new UserError("Sunucu şu an çok yoğun; dosya okunamadı. Biraz sonra tekrar deneyin.");
+    if (timedOut) throw new UserError(`Dosyanın okunması ${Math.round(DOCLING_TIMEOUT_MS / 60_000)} dakika sınırını aştı. Dosyayı bölerek yükleyin.`);
+    if ((e as Error).message === `proc_exit_${PAGE_TOO_LARGE_EXIT}`) throw new UserError("Dosyada olağandışı büyük bir sayfa var; güvenlik nedeniyle okunmadı.");
+    if ((e as Error).message === `proc_exit_${TOO_MANY_PAGES_EXIT}`) throw new UserError(tooManyPages());
+    throw e;
   }
 
   const totalTables = lines.reduce((n, l) => n + l.tables.length, 0);
@@ -154,14 +182,17 @@ export async function extractWithDocling(
       onProgress({ stage: "Tablolar doğrulanıyor", done: ++done, total: totalTables });
       const primary = compactTables(t.markdown);
       if (!VISION_VERIFY || verify.skipped) continue;
-      let second: string;
-      try {
-        second = (await Promise.all(t.strips.map((s) => readStrip(s, signal)))).join("\n\n");
-      } catch (e) {
-        if (signal.aborted) throw e;
-        verify.skipped = `Görsel model (${VISION_MODEL}) çalışmadı: ${(e as Error).message}`;
+      // allSettled, not all: every strip read (and its cache write) has finished before we go on, so nothing
+      // writes into cacheDir after the upload is over and the cache may already have been deleted.
+      const reads = await Promise.allSettled(t.strips.map((s) => readStrip(s, signal, cacheDir)));
+      const failed = reads.find((r) => r.status === "rejected");
+      if (failed) {
+        if (signal.aborted) throw signal.reason;
+        logError(`vision ${VISION_MODEL}`, failed.reason);
+        verify.skipped = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
         continue;
       }
+      const second = reads.map((r) => (r as PromiseFulfilledResult<string>).value).join("\n\n");
       const a = markUncertain(primary, second);
       const b = markUncertain(second, primary);
       verify.numbers += a.total;
@@ -210,8 +241,7 @@ export async function extractWithDocling(
   };
   // Don't cache a run where verification failed midway — retry it next time.
   if (!verify.skipped) {
-    await mkdir(CACHE_DIR, { recursive: true });
-    await writeFile(cacheFile, JSON.stringify(result));
+    writeFileAtomic(cacheFile, JSON.stringify(result));
   }
   return result;
 }

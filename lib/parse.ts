@@ -1,9 +1,9 @@
 import "server-only";
-import { extractText } from "unpdf";
+import { extractText, getDocumentProxy } from "unpdf";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import type { DocKind } from "./server";
-import { extractWithDocling, type Extracted, type Progress } from "./extract";
+import { extractWithDocling, MAX_PAGES, tooManyPages, type Extracted, type Progress } from "./extract";
 
 export interface Parsed {
   kind: DocKind;
@@ -15,18 +15,18 @@ export interface Parsed {
   verify?: Extracted["verify"];
 }
 
-/** Thrown for problems the user can fix; message is shown as-is. */
-export class UserError extends Error {}
+import { UserError } from "./errors";
+export { UserError };
 
 const NO_DOCLING = "Docling kurulu değil: görsel olarak gömülü tablolar okunamaz (README → Docling kurulumu).";
 
-export async function parseFile(name: string, buf: Buffer, onProgress: (p: Progress) => void, signal: AbortSignal): Promise<Parsed> {
+export async function parseFile(name: string, buf: Buffer, onProgress: (p: Progress) => void, signal: AbortSignal, cacheDir: string): Promise<Parsed> {
   const ext = name.toLowerCase().split(".").pop() ?? "";
   switch (ext) {
     case "pdf":
     case "docx": {
       const kind = ext;
-      const d = await extractWithDocling(name, buf, onProgress, signal);
+      const d = await extractWithDocling(name, buf, onProgress, signal, cacheDir);
       if (d) return { kind, ...d, warning: d.verify?.skipped };
       if (kind === "pdf") {
         const p = await parsePdf(buf);
@@ -53,7 +53,15 @@ export async function parseFile(name: string, buf: Buffer, onProgress: (p: Progr
 }
 
 async function parsePdf(buf: Buffer): Promise<Parsed> {
-  const { totalPages, text } = await extractText(new Uint8Array(buf), { mergePages: false });
+  // Count pages before extracting any text, so a 10,000-page file is refused cheaply.
+  const pdf = await getDocumentProxy(new Uint8Array(buf));
+  let totalPages: number, text: string[];
+  try {
+    if (pdf.numPages > MAX_PAGES) throw new UserError(tooManyPages());
+    ({ totalPages, text } = await extractText(pdf, { mergePages: false }));
+  } finally {
+    await pdf.loadingTask.destroy(); // we opened it, so we close it (unpdf only cleans up documents it opened itself)
+  }
   const body = text
     .map((t, i) => `--- Sayfa ${i + 1} ---\n${t.trim()}`)
     .join("\n\n");

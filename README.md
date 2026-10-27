@@ -1,10 +1,11 @@
 # Yerel Doküman Asistanı
 
-Dosya yükleyip hakkında soru sorabileceğiniz tek sayfalık arayüz. Tamamen yerel: metin sunucu belleğinde tutulur, modeller Ollama üzerinde çalışır, hiçbir veri dışarı çıkmaz (Ollama'daki `:cloud` modeller listede gösterilmez).
+Dosya yükleyip hakkında soru sorabileceğiniz arayüz. Dosyalar ve sorular kurumun kendi sunucusunda işlenir; harici bir AI servisine gönderilmez. Kullanılabilecek modeller sunucuda `ALLOWED_MODELS` ile sınırlanır. Not: dosyalar şu an işlendikten sonra sunucuda saklanır; yalnızca kendi kullanıcınız görür. Cihazda saklama FAZ 2'de gelecek.
 
 ## Gereksinimler
 
-- Node.js 20+ ve pnpm
+- Node.js 22+ ve pnpm
+- PostgreSQL (yalnızca hesap ve oturumlar; sohbet/doküman içeriği yazılmaz)
 - Ollama (`ollama serve`) ve şu modeller:
   ```bash
   ollama pull gemma4:12b       # sohbet + tablo doğrulama (görsel)
@@ -16,9 +17,17 @@ Dosya yükleyip hakkında soru sorabileceğiniz tek sayfalık arayüz. Tamamen y
 
 ```bash
 pnpm install
+# Geliştirme veritabanı (bir kez):
+docker run -d --name kurumai-dev-pg -e POSTGRES_USER=kurumai -e POSTGRES_PASSWORD=kurumai-dev -e POSTGRES_DB=kurumai   -p 127.0.0.1:5491:5432 --restart unless-stopped postgres:17-alpine
+echo "DATABASE_URL=postgres://kurumai:kurumai-dev@127.0.0.1:5491/kurumai" >> .env.local
+# İlk yönetici (parola ortam değişkeninden okunur, komut satırına yazılmaz):
+ADMIN_PASSWORD='en-az-10-karakter' node --env-file=.env.local scripts/create-admin.ts admin
 pnpm dev          # http://localhost:3000
-pnpm test         # kontrol fonksiyonlarının testleri
+pnpm test         # birim testleri
+SMOKE_URL=http://localhost:3000 pnpm test:isolation   # çalışan sunucuya karşı kullanıcı A/B izolasyonu
 ```
+
+Tablolar ilk istekte otomatik oluşturulur (`lib/db.ts` migration listesi). Yeni kullanıcılar giriş sayfasından hesap ister; yönetici `/admin` sayfasından onaylar.
 
 Üretim modu: `pnpm build && pnpm start`
 
@@ -32,10 +41,21 @@ python -m venv .venv-docling
 
 Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docling ve OCR modelleri bir kez indirilir; sonrasında internet gerekmez. Global Python'daki torch/torchvision sürümleriyle çakışmaması için ayrı ortam kullanılıyor.
 
-## `.env.local` değişkenleri (hepsi isteğe bağlı)
+## `.env.local` değişkenleri
 
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
+| `DATABASE_URL` | — (**zorunlu**) | PostgreSQL bağlantısı |
+| `APP_ORIGIN` | — (**üretimde zorunlu**) | Kullanıcıların açtığı adres (ör. `https://ai.ekutlu.com`). GET dışı isteklerde `Origin` bununla birebir karşılaştırılır; üretimde tanımlı değilse bu istekler reddedilir. Geliştirmede `Host` kullanılır |
+| `ALLOWED_MODELS` | `DEFAULT_MODEL` | Kullanıcının seçebileceği sohbet modelleri (virgülle). Listede olmayan model sunucuda reddedilir |
+| `MODEL_CONCURRENCY` / `MODEL_QUEUE` | `2` / `32` | Aynı anda model sunucusuna giden çağrı sayısı (sohbet, embedding, görsel) ve bekleyebilecek çağrı sayısı; dolunca 429 |
+| `DOCLING_CONCURRENCY` / `DOCLING_QUEUE` | `1` / `8` | Aynı anda çalışan Docling işi ve kuyruk uzunluğu |
+| `DOCLING_TIMEOUT_MS` | `1200000` (20 dk) | Tek dosyanın okunma süresi sınırı (kuyrukta bekleme sayılmaz) |
+| `DOCLING_MAX_PAGES` | `500` | Sayfa sınırı; aşan PDF reddedilir |
+| `UPLOAD_CONCURRENCY` / `UPLOAD_QUEUE` | `4` / `16` | Aynı anda işlenen yükleme (gövde okumadan sonuca kadar) ve kuyruk; bellek tepe değerini sınırlar |
+| `INSTANCE_LOCK_WAIT_MS` | `30000` | Açılışta, önceki sürecin veritabanı kilidini bırakmasını bekleme süresi; sonra açılış reddedilir |
+| `CHAT_PER_MIN` / `UPLOAD_PER_MIN` | `20` / `20` | Kullanıcı başına dakikalık soru / yükleme sınırı (429) |
+| `COOKIE_SECURE` | `true` (üretimde) | Yalnızca HTTPS'siz ağ testinde `false`; üretimde HTTPS arkasında açık kalmalı |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama adresi |
 | `DEFAULT_MODEL` | `gemma4:12b` | Açılışta seçili sohbet modeli |
 | `NUM_CTX` | `16384` | Bağlam penceresi (token). gemma4 kayan pencereli dikkat kullandığı için bellek neredeyse artmıyor (RTX 5090'da 64k: 9,2 GB, 128k: 9,5 GB, 256k: ~8,3 GB). Bu makinede `131072` kullanılıyor (~380 bin karakter) |
@@ -97,6 +117,8 @@ Sonuç `.cache/` altında dosya özetiyle saklanır. Aynı dosya tekrar yükleni
 Bu makinede doğrulandı: `HF_HUB_OFFLINE=1` ile Docling 20 sayfalık raporu 13 sn'de okudu.
 
 ## API
+
+Tüm uçlar oturum ister (yoksa `401`); GET dışı isteklerde farklı `Origin` `403` döner.
 
 - `POST /api/upload`: NDJSON akışı döner (`progress` olayları, ardından `done` veya `error`).
 - `GET /api/upload`: kayıtlı dosyaların listesi. `DELETE /api/upload?id=…`: dosyayı siler.

@@ -9,6 +9,7 @@ import base64
 import io
 import json
 import logging
+import os
 import sys
 import warnings
 
@@ -22,6 +23,8 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import TableItem
 
 SCALE = 3  # render scale for crops (~216 dpi)
+MAX_PAGES = int(os.environ.get("DOCLING_MAX_PAGES", "500"))  # lib/extract.ts maps exit 3 to a user message
+MAX_RENDER_PX = 60_000_000  # exit 4: a forged 10 m x 10 m page would otherwise render into many GB of RAM
 STRIP = 450  # max strip height in px; the vision model downsizes larger images and misreads digits
 OVERLAP = 40
 
@@ -52,6 +55,11 @@ import pypdfium2.raw as pdfium_c
 
 pdf = pdfium.PdfDocument(path)
 total = len(pdf)
+if total > MAX_PAGES:
+    sys.exit(3)
+# Before Docling touches any page (it renders them too): a forged giant page would blow up memory.
+if any(w * h * SCALE * SCALE > MAX_RENDER_PX for w, h in (pdf.get_page_size(i) for i in range(total))):
+    sys.exit(4)
 for n in range(1, total + 1):
     # ponytail: one convert() per page for progress; models stay loaded in `conv`
     doc = conv.convert(path, page_range=(n, n)).document

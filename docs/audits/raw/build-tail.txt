@@ -1,0 +1,40 @@
+[33m[1m>[0m [90m121 |[0m [32m  if (!existsSync(DOCLING_PYTHON)) return null;[0m
+  [90m    |[0m        [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m122 |[0m
+  [90m123 |[0m [32m  const hash = createHash("sha256").update(buf).digest("hex");[0m
+  [90m124 |[0m [32m  const cacheFile = path.join(CACHE_DIR, `${hash}-${PIPELINE}-${VISION_VERIFY ? VISION_MO...[0m
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.existsSync(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import trace:
+  App Route:
+    ./lib/extract.ts
+    ./lib/parse.ts
+    ./app/api/upload/route.ts
+
+
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/chat
+├ ƒ /api/models
+└ ƒ /api/upload
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+
+real	1m36.719s
+user	0m0.046s
+sys	0m0.045s
+EXIT=0
