@@ -31,3 +31,4 @@
 
 **Codex bulguları ve karar**
 - Codex tur 1 — CHANGES REQUIRED: **P1** `.env*` yalnızca kökte dışlanıyordu; Dokploy'un `deploy/.env` dosyası `COPY . .` ile build aşamasına girerdi → `.dockerignore` desenleri `**/` ile her derinlikte. **P2** kapı bunu yakalamıyordu → CI'da rastgele işaretli `deploy/.env` ve `.env.local` ile `build` aşaması derlenip içinde işaret aranıyor (yerelde: eski `.dockerignore` ile sızıyor, yenisiyle sızmıyor). **P2** parola URL'ye ham giriyordu → compose `PGHOST/PGUSER/PGPASSWORD/PGDATABASE` veriyor, `lib/db` `DATABASE_URL` yoksa bunları kullanıyor (`#`, `/`, `%`, `@`, `:` içeren parolayla yığın healthy, yönetici betiği çalıştı). arm64/app-docling doğrulaması deploy aşamasında (GB10).
+- Codex tur 2 — **APPROVED WITH NOTES**: üç bulgu kapandı. Kalan not: arm64 + `app-docling` doğrulaması GB10 deploy aşamasında.
