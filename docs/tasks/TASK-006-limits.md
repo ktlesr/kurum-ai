@@ -54,3 +54,4 @@
 - Codex tur 5 — CHANGES REQUIRED: dördüncü turun üçü kapandı. P1 EOCD seçimi: SheetJS son imzayı yorum uzunluğuna bakmadan seçiyor, biz sondan ilk tutarlı olanı → son imza dosyayı tam bitirmiyorsa red (artık iki taraf aynı kaydı görüyor). Regresyon testi, mutasyonla doğrulandı.
 - Otomatik güvenlik incelemesi (MEDIUM): EOCD taraması `len-22`'den başlıyordu; SheetJS `len-4`'ten tarar → son 21 bayttaki imza da sayılıyor, tam kayıt sığmıyorsa red. Testli, mutasyonla doğrulandı.
 - Codex tur 6 — CHANGES REQUIRED: (1) son 21 bayttaki imza — otomatik incelemeyle aynı bulgu, `a849d9d`'de kapandı; (2) P1 EOCD disk alanları (+4/+6) `0xFFFF` ise JSZip ZIP64 kayıtlarına geçiyor → tek disk zorunlu (ikisi de 0). Testli, mutasyonla doğrulandı.
+- Codex tur 7 — **APPROVED**: iki EOCD bulgusu kapandı; SheetJS/JSZip ile karşılaştırmada yeni P0/P1 yok. CI `87ac385` yeşil. Yerel ek doğrulama: izolasyon 3/3, gerçek DOCX/XLSX kabul, ZIP64 açık mesajla red.
