@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { extractBusy, extractDir, holdExtract, sweepExtract, sweepJobs, takeInstanceLock, withJobDir } from "./workspace.ts";
+import { extractBusy, extractDir, holdExtract, sweepExtract, sweepJobs, withJobDir } from "./workspace.ts";
 
 const U1 = "11111111-1111-4111-8111-111111111111", U2 = "22222222-2222-4222-8222-222222222222";
 const H1 = "a".repeat(64), H2 = "b".repeat(64);
@@ -66,19 +66,4 @@ test("extract lease: busy while any upload holds it; only the last release repor
   assert.ok(extractBusy(k));
   assert.equal(b(), true, "last holder");
   assert.ok(!extractBusy(k));
-});
-
-test("instance lock: own or stale lock is taken, a live other process keeps it", () => {
-  const dir = scratch();
-  try {
-    const f = path.join(dir, "instance.lock");
-    assert.ok(takeInstanceLock(f), "free");
-    assert.ok(takeInstanceLock(f), "already ours");
-    writeFileSync(f, String(process.ppid)); // parent process: alive and not us
-    assert.ok(!takeInstanceLock(f), "held by a live process");
-    writeFileSync(f, "999999999"); // no such process
-    assert.ok(takeInstanceLock(f), "stale lock replaced");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });

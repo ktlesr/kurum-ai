@@ -1,7 +1,7 @@
 import "server-only";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { writeFileAtomic } from "./atomic";
-import { extractBusy, extractDir, removeIfEmpty, sweepExtract, sweepJobs, takeInstanceLock } from "./workspace";
+import { extractBusy, extractDir, removeIfEmpty, sweepExtract, sweepJobs } from "./workspace";
 import { logError } from "./log";
 import path from "node:path";
 import { DEFAULT_CHARS_PER_TOKEN } from "./context";
@@ -41,19 +41,16 @@ const DOCS_DIR = path.join(process.cwd(), ".cache", "userdocs");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const g = globalThis as typeof globalThis & { __docs?: Map<string, Doc>; __cpt?: Map<string, number> };
 // Must come after every const loadDocs touches (TDZ: a ReferenceError here used to load zero docs on restart).
-const docs = (g.__docs ??= startup());
+const docs = (g.__docs ??= loadDocs());
 
-/** Once per process: load docs, then drop what a crash or a deleted doc left behind. Legacy .cache files are not touched. */
-function startup(): Map<string, Doc> {
-  const map = loadDocs();
-  if (!takeInstanceLock()) {
-    console.error("cleanup: aynı veri dizininde başka bir instance çalışıyor; açılış temizliği atlandı");
-    return map;
-  }
+/**
+ * Drops what a crash or a deleted doc left behind. Only lib/boot calls it, after taking the instance lock: then no
+ * other process can be mid-upload. Legacy .cache files are not touched.
+ */
+export function sweepOnBoot() {
   const jobs = sweepJobs();
-  const extracts = sweepExtract(new Set([...map.values()].filter((d) => d.sourceHash).map((d) => `${d.ownerId}/${d.sourceHash}`)));
+  const extracts = sweepExtract(new Set([...docs.values()].filter((d) => d.sourceHash).map((d) => `${d.ownerId}/${d.sourceHash}`)));
   if (jobs || extracts) console.error(`cleanup: ${jobs} yarım iş, ${extracts} sahipsiz önbellek silindi`);
-  return map;
 }
 
 function loadDocs(): Map<string, Doc> {
