@@ -11,7 +11,7 @@ HOST_DIR=$(pwd -W 2>/dev/null || pwd)
 [ -f .env ] || { echo "HATA: .env yok. Önce: cp .env.example .env" >&2; exit 1; }
 # .env'i source etmiyoruz (LDAP_APP_DN gibi boşluklu değerler bash'i bozar); gerekeni tek tek okuyoruz.
 envval() { grep -E "^$1=" .env | tail -n1 | cut -d= -f2- || true; }
-LLM_MODEL=$(envval LLM_MODEL); LLM_MODEL=${LLM_MODEL:-openai/gpt-oss-20b}
+LLM_MODEL=$(envval LLM_MODEL); LLM_MODEL=${LLM_MODEL:-google/gemma-4-26B-A4B-it} # compose.prod.yml ile aynı varsayılan (audit N8)
 EMB_MODEL=$(envval HF_EMBEDDING_MODEL); EMB_MODEL=${EMB_MODEL:-BAAI/bge-m3}
 WEBUI_VERSION=$(envval WEBUI_VERSION); WEBUI_IMAGE=ghcr.io/open-webui/open-webui:${WEBUI_VERSION:-v0.11.4}
 

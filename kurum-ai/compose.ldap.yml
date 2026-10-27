@@ -1,0 +1,7 @@
+# LDAP/AD açıkken: Open WebUI'nin dizin sunucusuna ulaşması için yönlendirilebilir ağa da bağlanır.
+# Bu durumda dışarı çıkış ağ düzeyinde açıktır; host güvenlik duvarında (DOCKER-USER zinciri) yalnızca
+# LDAP_SERVER_HOST:LDAP_SERVER_PORT'a izin verin.
+# Kullanım: docker compose -f compose.prod.yml -f compose.ldap.yml up -d
+services:
+  open-webui:
+    networks: [backend, frontend]
