@@ -57,3 +57,21 @@ test("abort stops a child that ignores SIGTERM (escalates to SIGKILL) and settle
   assert.equal(alive(pid), false, "child is gone");
   assert.ok(Date.now() - started < KILL_GRACE_MS + 5_000, "within the grace period");
 });
+
+test("after the main child exits, helpers left in its group are killed too (POSIX)", { skip: process.platform === "win32" && "süreç grupları yok" }, async () => {
+  // Main child starts a helper (same process group) that ignores SIGTERM and holds no pipes, reports its pid, waits.
+  const helper = `process.on("SIGTERM",()=>{});setInterval(()=>{},1000)`;
+  const main = `const {spawn}=require("child_process");const h=spawn(process.execPath,["-e",${JSON.stringify(helper)}],{stdio:"ignore"});console.log(JSON.stringify({pid:h.pid}));setInterval(()=>{},1000)`;
+  const ac = new AbortController();
+  let helperPid = 0;
+  await assert.rejects(
+    runJsonLines(process.execPath, ["-e", main], { signal: ac.signal }, (v: { pid: number }) => {
+      helperPid = v.pid;
+      ac.abort(new Error("iptal"));
+    }),
+    /iptal/,
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(helperPid > 0);
+  assert.equal(alive(helperPid), false, "helper killed with the group");
+});

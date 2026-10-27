@@ -28,10 +28,10 @@ export function runJsonLines<T>(
     let exited = false;
     let killTimer: NodeJS.Timeout | undefined;
     const kill = (sig: NodeJS.Signals) => {
-      if (exited || proc.pid === undefined) return;
+      if (proc.pid === undefined) return;
       try {
-        if (posix) process.kill(-proc.pid, sig);
-        else proc.kill(sig); // Windows: TerminateProcess, already forceful
+        if (posix) process.kill(-proc.pid, sig); // the whole group, even after the main child exited
+        else if (!exited) proc.kill(sig); // Windows: TerminateProcess, already forceful
       } catch {
         // already gone
       }
@@ -75,6 +75,8 @@ export function runJsonLines<T>(
     proc.on("close", (code) => {
       exited = true;
       clearTimeout(killTimer);
+      // Helpers left in the group (ignored SIGTERM, closed their pipes) must not outlive the job.
+      if (failure) kill("SIGKILL");
       signal?.removeEventListener("abort", onAbort);
       if (failure) reject(failure);
       else if (code === 0) resolve();

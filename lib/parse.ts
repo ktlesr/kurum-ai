@@ -55,8 +55,13 @@ export async function parseFile(name: string, buf: Buffer, onProgress: (p: Progr
 async function parsePdf(buf: Buffer): Promise<Parsed> {
   // Count pages before extracting any text, so a 10,000-page file is refused cheaply.
   const pdf = await getDocumentProxy(new Uint8Array(buf));
-  if (pdf.numPages > MAX_PAGES) throw new UserError(tooManyPages());
-  const { totalPages, text } = await extractText(pdf, { mergePages: false });
+  let totalPages: number, text: string[];
+  try {
+    if (pdf.numPages > MAX_PAGES) throw new UserError(tooManyPages());
+    ({ totalPages, text } = await extractText(pdf, { mergePages: false }));
+  } finally {
+    await pdf.loadingTask.destroy(); // we opened it, so we close it (unpdf only cleans up documents it opened itself)
+  }
   const body = text
     .map((t, i) => `--- Sayfa ${i + 1} ---\n${t.trim()}`)
     .join("\n\n");

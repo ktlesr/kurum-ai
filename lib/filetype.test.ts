@@ -9,29 +9,55 @@ import { deflateRawSync } from "node:zlib";
  * Real little ZIP: local headers + data + central directory + EOCD. `declared` lets an entry lie about its
  * uncompressed size, like a crafted bomb would.
  */
-function zip(entries: { data: Uint8Array; stored?: boolean; declared?: number }[]): Uint8Array {
+type Entry = {
+  data: Uint8Array;
+  stored?: boolean;
+  declared?: number;
+  /** Tampering: what only the local header says. */
+  localMethod?: number;
+  localSize?: number;
+  zip64Extra?: boolean;
+  /** Bytes hidden after this entry's data, before the next one. */
+  gap?: number;
+  /** Sizes in a trailing data descriptor (flag bit 3), local sizes 0. */
+  descriptor?: boolean;
+};
+function zip(entries: Entry[]): Uint8Array {
   const locals: Buffer[] = [], cds: Buffer[] = [];
   let offset = 0;
   entries.forEach((e, i) => {
     const name = Buffer.from(`f${i}.xml`);
     const body = e.stored ? Buffer.from(e.data) : deflateRawSync(e.data);
     const size = e.declared ?? e.data.byteLength;
+    const method = e.stored ? 0 : 8;
+    const flags = e.descriptor ? 0x8 : 0;
+    const extra = e.zip64Extra ? Buffer.from([0x01, 0x00, 0x10, 0x00, ...Array(16).fill(0)]) : Buffer.alloc(0);
     const lh = Buffer.alloc(30);
     lh.writeUInt32LE(0x04034b50, 0);
-    lh.writeUInt16LE(e.stored ? 0 : 8, 8);
-    lh.writeUInt32LE(body.length, 18);
-    lh.writeUInt32LE(size, 22);
+    lh.writeUInt16LE(flags, 6);
+    lh.writeUInt16LE(e.localMethod ?? method, 8);
+    lh.writeUInt32LE(e.descriptor ? 0 : body.length, 18);
+    lh.writeUInt32LE(e.descriptor ? 0 : (e.localSize ?? size), 22);
     lh.writeUInt16LE(name.length, 26);
-    locals.push(lh, name, body);
+    lh.writeUInt16LE(extra.length, 28);
+    const dd = Buffer.alloc(e.descriptor ? 16 : 0);
+    if (e.descriptor) {
+      dd.writeUInt32LE(0x08074b50, 0);
+      dd.writeUInt32LE(body.length, 8);
+      dd.writeUInt32LE(size, 12);
+    }
+    const gap = Buffer.alloc(e.gap ?? 0, 0x41);
+    locals.push(lh, name, extra, body, dd, gap);
     const ch = Buffer.alloc(46);
     ch.writeUInt32LE(0x02014b50, 0);
-    ch.writeUInt16LE(e.stored ? 0 : 8, 10);
+    ch.writeUInt16LE(flags, 8);
+    ch.writeUInt16LE(method, 10);
     ch.writeUInt32LE(body.length, 20);
     ch.writeUInt32LE(size, 24);
     ch.writeUInt16LE(name.length, 28);
     ch.writeUInt32LE(offset, 42);
     cds.push(ch, name);
-    offset += 30 + name.length + body.length;
+    offset += 30 + name.length + extra.length + body.length + dd.length + gap.length;
   });
   const cd = Buffer.concat(cds);
   const eocd = Buffer.alloc(22);
@@ -119,4 +145,14 @@ test("tampered directories are rejected, not read as empty", async () => {
   const lyingComment = Buffer.from(withComment);
   lyingComment.writeUInt16LE(5, eocd + 20); // comment length no longer reaches the end
   assert.equal(zipTotals(new Uint8Array(lyingComment)), null);
+});
+
+test("local headers must agree with the directory and tile the archive", async () => {
+  assert.notEqual(zipTotals(zip([{ data: bytes(100), descriptor: true }, { data: bytes(5) }])), null, "data descriptors are fine");
+  // Codex repro: directory says "stored, small", local says "deflate" — SheetJS would inflate by the local one.
+  assert.equal(zipTotals(zip([{ data: bytes(1024 * 1024), declared: 1034, localMethod: 0 }])), null, "method mismatch");
+  assert.equal(zipTotals(zip([{ data: bytes(10), localSize: 999 }])), null, "size mismatch");
+  assert.equal(zipTotals(zip([{ data: bytes(10), zip64Extra: true }])), null, "ZIP64 extra in local header");
+  assert.equal(zipTotals(zip([{ data: bytes(10), gap: 64 }, { data: bytes(10) }])), null, "bytes hidden between entries");
+  assert.notEqual(await contentProblem("xlsx", zip([{ data: bytes(10), gap: 64 }])), null);
 });

@@ -78,6 +78,7 @@ function indexOf(buf: Uint8Array, sig: number[]): number {
 
 interface ZipEntry {
   method: number;
+  flags: number;
   csize: number;
   usize: number;
   local: number;
@@ -105,13 +106,41 @@ export function zipEntries(buf: Uint8Array): ZipEntry[] | null {
   const out: ZipEntry[] = [];
   for (let p = cdOffset; p < cdOffset + cdSize; ) {
     if (p + 46 > eocd || v.getUint32(p, true) !== 0x02014b50) return null;
-    const e = { method: v.getUint16(p + 10, true), csize: v.getUint32(p + 20, true), usize: v.getUint32(p + 24, true), local: v.getUint32(p + 42, true) };
+    const e = { method: v.getUint16(p + 10, true), flags: v.getUint16(p + 8, true), csize: v.getUint32(p + 20, true), usize: v.getUint32(p + 24, true), local: v.getUint32(p + 42, true) };
     if (e.csize === 0xffffffff || e.usize === 0xffffffff || e.local === 0xffffffff) return null;
     out.push(e);
     p += 46 + v.getUint16(p + 28, true) + v.getUint16(p + 30, true) + v.getUint16(p + 32, true);
     if (p > cdOffset + cdSize) return null;
   }
-  return out.length === count ? out : null;
+  if (out.length !== count || !localsAgree(v, out, cdOffset)) return null;
+  return out;
+}
+
+/**
+ * Parsers differ in what they trust: SheetJS reads the local headers, we read the central directory. So both must
+ * say the same thing (method, sizes, no ZIP64 extra), and the local entries must tile the archive from byte 0 up
+ * to the central directory with no gaps — nothing can hide in between for a sequential reader to find.
+ */
+function localsAgree(v: DataView, entries: ZipEntry[], cdOffset: number): boolean {
+  let expect = 0;
+  for (const e of [...entries].sort((a, b) => a.local - b.local)) {
+    const l = e.local;
+    if (l !== expect || l + 30 > cdOffset || v.getUint32(l, true) !== 0x04034b50) return false;
+    const flags = v.getUint16(l + 6, true), method = v.getUint16(l + 8, true);
+    const csize = v.getUint32(l + 18, true), usize = v.getUint32(l + 22, true);
+    const nameLen = v.getUint16(l + 26, true), extraLen = v.getUint16(l + 28, true);
+    const descriptor = (flags & 0x8) !== 0; // sizes follow the data instead (then local sizes are 0)
+    if (method !== e.method || ((flags ^ e.flags) & 0x8) !== 0) return false;
+    if (!descriptor && (csize !== e.csize || usize !== e.usize)) return false;
+    if (descriptor && (csize !== 0 && csize !== e.csize)) return false;
+    // ZIP64 extra field (id 0x0001) in the local header: sizes we didn't check.
+    for (let x = l + 30 + nameLen; x + 4 <= l + 30 + nameLen + extraLen; x += 4 + v.getUint16(x + 2, true)) {
+      if (v.getUint16(x, true) === 0x0001) return false;
+    }
+    expect = l + 30 + nameLen + extraLen + e.csize;
+    if (descriptor) expect += expect + 4 <= cdOffset && v.getUint32(expect, true) === 0x08074b50 ? 16 : 12;
+  }
+  return expect === cdOffset;
 }
 
 /** Declared totals (cheap pre-check before the real inflate). */
