@@ -27,4 +27,12 @@
 
 **Rollback:** Branch'i geri al. Yeni dizinler (`.cache/extract`, `.cache/jobs`) silinebilir; eski veri değişmedi.
 
-**Codex bulguları ve karar:** _bekliyor_
+**Codex bulguları ve karar**
+
+- Otomatik güvenlik incelemesi (MEDIUM): iş kökü paylaşılan `tmpdir`'de sabit adla symlink'e açıktı → `.cache/jobs` (973e0bb).
+- Codex tur 1 — CHANGES REQUIRED:
+  - P1 silinen önbellek yeniden oluşabiliyordu (`Promise.all` erken reddi, bekleyen şerit yazımları) → `Promise.allSettled`: çıkarım dönmeden tüm şerit yazımları bitmiş olur. Ayrıca kullanıcı+içerik başına **aktif yükleme kiralaması** (`holdExtract`): silme, süren yükleme varken önbelleğe dokunmaz; son yükleme bitince (başarısız/iptal/arada silinmiş) temizliği o yapar.
+  - P2 ikinci instance aktif işleri silebiliyordu → `.cache/instance.lock` (pid + canlılık); kilidi alamayan instance açılış süpürmesini atlar. Gerçek iki süreçle doğrulandı: A süpürdü, B "başka bir instance çalışıyor; açılış temizliği atlandı", A'nın süren iş dizini durdu. Sınır: tek host/konteyner; paylaşımlı depolamada çok host gerçek kilit ister (kod notu).
+  - P2 temizlik hatası upload hata yanıtını bastırıyordu → `dropExtractIfUnused` asla fırlatmaz; içeriksiz loglar, bir sonraki açılış süpürür.
+  - P2 testler "ilk istekten önce" iddiasını ayırmıyordu → restart testi artıkları herhangi bir API isteğinden önce kontrol ediyor. **Mutasyon:** `instrumentation.ts` boşaltılınca FAIL ("çökme artığı iş dizini açılışta (ilk istekten önce) silindi"), geri konunca PASS. Kiralama ve kilit için birim testleri (29/29).
+  - Açık: geciktirilmiş şerit yazımıyla gerçek yarış testi yok (görsel model bu makinede yok); `allSettled` + kiralama mantığı birim/kod düzeyinde.

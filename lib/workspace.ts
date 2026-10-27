@@ -1,6 +1,6 @@
 // Where server-side document bytes and derived text live while a user's doc exists (plan §4.3, audit S3/S4/S9/N3).
 // No "server-only": pure fs so node --test can exercise it.
-import { mkdirSync, mkdtempSync, readdirSync, rmdirSync, rmSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmdirSync, rmSync, writeSync } from "node:fs";
 import path from "node:path";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -67,6 +67,56 @@ export function removeIfEmpty(dir: string) {
     rmdirSync(dir); // fails unless empty: exactly what we want
   } catch {
     // not empty, or already gone
+  }
+}
+
+// Uploads currently writing into an extract dir ("<userId>/<hash>" → count). Deleting the user's last doc of that
+// content must not remove the dir under a running upload; the last upload to finish cleans up instead.
+const active = new Map<string, number>();
+export const extractBusy = (key: string) => (active.get(key) ?? 0) > 0;
+/** Marks key busy; the returned release() reports whether this was the last holder. */
+export function holdExtract(key: string): () => boolean {
+  active.set(key, (active.get(key) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return false;
+    released = true;
+    const n = (active.get(key) ?? 1) - 1;
+    if (n > 0) active.set(key, n);
+    else active.delete(key);
+    return n === 0;
+  };
+}
+
+/**
+ * One app instance per data dir. The startup sweeps assume nothing else is mid-upload; a second instance on the
+ * same .cache must skip them. Returns false when another live process holds the lock.
+ * ponytail: pid liveness check; good for one host/container. Multiple hosts on shared storage need a real lock.
+ */
+export function takeInstanceLock(file = path.join(process.cwd(), ".cache", "instance.lock")): boolean {
+  mkdirSync(path.dirname(file), { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(file, "wx");
+      writeSync(fd, String(process.pid));
+      closeSync(fd);
+      return true;
+    } catch {
+      const pid = Number(readFileSync(file, "utf8")) || 0;
+      if (pid === process.pid) return true;
+      if (pid && alive(pid)) return false;
+      rmSync(file, { force: true }); // stale: its process is gone
+    }
+  }
+  return false;
+}
+
+function alive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM"; // exists, just not ours to signal
   }
 }
 

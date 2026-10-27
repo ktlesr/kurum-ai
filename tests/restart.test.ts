@@ -41,10 +41,11 @@ test(`docs survive restart (${PHASE})`, { skip: !(BASE && PHASE) && "SMOKE_URL/S
     } else {
       const { userId, token, docId } = JSON.parse(readFileSync(STATE, "utf8"));
       try {
+        // Checked BEFORE any API call: only instrumentation.ts can have swept by now (an API call would load lib/server too).
+        assert.ok(!existsSync(CRASHED_JOB), "çökme artığı iş dizini açılışta (ilk istekten önce) silindi");
+        assert.ok(!existsSync(orphanExtract(userId)), "sahipsiz önbellek açılışta (ilk istekten önce) silindi");
         const list = (await (await fetch(`${BASE}/api/upload`, { headers: { cookie: `kai_session=${token}` } })).json()) as { id: string }[];
         assert.deepEqual(list.map((d) => d.id), [docId], "yeniden başlatmadan sonra doküman listede; bozuk kayıt ve .tmp artığı onu gizlemedi");
-        assert.ok(!existsSync(CRASHED_JOB), "çökme artığı iş dizini açılışta silindi");
-        assert.ok(!existsSync(orphanExtract(userId)), "hiçbir dokümana ait olmayan önbellek açılışta silindi");
         await fetch(`${BASE}/api/upload?id=${docId}`, { method: "DELETE", headers: { origin: BASE!, cookie: `kai_session=${token}` } });
       } finally {
         await sql`DELETE FROM users WHERE id = ${userId}`;

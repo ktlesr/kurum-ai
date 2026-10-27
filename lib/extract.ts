@@ -148,15 +148,17 @@ export async function extractWithDocling(
       onProgress({ stage: "Tablolar doğrulanıyor", done: ++done, total: totalTables });
       const primary = compactTables(t.markdown);
       if (!VISION_VERIFY || verify.skipped) continue;
-      let second: string;
-      try {
-        second = (await Promise.all(t.strips.map((s) => readStrip(s, signal, cacheDir)))).join("\n\n");
-      } catch (e) {
-        if (signal.aborted) throw e;
-        logError(`vision ${VISION_MODEL}`, e);
+      // allSettled, not all: every strip read (and its cache write) has finished before we go on, so nothing
+      // writes into cacheDir after the upload is over and the cache may already have been deleted.
+      const reads = await Promise.allSettled(t.strips.map((s) => readStrip(s, signal, cacheDir)));
+      const failed = reads.find((r) => r.status === "rejected");
+      if (failed) {
+        if (signal.aborted) throw signal.reason;
+        logError(`vision ${VISION_MODEL}`, failed.reason);
         verify.skipped = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
         continue;
       }
+      const second = reads.map((r) => (r as PromiseFulfilledResult<string>).value).join("\n\n");
       const a = markUncertain(primary, second);
       const b = markUncertain(second, primary);
       verify.numbers += a.total;

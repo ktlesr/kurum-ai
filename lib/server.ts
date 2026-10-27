@@ -1,7 +1,8 @@
 import "server-only";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { writeFileAtomic } from "./atomic";
-import { extractDir, removeIfEmpty, sweepExtract, sweepJobs } from "./workspace";
+import { extractBusy, extractDir, removeIfEmpty, sweepExtract, sweepJobs, takeInstanceLock } from "./workspace";
+import { logError } from "./log";
 import path from "node:path";
 import { DEFAULT_CHARS_PER_TOKEN } from "./context";
 import type { Chunk } from "./rag";
@@ -45,6 +46,10 @@ const docs = (g.__docs ??= startup());
 /** Once per process: load docs, then drop what a crash or a deleted doc left behind. Legacy .cache files are not touched. */
 function startup(): Map<string, Doc> {
   const map = loadDocs();
+  if (!takeInstanceLock()) {
+    console.error("cleanup: aynı veri dizininde başka bir instance çalışıyor; açılış temizliği atlandı");
+    return map;
+  }
   const jobs = sweepJobs();
   const extracts = sweepExtract(new Set([...map.values()].filter((d) => d.sourceHash).map((d) => `${d.ownerId}/${d.sourceHash}`)));
   if (jobs || extracts) console.error(`cleanup: ${jobs} yarım iş, ${extracts} sahipsiz önbellek silindi`);
@@ -109,11 +114,17 @@ export function deleteDoc(userId: string, id: string): boolean {
 }
 
 /** The extract cache goes with the user's last doc of that content (audit S3: deleted means deleted). */
+// Never throws: a failed cleanup is logged (no content) and swept on the next start; it must not mask the caller's result.
 export function dropExtractIfUnused(userId: string, sourceHash: string) {
+  if (extractBusy(`${userId}/${sourceHash}`)) return; // an upload is writing there; it cleans up when it ends
   if (docsOf(userId).some((d) => d.sourceHash === sourceHash)) return;
-  const dir = extractDir(userId, sourceHash);
-  rmSync(dir, { recursive: true, force: true });
-  removeIfEmpty(path.dirname(dir));
+  try {
+    const dir = extractDir(userId, sourceHash);
+    rmSync(dir, { recursive: true, force: true });
+    removeIfEmpty(path.dirname(dir));
+  } catch (e) {
+    logError("cleanup", e);
+  }
 }
 
 /** Chars per token, measured from Ollama's prompt_eval_count per model (tokenizers differ a lot on Turkish). */
