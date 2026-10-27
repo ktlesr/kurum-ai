@@ -174,6 +174,13 @@ test("tampered directories are rejected, not read as empty", async () => {
   // A bare signature in the last 21 bytes (inside the real EOCD's comment): no room for a record, still the last one.
   const tail = Buffer.concat([Buffer.from(good.subarray(0, eocd + 20)), Buffer.from([8, 0]), Buffer.from([0, 0, 0, 0, 0x50, 0x4b, 0x05, 0x06])]);
   assert.equal(zipTotals(new Uint8Array(tail)), null, "signature too close to the end → rejected");
+
+  // Codex round 6: a disk number of 0xFFFF sends JSZip to ZIP64 records we never checked.
+  for (const field of [4, 6]) {
+    const disk = good.slice();
+    dv(disk).setUint16(eocd + field, 0xffff, true);
+    assert.equal(zipTotals(disk), null, `disk field +${field}`);
+  }
 });
 
 test("local headers must agree with the directory and tile the archive", async () => {

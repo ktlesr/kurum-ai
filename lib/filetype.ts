@@ -105,6 +105,8 @@ export function zipEntries(buf: Uint8Array): ZipEntry[] | null {
   if (eocd < 0) return null;
   const onDisk = v.getUint16(eocd + 8, true), count = v.getUint16(eocd + 10, true);
   const cdSize = v.getUint32(eocd + 12, true), cdOffset = v.getUint32(eocd + 16, true);
+  // Single-disk only: JSZip switches to ZIP64 records when a disk number is 0xFFFF, so both must be 0.
+  if (v.getUint16(eocd + 4, true) !== 0 || v.getUint16(eocd + 6, true) !== 0) return null;
   if (count === 0 || count === 0xffff || onDisk !== count || cdOffset === 0xffffffff || cdOffset + cdSize !== eocd) return null;
   const out: ZipEntry[] = [];
   for (let p = cdOffset; p < cdOffset + cdSize; ) {
