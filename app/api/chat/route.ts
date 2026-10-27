@@ -1,15 +1,11 @@
 import { requireApiUser } from "@/lib/auth";
-import { cptFor, docs, NUM_CTX, OLLAMA_URL, recordTokens, type Doc } from "@/lib/server";
+import { ALLOWED_MODELS, cptFor, getDoc, NUM_CTX, OLLAMA_URL, recordTokens, type Doc } from "@/lib/server";
+import { parseChatRequest } from "@/lib/validate";
 import { contextBudget, contextRatio, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { verifyNumbers } from "@/lib/checks";
 import { EMBED_MODEL, retrieve, TOP_K, windows } from "@/lib/rag";
 
 export const runtime = "nodejs";
-
-interface Msg {
-  role: "user" | "assistant";
-  content: string;
-}
 
 type OllamaMsg = { role: "system" | "user" | "assistant"; content: string };
 
@@ -101,16 +97,13 @@ const chatOnce = async (model: string, messages: OllamaMsg[], signal: AbortSigna
 export async function POST(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
-  const { model, fileIds, messages, think = false, scope } = (await req.json()) as {
-    model: string;
-    fileIds: string[];
-    messages: Msg[];
-    think?: boolean;
-    /** "all" = question needs the whole document (suggestion buttons know this); otherwise classified. */
-    scope?: "all";
-  };
+  const parsed = parseChatRequest(await req.json().catch(() => null), ALLOWED_MODELS);
+  if (typeof parsed === "string") return fail(parsed, 400);
+  // scope "all" = question needs the whole document (suggestion buttons know this); otherwise classified.
+  const { model, fileIds, messages, think, scope } = parsed;
 
-  const selected = fileIds.map((id) => docs.get(id)) as Doc[];
+  // Another user's doc is indistinguishable from a missing one.
+  const selected = fileIds.map((id) => getDoc(user.id, id)) as Doc[];
   if (selected.some((d) => !d)) {
     return fail("Dosya sunucuda bulunamadı. Dosyayı kaldırıp tekrar yükleyin.", 409);
   }

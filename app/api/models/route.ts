@@ -1,5 +1,5 @@
 import { requireApiUser } from "@/lib/auth";
-import { charsPerToken, DEFAULT_MODEL, NUM_CTX, OLLAMA_URL } from "@/lib/server";
+import { ALLOWED_MODELS, charsPerToken, DEFAULT_MODEL, NUM_CTX, OLLAMA_URL } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
 
@@ -18,8 +18,8 @@ export async function GET(req: Request) {
     const names = models
       .filter(
         (m) =>
-          !/embed|whisper/i.test(m.name) &&
-          // cloud models would send the document off this machine
+          ALLOWED_MODELS.has(m.name) &&
+          // cloud models would send the document off this machine (belt and braces with the allowlist)
           !m.remote_host &&
           (m.capabilities ?? ["completion"]).includes("completion"),
       )

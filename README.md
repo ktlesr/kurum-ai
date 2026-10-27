@@ -24,6 +24,7 @@ echo "DATABASE_URL=postgres://kurumai:kurumai-dev@127.0.0.1:5491/kurumai" >> .en
 ADMIN_PASSWORD='en-az-10-karakter' node --env-file=.env.local scripts/create-admin.ts admin
 pnpm dev          # http://localhost:3000
 pnpm test         # birim testleri
+SMOKE_URL=http://localhost:3000 pnpm test:isolation   # çalışan sunucuya karşı kullanıcı A/B izolasyonu
 ```
 
 Tablolar ilk istekte otomatik oluşturulur (`lib/db.ts` migration listesi). Yeni kullanıcılar giriş sayfasından hesap ister; yönetici `/admin` sayfasından onaylar.
@@ -46,6 +47,7 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 |---|---|---|
 | `DATABASE_URL` | — (**zorunlu**) | PostgreSQL bağlantısı |
 | `APP_ORIGIN` | — (**üretimde zorunlu**) | Kullanıcıların açtığı adres (ör. `https://ai.ekutlu.com`). GET dışı isteklerde `Origin` bununla birebir karşılaştırılır; üretimde tanımlı değilse bu istekler reddedilir. Geliştirmede `Host` kullanılır |
+| `ALLOWED_MODELS` | `DEFAULT_MODEL` | Kullanıcının seçebileceği sohbet modelleri (virgülle). Listede olmayan model sunucuda reddedilir |
 | `COOKIE_SECURE` | `true` (üretimde) | Yalnızca HTTPS'siz ağ testinde `false`; üretimde HTTPS arkasında açık kalmalı |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama adresi |
 | `DEFAULT_MODEL` | `gemma4:12b` | Açılışta seçili sohbet modeli |

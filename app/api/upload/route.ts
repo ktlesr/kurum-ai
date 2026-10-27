@@ -1,4 +1,4 @@
-import { deleteDoc, docs, MAX_BYTES, saveDoc, toMeta, type Doc } from "@/lib/server";
+import { deleteDoc, docsOf, MAX_BYTES, saveDoc, toMeta, type Doc } from "@/lib/server";
 import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
 
@@ -28,7 +28,7 @@ export async function POST(req: Request) {
       };
       try {
         const parsed = await parseFile(file.name, buf, (p) => send({ type: "progress", ...p }), req.signal);
-        const doc: Doc = { id: crypto.randomUUID(), name: file.name, size: file.size, chars: parsed.text.length, ...parsed };
+        const doc: Doc = { id: crypto.randomUUID(), ownerId: user.id, name: file.name, size: file.size, chars: parsed.text.length, ...parsed };
         if (!doc.chars && !doc.warning) doc.warning = "Dosyadan metin çıkarılamadı.";
         saveDoc(doc);
         send({ type: "done", doc: toMeta(doc) });
@@ -47,12 +47,12 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
-  return Response.json([...docs.values()].map(toMeta));
+  return Response.json(docsOf(user.id).map(toMeta));
 }
 
 export async function DELETE(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
-  deleteDoc(new URL(req.url).searchParams.get("id") ?? "");
-  return new Response(null, { status: 204 });
+  const found = deleteDoc(user.id, new URL(req.url).searchParams.get("id") ?? "");
+  return found ? new Response(null, { status: 204 }) : fail("Dosya bulunamadı.", 404);
 }
