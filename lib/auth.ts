@@ -45,11 +45,17 @@ export const getUser = cache(async (): Promise<User | null> => {
   return u ?? null;
 });
 
-/** Scheme + host + port users reach us at. APP_ORIGIN wins; else the proxy's forwarded proto (Traefik sets it). */
-function appOrigin(req: Request) {
+/**
+ * Scheme + host + port users reach us at. No X-Forwarded-* trust: a client that reaches the app directly could forge them.
+ * Production must set APP_ORIGIN (behind the proxy req.url is plain http); without it mutations fail closed.
+ */
+function appOrigin(req: Request): string | null {
   if (process.env.APP_ORIGIN) return process.env.APP_ORIGIN.replace(/\/$/, "");
-  const proto = req.headers.get("x-forwarded-proto")?.split(",")[0].trim() ?? new URL(req.url).protocol.slice(0, -1);
-  return `${proto}://${req.headers.get("x-forwarded-host") ?? req.headers.get("host")}`;
+  if (process.env.NODE_ENV === "production") {
+    console.error("auth: APP_ORIGIN tanımlı değil; değiştiren istekler reddediliyor.");
+    return null;
+  }
+  return `${new URL(req.url).protocol}//${req.headers.get("host")}`;
 }
 
 /**

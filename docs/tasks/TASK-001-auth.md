@@ -43,4 +43,5 @@
   - P2 kayıt kullanıcı adını ifşa ediyor → çakışmada da aynı yanıt.
   - P2 `create-admin` parola sıfırlaması eski oturumları bırakıyor → aynı transaction'da oturumlar silinir.
   - P2 Origin yalnız host karşılaştırıyor → şema+host+port; `APP_ORIGIN` veya proxy başlıkları; `null` → 403. Doğrulandı: aynı origin 204, `https://` farkı 403, `null` 403, yabancı 403, Origin yok 204.
+- Tur 2 — CHANGES REQUIRED, tek P2: `X-Forwarded-*` güveni Origin kontrolünü aşabiliyor → forwarded başlıklarına güven kaldırıldı; üretimde `APP_ORIGIN` zorunlu (yoksa fail-closed 403). Diğer 4 düzeltme Codex tarafından doğrulandı (20 paralel yanlış girişte 5 doğrulama + 15 kilit).
 - Otomatik güvenlik incelemesi IDOR bulguları (upload/chat) → PR-1b kapsamı, bilinçli.
