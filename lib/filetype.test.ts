@@ -163,6 +163,14 @@ test("tampered directories are rejected, not read as empty", async () => {
   const lyingComment = Buffer.from(withComment);
   lyingComment.writeUInt16LE(5, eocd + 20); // comment length no longer reaches the end
   assert.equal(zipTotals(new Uint8Array(lyingComment)), null);
+
+  // Codex round 5: the real EOCD's comment covers a trailing signature whose own comment length doesn't fit.
+  // Parsers that take the last signature would read that one; we must not accept the earlier one instead.
+  const trailing = Buffer.alloc(22);
+  trailing.writeUInt32LE(0x06054b50, 0);
+  trailing.writeUInt16LE(5, 20);
+  const shadowed = Buffer.concat([Buffer.from(good.subarray(0, eocd + 20)), Buffer.from([22, 0]), trailing]);
+  assert.equal(zipTotals(new Uint8Array(shadowed)), null, "last signature doesn't end the file → rejected");
 });
 
 test("local headers must agree with the directory and tile the archive", async () => {

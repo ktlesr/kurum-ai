@@ -93,12 +93,13 @@ interface ZipEntry {
  */
 export function zipEntries(buf: Uint8Array): ZipEntry[] | null {
   const v = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  // The LAST signature is the one parsers pick (SheetJS takes it without checking the comment length), so it must
+  // be the one that ends the file exactly; an earlier "valid" one would mean we checked another archive than theirs.
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) {
-    if (v.getUint32(i, true) === 0x06054b50 && i + 22 + v.getUint16(i + 20, true) === buf.length) {
-      eocd = i;
-      break;
-    }
+    if (v.getUint32(i, true) !== 0x06054b50) continue;
+    if (i + 22 + v.getUint16(i + 20, true) === buf.length) eocd = i;
+    break;
   }
   if (eocd < 0) return null;
   const onDisk = v.getUint16(eocd + 8, true), count = v.getUint16(eocd + 10, true);
