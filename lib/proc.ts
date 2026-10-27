@@ -72,11 +72,16 @@ export function runJsonLines<T>(
       }
       fail(e);
     });
+    // Helpers left in the group (ignored SIGTERM, or just forgotten) must not outlive the job, however it ended.
+    // On "exit", not only "close": a helper still holding our stdout would keep "close" from ever coming.
+    // ESRCH (group already empty) is swallowed by kill().
+    proc.on("exit", () => {
+      exited = true;
+      kill("SIGKILL");
+    });
     proc.on("close", (code) => {
       exited = true;
       clearTimeout(killTimer);
-      // Helpers left in the group (ignored SIGTERM, closed their pipes, or just forgotten) must not outlive the job,
-      // however it ended. ESRCH (group already empty) is swallowed by kill().
       kill("SIGKILL");
       signal?.removeEventListener("abort", onAbort);
       if (failure) reject(failure);

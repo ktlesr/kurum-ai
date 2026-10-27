@@ -91,3 +91,13 @@ test("a child that exits normally doesn't leave helpers behind either (POSIX)", 
   assert.ok(helperPid > 0);
   assert.equal(alive(helperPid), false, "helper killed when the main child exited");
 });
+
+test("a helper holding our stdout can't keep the run from settling (POSIX)", { skip: process.platform === "win32" && "süreç grupları yok", timeout: 15_000 }, async () => {
+  // stdio "inherit": the helper shares the pipe, so "close" only comes once the helper is gone too.
+  const helper = `setInterval(()=>{},1000)`;
+  const main = `const {spawn}=require("child_process");const h=spawn(process.execPath,["-e",${JSON.stringify(helper)}],{stdio:"inherit"});h.unref();console.log(JSON.stringify({pid:h.pid}));`;
+  let helperPid = 0;
+  await runJsonLines(process.execPath, ["-e", main], {}, (v: { pid: number }) => (helperPid = v.pid));
+  assert.ok(helperPid > 0);
+  assert.equal(alive(helperPid), false);
+});

@@ -123,12 +123,14 @@ export function zipEntries(buf: Uint8Array): ZipEntry[] | null {
  * ZIP64 extended-information extra field (id 0x0001). Some office tools write one even for small files, so it is
  * allowed only as a redundant copy: every 64-bit value in it must equal the 32-bit field we already checked
  * (in order: uncompressed size, compressed size, local header offset). Anything else could show a parser other sizes.
+ * At least both sizes must be present: SheetJS reads 16 bytes from the field whatever its declared length, so a
+ * shorter one would hand it bytes of the next field as sizes.
  */
 function zip64Disagrees(v: DataView, start: number, len: number, checked: number[]): boolean {
   for (let x = start; x + 4 <= start + len; x += 4 + v.getUint16(x + 2, true)) {
     if (v.getUint16(x, true) !== 0x0001) continue;
     const size = v.getUint16(x + 2, true);
-    if (size % 8 !== 0 || size / 8 > checked.length || x + 4 + size > start + len) return true;
+    if (size % 8 !== 0 || size < 16 || size / 8 > checked.length || x + 4 + size > start + len) return true;
     for (let i = 0; i < size / 8; i++) {
       if (v.getBigUint64(x + 4 + i * 8, true) !== BigInt(checked[i])) return true;
     }
@@ -150,6 +152,7 @@ function localsAgree(v: DataView, entries: ZipEntry[], cdOffset: number): boolea
     const csize = v.getUint32(l + 18, true), usize = v.getUint32(l + 22, true);
     const nameLen = v.getUint16(l + 26, true), extraLen = v.getUint16(l + 28, true);
     const descriptor = (flags & 0x8) !== 0; // sizes also follow the data in a descriptor
+    if (l + 30 + nameLen + extraLen > cdOffset) return false; // name/extra must end before the directory
     if (method !== e.method || ((flags ^ e.flags) & 0x8) !== 0) return false;
     // Local sizes: equal to the directory's, or 0 when a descriptor carries them. Never anything else.
     const sizesOk = (c: number, u: number) => c === e.csize && u === e.usize;
