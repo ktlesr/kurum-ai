@@ -35,4 +35,12 @@
 
 **Rollback:** Branch'i geri al; DB tabloları başka hiçbir şeyi etkilemez (`DROP TABLE sessions, users, schema_version`).
 
-**Codex bulguları ve karar:** _bekliyor_
+**Codex bulguları ve karar**
+
+- Tur 1 — CHANGES REQUIRED. Hepsi düzeltildi:
+  - P1 paralel girişler kilidi aşıyor → deneme ilk `await`'ten önce senkron rezerve ediliyor, başarıda iade (otomatik güvenlik incelemesi de aynı bulguyu verdi).
+  - P1 admin self-lockout büyük harfli UUID ile aşılıyor → kontrol SQL'de `AND id <> me.id` (uuid eşitliği).
+  - P2 kayıt kullanıcı adını ifşa ediyor → çakışmada da aynı yanıt.
+  - P2 `create-admin` parola sıfırlaması eski oturumları bırakıyor → aynı transaction'da oturumlar silinir.
+  - P2 Origin yalnız host karşılaştırıyor → şema+host+port; `APP_ORIGIN` veya proxy başlıkları; `null` → 403. Doğrulandı: aynı origin 204, `https://` farkı 403, `null` 403, yabancı 403, Origin yok 204.
+- Otomatik güvenlik incelemesi IDOR bulguları (upload/chat) → PR-1b kapsamı, bilinçli.

@@ -11,8 +11,14 @@ const problem = passwordProblem(password);
 if (problem) throw new Error(`ADMIN_PASSWORD: ${problem}`);
 
 const sql = await db();
-await sql`
-  INSERT INTO users (username, pass_hash, role, status) VALUES (${username}, ${await hashPassword(password)}, 'admin', 'active')
-  ON CONFLICT (username) DO UPDATE SET pass_hash = EXCLUDED.pass_hash, role = 'admin', status = 'active'`;
+const hash = await hashPassword(password);
+await sql.begin(async (tx) => {
+  const [u] = await tx<{ id: string }[]>`
+    INSERT INTO users (username, pass_hash, role, status) VALUES (${username}, ${hash}, 'admin', 'active')
+    ON CONFLICT (username) DO UPDATE SET pass_hash = EXCLUDED.pass_hash, role = 'admin', status = 'active'
+    RETURNING id`;
+  // Password reset: sessions opened with the old password must not inherit admin rights.
+  await tx`DELETE FROM sessions WHERE user_id = ${u.id}`;
+});
 console.log(`Yönetici hazır: ${username}`);
 await sql.end();

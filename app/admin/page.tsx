@@ -15,10 +15,11 @@ async function setStatus(form: FormData) {
   if (me?.role !== "admin") return;
   const id = String(form.get("id"));
   const status = String(form.get("status"));
-  if (id === me.id || !(status in STATUS)) return; // admins can't lock themselves out
+  if (!(status in STATUS) || !/^[0-9a-f-]{36}$/i.test(id)) return;
   const sql = await db();
-  await sql`UPDATE users SET status = ${status} WHERE id = ${id}`;
-  if (status !== "active") await sql`DELETE FROM sessions WHERE user_id = ${id}`;
+  // Self-check in SQL (uuid equality), not on the string: "ABC…" and "abc…" are the same user.
+  const [u] = await sql`UPDATE users SET status = ${status} WHERE id = ${id} AND id <> ${me.id} RETURNING id`;
+  if (u && status !== "active") await sql`DELETE FROM sessions WHERE user_id = ${u.id}`;
   revalidatePath("/admin");
 }
 

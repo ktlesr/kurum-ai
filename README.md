@@ -45,6 +45,7 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
 | `DATABASE_URL` | — (**zorunlu**) | PostgreSQL bağlantısı |
+| `APP_ORIGIN` | proxy başlıklarından | Kullanıcıların açtığı adres (ör. `https://ai.ekutlu.com`); GET dışı isteklerde `Origin` bununla birebir karşılaştırılır |
 | `COOKIE_SECURE` | `true` (üretimde) | Yalnızca HTTPS'siz ağ testinde `false`; üretimde HTTPS arkasında açık kalmalı |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama adresi |
 | `DEFAULT_MODEL` | `gemma4:12b` | Açılışta seçili sohbet modeli |

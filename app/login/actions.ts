@@ -16,14 +16,14 @@ export async function login(_: FormState, form: FormData): Promise<FormState> {
   // someone can lock a user out for 15 min. Revisit with LDAP/SSO.
   const key = `login:${username}`;
   if (isLocked(key)) return { error: "Çok fazla hatalı deneme. 15 dakika sonra tekrar deneyin." };
+  // Count the attempt before the first await: check + reserve is then atomic, so parallel requests
+  // can't all slip past the lock while their scrypt runs. Refunded on success.
+  recordFailure(key);
 
   const sql = await db();
   const [u] = await sql<{ id: string; pass_hash: string; status: string }[]>`SELECT id, pass_hash, status FROM users WHERE username = ${username}`;
   const ok = await verifyPassword(password, u?.pass_hash ?? DUMMY_HASH);
-  if (!u || !ok) {
-    recordFailure(key);
-    return { error: "Kullanıcı adı veya parola hatalı." };
-  }
+  if (!u || !ok) return { error: "Kullanıcı adı veya parola hatalı." };
   clearFailures(key);
   if (u.status === "pending") return { error: "Hesabınız yönetici onayı bekliyor." };
   if (u.status !== "active") return { error: "Hesabınız devre dışı. Yöneticinize başvurun." };
@@ -40,9 +40,9 @@ export async function signup(_: FormState, form: FormData): Promise<FormState> {
   if (password !== field(form, "password2")) return { error: "Parolalar eşleşmiyor." };
 
   const sql = await db();
-  const rows = await sql`INSERT INTO users (username, pass_hash) VALUES (${username}, ${await hashPassword(password)}) ON CONFLICT (username) DO NOTHING RETURNING id`;
-  if (!rows.length) return { error: "Bu kullanıcı adı alınmış." };
-  return { info: "Hesabınız oluşturuldu. Yönetici onayladıktan sonra giriş yapabilirsiniz." };
+  // Same reply whether or not the name is taken, so signup can't be used to list accounts.
+  await sql`INSERT INTO users (username, pass_hash) VALUES (${username}, ${await hashPassword(password)}) ON CONFLICT (username) DO NOTHING`;
+  return { info: "Hesap isteğiniz alındı. Yönetici onayladıktan sonra giriş yapabilirsiniz; kullanıcı adı başkasına aitse yöneticinize başvurun." };
 }
 
 export async function logout() {

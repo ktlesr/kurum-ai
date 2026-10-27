@@ -45,14 +45,21 @@ export const getUser = cache(async (): Promise<User | null> => {
   return u ?? null;
 });
 
+/** Scheme + host + port users reach us at. APP_ORIGIN wins; else the proxy's forwarded proto (Traefik sets it). */
+function appOrigin(req: Request) {
+  if (process.env.APP_ORIGIN) return process.env.APP_ORIGIN.replace(/\/$/, "");
+  const proto = req.headers.get("x-forwarded-proto")?.split(",")[0].trim() ?? new URL(req.url).protocol.slice(0, -1);
+  return `${proto}://${req.headers.get("x-forwarded-host") ?? req.headers.get("host")}`;
+}
+
 /**
  * Route handler guard: the user, or a 401/403 Response to return as-is.
  * Mutations must come from this origin (SameSite=lax already stops cross-site POST cookies; this is the second layer).
  */
 export async function requireApiUser(req: Request): Promise<User | Response> {
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    const origin = req.headers.get("origin");
-    if (origin && new URL(origin).host !== req.headers.get("host")) return Response.json({ error: "Geçersiz istek kaynağı." }, { status: 403 });
+  const origin = req.headers.get("origin");
+  if (req.method !== "GET" && req.method !== "HEAD" && origin !== null && origin !== appOrigin(req)) {
+    return Response.json({ error: "Geçersiz istek kaynağı." }, { status: 403 });
   }
   const user = await getUser().catch((e) => {
     console.error("auth:", (e as Error).message);
