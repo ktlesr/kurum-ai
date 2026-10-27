@@ -36,6 +36,7 @@ jobs:
       DATABASE_URL: postgres://ci:ci@localhost:5432/ci
       APP_ORIGIN: http://localhost:3000
       SMOKE_URL: http://localhost:3000
+      UPLOAD_PER_MIN: "100" # the cap test fires 25 uploads at once
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4

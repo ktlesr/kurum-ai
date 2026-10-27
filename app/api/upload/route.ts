@@ -4,6 +4,8 @@ import { deleteDoc, dropExtractIfUnused, docsOf, MAX_BYTES, MAX_DOCS_PER_USER, s
 import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
 import { logError } from "@/lib/log";
+import { admission, tooMany } from "@/lib/admission";
+import { contentProblem, readLimited } from "@/lib/filetype";
 
 export const runtime = "nodejs";
 
@@ -20,10 +22,18 @@ const inflight = new Map<string, number>();
 export async function POST(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
-  const form = await req.formData().catch(() => null);
+  if (!admission.uploadPerUser.allow(user.id)) return tooMany("yükleme");
+
+  // Never buffer more than the limit plus multipart overhead (audit S5): refuse by header, then cap while reading.
+  const maxBody = MAX_BYTES + 1024 * 1024;
+  const tooBig = () => fail("Dosya 25 MB sınırını aşıyor.", 413);
+  if (Number(req.headers.get("content-length")) > maxBody) return tooBig();
+  const raw = await readLimited(req.body, maxBody).catch(() => undefined);
+  if (raw === null) return tooBig();
+  const form = raw && (await new Response(raw, { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData().catch(() => null));
   const file = form?.get("file");
   if (!(file instanceof File)) return fail("Dosya bulunamadı.");
-  if (file.size > MAX_BYTES) return fail("Dosya 25 MB sınırını aşıyor.", 413);
+  if (file.size > MAX_BYTES) return tooBig();
   if (file.size === 0) return fail("Dosya boş.");
   // Check and reserve in one synchronous step (no await between), released when parsing ends either way.
   const busy = inflight.get(user.id) ?? 0;
@@ -40,6 +50,12 @@ export async function POST(req: Request) {
   } catch (e) {
     release();
     throw e;
+  }
+  // The extension picks the parser; the bytes must agree (and a docx/xlsx must not inflate into a bomb).
+  const problem = contentProblem(file.name.toLowerCase().split(".").pop() ?? "", buf);
+  if (problem) {
+    release();
+    return fail(problem, 415);
   }
 
   const sourceHash = createHash("sha256").update(buf).digest("hex");

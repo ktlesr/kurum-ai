@@ -2,6 +2,8 @@ import { requireApiUser } from "@/lib/auth";
 import { ALLOWED_MODELS, cptFor, getDoc, NUM_CTX, OLLAMA_URL, recordTokens, type Doc } from "@/lib/server";
 import { parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
+import { admission, tooMany } from "@/lib/admission";
+import { Busy } from "@/lib/limits";
 import { contextBudget, contextRatio, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { verifyNumbers } from "@/lib/checks";
 import { EMBED_MODEL, retrieve, TOP_K, windows } from "@/lib/rag";
@@ -39,7 +41,7 @@ const thinkParam = (model: string, think: boolean) => (model.startsWith("gpt-oss
  * One Ollama chat call, always streamed: long generations would otherwise hit fetch's 5-minute
  * no-data timeout. onText gets answer pieces, onThinking the running count of reasoning chunks.
  */
-async function streamChat(
+async function streamChatUnqueued(
   model: string,
   messages: OllamaMsg[],
   think: boolean,
@@ -92,12 +94,16 @@ async function streamChat(
   return text;
 }
 
+/** Every model call waits for a slot on the shared GPU (lib/admission); a full queue throws Busy. */
+const streamChat = (...args: Parameters<typeof streamChatUnqueued>) => admission.model.run(() => streamChatUnqueued(...args), args[3]);
+
 const chatOnce = async (model: string, messages: OllamaMsg[], signal: AbortSignal, numPredict?: number) =>
   (await streamChat(model, messages, false, signal, undefined, undefined, numPredict)).trim();
 
 export async function POST(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
+  if (!admission.chatPerUser.allow(user.id)) return tooMany("soru");
   const parsed = parseChatRequest(await req.json().catch(() => null), ALLOWED_MODELS);
   if (typeof parsed === "string") return fail(parsed, 400);
   // scope "all" = question needs the whole document (suggestion buttons know this); otherwise classified.
@@ -170,6 +176,7 @@ export async function POST(req: Request) {
             }
           }
         }
+        if (admission.model.full) status("Sırada bekleniyor…");
         if (think) status("Düşünüyor…");
         const final: OllamaMsg[] = [{ role: "system", content: `${SYSTEM}${hint}\n\n${context}` }, ...history];
         answer = await streamChat(model, final, think, signal, send, (n) => {
@@ -185,7 +192,11 @@ export async function POST(req: Request) {
         if (!signal.aborted) {
           // Raw provider text stays in the server log; the user gets a fixed message (audit S10).
           logError("chat", e);
-          send("\n\n**Hata:** Model sunucusu cevap üretemedi. Tekrar deneyin; sorun sürerse yöneticinize bildirin.");
+          send(
+            e instanceof Busy
+              ? "\n\n**Hata:** Sunucu şu an çok yoğun. Biraz sonra tekrar deneyin."
+              : "\n\n**Hata:** Model sunucusu cevap üretemedi. Tekrar deneyin; sorun sürerse yöneticinize bildirin.",
+          );
         }
       }
       try { ctrl.close(); } catch {}

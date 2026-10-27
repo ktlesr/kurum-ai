@@ -15,8 +15,8 @@ export interface Parsed {
   verify?: Extracted["verify"];
 }
 
-/** Thrown for problems the user can fix; message is shown as-is. */
-export class UserError extends Error {}
+import { UserError } from "./errors";
+export { UserError };
 
 const NO_DOCLING = "Docling kurulu değil: görsel olarak gömülü tablolar okunamaz (README → Docling kurulumu).";
 

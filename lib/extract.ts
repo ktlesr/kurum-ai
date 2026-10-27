@@ -9,6 +9,9 @@ import { logError } from "./log";
 import { writeFileAtomic } from "./atomic";
 import { runJsonLines } from "./proc";
 import { withJobDir } from "./workspace";
+import { admission, DOCLING_TIMEOUT_MS } from "./admission";
+import { Busy } from "./limits";
+import { UserError } from "./errors";
 
 export const DOCLING_PYTHON =
   process.env.DOCLING_PYTHON ??
@@ -17,6 +20,8 @@ export const VISION_MODEL = process.env.VISION_MODEL ?? "gemma4:12b";
 const VISION_VERIFY = process.env.VISION_VERIFY !== "false";
 const DOCLING_OFFLINE = process.env.DOCLING_OFFLINE !== "false";
 const PIPELINE = "v8"; // bump to invalidate cached extractions
+const DOCLING_MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
+const TOO_MANY_PAGES_EXIT = 3; // scripts/extract.py
 
 export interface Progress {
   stage: string;
@@ -63,7 +68,7 @@ async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Pr
   const file = path.join(cacheDir, "strips", `${createHash("sha256").update(VISION_MODEL + VISION_PROMPT + png).digest("hex")}.txt`);
   const hit = await readFile(file, "utf8").catch(() => null);
   if (hit !== null) return hit;
-  const res = await fetch(`${OLLAMA_URL}/api/chat`, {
+  const res = await admission.model.run(() => fetch(`${OLLAMA_URL}/api/chat`, {
     method: "POST",
     signal,
     body: JSON.stringify({
@@ -74,7 +79,7 @@ async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Pr
       options: { temperature: 0, num_ctx: NUM_CTX },
       messages: [{ role: "user", content: VISION_PROMPT, images: [png] }],
     }),
-  });
+  }), signal);
   const j = (await res.json()) as { message?: { content: string }; error?: string };
   if (!res.ok || !j.message) throw new Error(`vision_http_${res.status}`);
   const text = j.message.content.trim();
@@ -87,7 +92,7 @@ function runDocling(file: string, signal: AbortSignal, onLine: (l: PageLine) => 
   // Offline by default: models must already be on disk (README → kapalı ağ); nothing is fetched at runtime.
   const offline = DOCLING_OFFLINE ? { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1" } : {};
   // Settles only after Docling exited, so the caller's temp-file cleanup never races the running process.
-  return runJsonLines<PageLine>(/*turbopackIgnore: true*/ DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8" } }, onLine);
+  return runJsonLines<PageLine>(/*turbopackIgnore: true*/ DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8", DOCLING_MAX_PAGES: String(DOCLING_MAX_PAGES) } }, onLine);
 }
 
 /** "## X" lines that open a section rather than title a table (next content line isn't a table). */
@@ -122,14 +127,32 @@ export async function extractWithDocling(
 
   // Private random job dir; removed even if writing the input fails, and swept on start after a crash (audit S9/N3).
   const lines: PageLine[] = [];
-  await withJobDir(async (dir) => {
-    const input = path.join(dir, `input${path.extname(name).toLowerCase().replace(/[^.\w]/g, "")}`);
-    await writeFile(input, buf, { mode: 0o600 });
-    await runDocling(input, signal, (l) => {
-      lines.push(l);
-      if (l.page) onProgress({ stage: "Sayfalar okunuyor", done: l.page, total: l.total });
-    });
-  });
+  // One Docling run at a time (queue, then 429-style refusal), each with a hard time limit (audit S5/S7).
+  if (admission.docling.full) onProgress({ stage: "Sırada bekleniyor", done: 0, total: 1 });
+  let timedOut = false;
+  try {
+    await admission.docling.run(
+      () =>
+        withJobDir(async (dir) => {
+          // The clock starts once we have the slot: waiting in the queue doesn't count.
+          const timeout = AbortSignal.timeout(DOCLING_TIMEOUT_MS);
+          timeout.addEventListener("abort", () => (timedOut = true), { once: true });
+          const input = path.join(dir, `input${path.extname(name).toLowerCase().replace(/[^.\w]/g, "")}`);
+          await writeFile(input, buf, { mode: 0o600 });
+          await runDocling(input, AbortSignal.any([signal, timeout]), (l) => {
+            lines.push(l);
+            if (l.page) onProgress({ stage: "Sayfalar okunuyor", done: l.page, total: l.total });
+          });
+        }),
+      signal,
+    );
+  } catch (e) {
+    if (signal.aborted) throw e;
+    if (e instanceof Busy) throw new UserError("Sunucu şu an çok yoğun; dosya okunamadı. Biraz sonra tekrar deneyin.");
+    if (timedOut) throw new UserError(`Dosyanın okunması ${Math.round(DOCLING_TIMEOUT_MS / 60_000)} dakika sınırını aştı. Dosyayı bölerek yükleyin.`);
+    if ((e as Error).message === `proc_exit_${TOO_MANY_PAGES_EXIT}`) throw new UserError(`Dosya çok fazla sayfa içeriyor (en fazla ${DOCLING_MAX_PAGES}). Dosyayı bölerek yükleyin.`);
+    throw e;
+  }
 
   const totalTables = lines.reduce((n, l) => n + l.tables.length, 0);
   const verify = { tables: totalTables, numbers: 0, uncertain: 0, skipped: undefined as string | undefined };

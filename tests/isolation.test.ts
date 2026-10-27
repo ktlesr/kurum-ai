@@ -1,6 +1,7 @@
 // User A/B isolation against a running server (plan §11.1, journey 2).
 // Run: SMOKE_URL=http://localhost:3999 pnpm test:isolation   (needs DATABASE_URL, same DB as the server)
 import { after, test } from "node:test";
+import { connect } from "node:net";
 import assert from "node:assert/strict";
 import { db } from "../lib/db.ts";
 import { hashPassword, newToken, tokenHash } from "../lib/password.ts";
@@ -78,6 +79,67 @@ test("parallel uploads can't overshoot the per-user doc cap", { skip: !BASE && "
     assert.equal(statuses.filter((s) => s === 409).length, 5, "fazlası 409");
     assert.equal(list.length, 20, "sınır 20");
     for (const d of list) await fetch(`${BASE}/api/upload?id=${d.id}`, { method: "DELETE", headers });
+  } finally {
+    await sql`DELETE FROM users WHERE id = ${u.id}`;
+  }
+});
+
+test("upload and chat guards: content check, size cap, rate limit", { skip: !BASE && "SMOKE_URL yok" }, async () => {
+  const sql = await db();
+  const [u] = await sql<{ id: string }[]>`INSERT INTO users (username, pass_hash, status) VALUES (${`iso-guard-${Date.now().toString(36)}`}, ${await hashPassword("izolasyon-testi")}, 'active') RETURNING id`;
+  const token = newToken();
+  await sql`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (${tokenHash(token)}, ${u.id}, now() + interval '10 minutes')`;
+  const headers = { origin: BASE!, cookie: `kai_session=${token}` };
+  const upload = (blob: Blob, name: string) => {
+    const form = new FormData();
+    form.append("file", blob, name);
+    return fetch(`${BASE}/api/upload`, { method: "POST", body: form, headers });
+  };
+  try {
+    assert.equal((await upload(new Blob(["bu bir pdf değil"]), "sahte.pdf")).status, 415, "uzantıyla uyuşmayan içerik");
+    assert.equal((await upload(new Blob([new Uint8Array([0x61, 0, 0x62])]), "ikili.txt")).status, 415, "metin kılığında ikili dosya");
+
+    // Raw HTTP: announce 40 MB but send 1 byte. A 413 can only come from the header check (fetch refuses to lie).
+    const url = new URL(BASE!);
+    const statusLine = await new Promise<string>((resolve, reject) => {
+      const sock = connect(Number(url.port) || 80, url.hostname, () =>
+        sock.write(
+          [
+            "POST /api/upload HTTP/1.1",
+            `Host: ${url.host}`,
+            `Origin: ${BASE}`,
+            `Cookie: ${headers.cookie}`,
+            "Content-Type: multipart/form-data; boundary=x",
+            `Content-Length: ${40 * 1024 * 1024}`,
+            "",
+            "x",
+          ].join("\r\n"),
+        ),
+      );
+      sock.once("data", (d) => { resolve(d.toString().split("\r\n")[0]); sock.destroy(); });
+      sock.once("error", reject);
+      sock.setTimeout(5000, () => { sock.destroy(); reject(new Error("timeout: server waited for the body")); });
+    });
+    assert.match(statusLine, / 413 /, "Content-Length sınırın üstünde: gövde okunmadan");
+    // No Content-Length (chunked): the server must stop reading at the cap.
+    let sent = 0;
+    const big = new ReadableStream<Uint8Array>({
+      pull(c) {
+        sent += 1024 * 1024;
+        c.enqueue(new Uint8Array(1024 * 1024));
+        if (sent >= 40 * 1024 * 1024) c.close();
+      },
+    });
+    const res = await fetch(`${BASE}/api/upload`, { method: "POST", headers: { ...headers, "content-type": "multipart/form-data; boundary=x" }, body: big, duplex: "half" } as RequestInit);
+    assert.equal(res.status, 413, "akış halindeki büyük gövde");
+
+    const limit = Number(process.env.CHAT_PER_MIN) || 20;
+    const statuses: number[] = [];
+    for (let i = 0; i <= limit; i++) {
+      statuses.push((await fetch(`${BASE}/api/chat`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: "{}" })).status);
+    }
+    assert.deepEqual(statuses.slice(0, limit), Array(limit).fill(400), "sınır içinde: doğrulama hatası");
+    assert.equal(statuses[limit], 429, "sınır aşıldı");
   } finally {
     await sql`DELETE FROM users WHERE id = ${u.id}`;
   }
