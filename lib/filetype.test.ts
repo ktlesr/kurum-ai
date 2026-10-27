@@ -171,6 +171,9 @@ test("tampered directories are rejected, not read as empty", async () => {
   trailing.writeUInt16LE(5, 20);
   const shadowed = Buffer.concat([Buffer.from(good.subarray(0, eocd + 20)), Buffer.from([22, 0]), trailing]);
   assert.equal(zipTotals(new Uint8Array(shadowed)), null, "last signature doesn't end the file → rejected");
+  // A bare signature in the last 21 bytes (inside the real EOCD's comment): no room for a record, still the last one.
+  const tail = Buffer.concat([Buffer.from(good.subarray(0, eocd + 20)), Buffer.from([8, 0]), Buffer.from([0, 0, 0, 0, 0x50, 0x4b, 0x05, 0x06])]);
+  assert.equal(zipTotals(new Uint8Array(tail)), null, "signature too close to the end → rejected");
 });
 
 test("local headers must agree with the directory and tile the archive", async () => {

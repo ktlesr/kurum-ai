@@ -96,9 +96,10 @@ export function zipEntries(buf: Uint8Array): ZipEntry[] | null {
   // The LAST signature is the one parsers pick (SheetJS takes it without checking the comment length), so it must
   // be the one that ends the file exactly; an earlier "valid" one would mean we checked another archive than theirs.
   let eocd = -1;
-  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) {
+  // From the very end: a signature in the last 21 bytes (no room for a full record) also counts, and rejects.
+  for (let i = buf.length - 4; i >= Math.max(0, buf.length - 22 - 65535); i--) {
     if (v.getUint32(i, true) !== 0x06054b50) continue;
-    if (i + 22 + v.getUint16(i + 20, true) === buf.length) eocd = i;
+    if (i + 22 <= buf.length && i + 22 + v.getUint16(i + 20, true) === buf.length) eocd = i;
     break;
   }
   if (eocd < 0) return null;
