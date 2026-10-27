@@ -8,6 +8,7 @@ export interface ChatRequest {
   scope?: "all";
 }
 
+// files = MAX_DOCS_PER_USER in lib/server.ts; the client sends at most HISTORY messages.
 export const LIMITS = { files: 20, messages: 200, messageChars: 100_000 };
 
 /** The parsed request, or a Turkish error message for a 400. */

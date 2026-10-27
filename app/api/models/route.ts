@@ -1,5 +1,5 @@
 import { requireApiUser } from "@/lib/auth";
-import { ALLOWED_MODELS, charsPerToken, DEFAULT_MODEL, NUM_CTX, OLLAMA_URL } from "@/lib/server";
+import { ALLOWED_MODELS, charsPerToken, PREFERRED_MODEL, NUM_CTX, OLLAMA_URL } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
 
@@ -25,8 +25,8 @@ export async function GET(req: Request) {
       )
       .map((m) => m.name)
       .sort();
-    return Response.json({ ok: true, models: names, defaultModel: DEFAULT_MODEL, numCtx: NUM_CTX, charsPerToken: Object.fromEntries(charsPerToken) });
+    return Response.json({ ok: true, models: names, defaultModel: PREFERRED_MODEL, numCtx: NUM_CTX, charsPerToken: Object.fromEntries(charsPerToken) });
   } catch {
-    return Response.json({ ok: false, models: [], defaultModel: DEFAULT_MODEL, numCtx: NUM_CTX, charsPerToken: Object.fromEntries(charsPerToken) });
+    return Response.json({ ok: false, models: [], defaultModel: PREFERRED_MODEL, numCtx: NUM_CTX, charsPerToken: Object.fromEntries(charsPerToken) });
   }
 }

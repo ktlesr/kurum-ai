@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --test lib/*.test.ts",
-    "test:isolation": "node --env-file-if-exists=.env.local --test tests/isolation.test.ts"
+    "test:isolation": "node --env-file-if-exists=.env.local --test tests/isolation.test.ts",
+    "test:restart": "node --env-file-if-exists=.env.local --test tests/restart.test.ts"
   },
   "dependencies": {
     "geist": "^1.7.2",

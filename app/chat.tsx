@@ -35,6 +35,8 @@ const kindOf = (name: string): DocKind => {
   return "text";
 };
 const fmtSize = (b: number) => (b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`);
+// The server answers from the last 8 turns; sending more only risks the 200-message request limit.
+const HISTORY = 8;
 const fmtNum = (n: number) => n.toLocaleString("tr-TR");
 /** fetch for our API: an expired session (401) goes back to the login page. */
 const api = (url: string, init?: RequestInit) =>
@@ -71,7 +73,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     setModels(r.models);
     setNumCtx(r.numCtx);
     setCpt(r.charsPerToken);
-    setModel((cur) => cur || (r.models.includes(r.defaultModel) ? r.defaultModel : (r.models[0] ?? r.defaultModel)));
+    // Keep the choice only while the server still offers it (allowlist can change, Ollama can come back with fewer models).
+    setModel((cur) => (r.models.includes(cur) ? cur : r.models.includes(r.defaultModel) ? r.defaultModel : (r.models[0] ?? r.defaultModel)));
   }, []);
 
   useEffect(() => {
@@ -176,7 +179,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         method: "POST",
         signal: ac.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, think, scope, fileIds: ready.map((f) => f.serverId), messages: history.map(({ role, content }) => ({ role, content })) }),
+        body: JSON.stringify({ model, think, scope, fileIds: ready.map((f) => f.serverId), messages: history.slice(-HISTORY).map(({ role, content }) => ({ role, content })) }),
       });
       if (!res.ok || !res.body) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };

@@ -33,4 +33,13 @@
 
 **Rollback:** Branch'i geri al. `.cache/userdocs` yeni dizin; eski veri değişmedi.
 
-**Codex bulguları ve karar:** _bekliyor_
+**Codex bulguları ve karar**
+
+- Tur 1 — CHANGES REQUIRED:
+  - **P1 yeniden başlatmada belgeler yüklenmiyordu:** `UUID` sabiti `loadDocs()` çağrısından sonra tanımlıydı (TDZ). `ReferenceError` boş `catch` ile yutuluyor, liste boş geliyordu (dosyalar diskte kalıyordu). İlk testim sunucuyu yeniden başlatmadığı için kaçırdı. Düzeltme: sabit öne alındı. Yeni `tests/restart.test.ts` (CI'da gerçek restart arasında iki faz). **Hatalı sürüme karşı çalıştırıldı ve başarısız oldu**, düzeltilmiş sürümde geçti.
+  - P2 kullanıcı dizini hatası izole değildi → dizin okuma da ayrı `try`.
+  - P2 logda ownerId → log yalnızca sayı veriyor ("N kayıt okunamadı").
+  - P2 test dar → A'nın sohbeti kesin {200, 503}; olmayan id ile başkasınınki aynı yanıt (409); CI'da hazır olma döngüsü zaman aşımında başarısız.
+  - P2 200 mesaj sınırı istemciyi kilitliyordu → istemci son 8 mesajı gönderiyor (sunucu zaten 8 kullanıyor). 20 dosya sınırı yüklemede uygulanıyor (409).
+  - P2 varsayılan model izin listesi dışında kalabiliyordu → `PREFERRED_MODEL` izinli olandan seçiliyor; istemci listeden düşen seçimi yeniliyor.
+  - Açık not: deterministik model sağlayıcıyla gerçek sohbet/RAG uçtan uca testi, sağlayıcı soyutlamasıyla (PR-3a) gelecek.

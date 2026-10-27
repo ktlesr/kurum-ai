@@ -1,4 +1,4 @@
-import { deleteDoc, docsOf, MAX_BYTES, saveDoc, toMeta, type Doc } from "@/lib/server";
+import { deleteDoc, docsOf, MAX_BYTES, MAX_DOCS_PER_USER, saveDoc, toMeta, type Doc } from "@/lib/server";
 import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
 
@@ -18,6 +18,7 @@ export async function POST(req: Request) {
   if (!(file instanceof File)) return fail("Dosya bulunamadı.");
   if (file.size > MAX_BYTES) return fail("Dosya 25 MB sınırını aşıyor.", 413);
   if (file.size === 0) return fail("Dosya boş.");
+  if (docsOf(user.id).length >= MAX_DOCS_PER_USER) return fail(`En fazla ${MAX_DOCS_PER_USER} dosya yüklenebilir. Önce bir dosyayı kaldırın.`, 409);
   const buf = Buffer.from(await file.arrayBuffer());
 
   const enc = new TextEncoder();

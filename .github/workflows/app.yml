@@ -45,9 +45,19 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: |
+      - name: Sunucuyu başlat
+        run: |
           pnpm start > server.log 2>&1 &
-          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:3000/login && break; sleep 1; done
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:3000/login && exit 0; sleep 1; done
+          echo "sunucu 30 sn içinde hazır olmadı"; exit 1
       - run: pnpm test:isolation
+      - run: SMOKE_PHASE=before pnpm test:restart
+      - name: Sunucuyu yeniden başlat
+        run: |
+          pkill -f "next start" || true; sleep 2
+          pnpm start >> server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:3000/login && exit 0; sleep 1; done
+          echo "sunucu yeniden başlamadı"; exit 1
+      - run: SMOKE_PHASE=after pnpm test:restart
       - if: failure()
         run: cat server.log

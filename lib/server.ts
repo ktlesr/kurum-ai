@@ -33,9 +33,10 @@ export interface Doc extends DocMeta {
 // Docs survive restarts as .cache/userdocs/<ownerId>/<id>.json; globalThis keeps the map across dev hot reloads.
 // .cache/docs/ holds pre-auth uploads with no owner: quarantined — never loaded, never deleted (audit K4, plan §4.3).
 const DOCS_DIR = path.join(process.cwd(), ".cache", "userdocs");
-const g = globalThis as typeof globalThis & { __docs?: Map<string, Doc>; __cpt?: Map<string, number> };
-const docs = (g.__docs ??= loadDocs());
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const g = globalThis as typeof globalThis & { __docs?: Map<string, Doc>; __cpt?: Map<string, number> };
+// Must come after every const loadDocs touches (TDZ: a ReferenceError here used to load zero docs on restart).
+const docs = (g.__docs ??= loadDocs());
 
 function loadDocs(): Map<string, Doc> {
   const map = new Map<string, Doc>();
@@ -45,17 +46,26 @@ function loadDocs(): Map<string, Doc> {
   } catch {
     return map; // no saved docs yet
   }
+  // One unreadable dir or file must not hide the rest (audit R1). Logs carry no user id or content.
+  let failed = 0;
   for (const owner of owners) {
-    for (const f of readdirSync(path.join(DOCS_DIR, owner))) {
-      // One unreadable file must not hide the rest (audit R1).
+    let files: string[];
+    try {
+      files = readdirSync(path.join(DOCS_DIR, owner));
+    } catch {
+      failed++;
+      continue;
+    }
+    for (const f of files) {
       try {
         const d = JSON.parse(readFileSync(path.join(DOCS_DIR, owner, f), "utf8")) as Doc;
         if (d.ownerId === owner) map.set(d.id, d);
-      } catch (e) {
-        console.error(`docs: ${owner}/${f} okunamadı: ${(e as Error).message}`);
+      } catch {
+        failed++;
       }
     }
   }
+  if (failed) console.error(`docs: ${failed} kayıt okunamadı, atlandı`);
   return map;
 }
 
@@ -65,6 +75,7 @@ export function getDoc(userId: string, id: string): Doc | undefined {
   return d?.ownerId === userId ? d : undefined;
 }
 
+export const MAX_DOCS_PER_USER = 20; // = chat fileIds limit (lib/validate.ts)
 export const docsOf = (userId: string) => [...docs.values()].filter((d) => d.ownerId === userId);
 
 export function saveDoc(doc: Doc) {
@@ -104,3 +115,5 @@ export function toMeta(doc: Doc): DocMeta {
 export const ALLOWED_MODELS = new Set(
   (process.env.ALLOWED_MODELS ?? DEFAULT_MODEL).split(",").map((m) => m.trim()).filter(Boolean),
 );
+/** What the UI preselects: DEFAULT_MODEL if allowed, else the first allowed one. */
+export const PREFERRED_MODEL = ALLOWED_MODELS.has(DEFAULT_MODEL) ? DEFAULT_MODEL : [...ALLOWED_MODELS][0];

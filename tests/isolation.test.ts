@@ -43,7 +43,9 @@ test("user B can never see, use or delete user A's document", { skip: !BASE && "
     assert.equal((await call(B, `/api/upload?id=${id}`, { method: "DELETE" })).status, 404, "B silemez");
     const msg = [{ role: "user", content: "özetle" }];
     assert.equal((await chat(B, { model: MODEL, fileIds: [id], messages: msg })).status, 409, "B sohbette kullanamaz");
-    assert.notEqual((await chat(A, { model: MODEL, fileIds: [id], messages: msg })).status, 409, "A kullanabilir");
+    // 200 with a model server, 503 without one (CI): either way the ownership check let A through.
+    assert.ok([200, 503].includes((await chat(A, { model: MODEL, fileIds: [id], messages: msg })).status), "A kullanabilir");
+    assert.equal((await chat(B, { model: MODEL, fileIds: ["00000000-0000-4000-8000-000000000000"], messages: msg })).status, 409, "yok olan ile başkasınınki aynı yanıt");
 
     assert.equal((await chat(A, {})).status, 400, "boş gövde");
     assert.equal((await chat(A, { model: "x:cloud", fileIds: [id], messages: msg })).status, 400, "izin listesi dışı model");
