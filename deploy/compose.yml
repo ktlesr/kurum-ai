@@ -17,7 +17,11 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgres://kurumai:${POSTGRES_PASSWORD:?}@db:5432/kurumai
+      # Separate fields, not a URL: any password works without URL-encoding.
+      PGHOST: db
+      PGUSER: kurumai
+      PGDATABASE: kurumai
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
       APP_ORIGIN: ${APP_ORIGIN:?} # e.g. https://ai.example.com — mutations are refused without it
       MODEL_PROVIDER: ${MODEL_PROVIDER:-vllm}
       MODEL_URL: ${MODEL_URL:-http://host.docker.internal:8000/v1}

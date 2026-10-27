@@ -1,6 +1,6 @@
 import "server-only";
 import postgres from "postgres";
-import { db } from "./db";
+import { connect, db } from "./db";
 import { sweepOnBoot } from "./server";
 
 const LOCK_KEY = 7712002;
@@ -19,7 +19,7 @@ export async function boot() {
     console.error(`boot: ${why}; süreç durduruluyor.`);
     process.exit(1);
   };
-  const lock = postgres(process.env.DATABASE_URL!, {
+  const lock = connect({
     max: 1,
     idle_timeout: 0, // never close for idleness
     max_lifetime: null, // never recycle: a new connection would not hold the lock

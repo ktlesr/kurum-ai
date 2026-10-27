@@ -86,6 +86,15 @@ jobs:
       SMOKE_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v7
+      - name: Build bağlamına secret girmez
+        run: |
+          # Dokploy writes deploy/.env next to the compose file: it must never reach any build stage.
+          M=$(openssl rand -hex 16) # random, so it can't match itself anywhere in the repo
+          echo "$M" > deploy/.env
+          echo "$M" > .env.local
+          docker build --target build -t kai-build .
+          docker run --rm -e M="$M" --entrypoint sh kai-build -c '! grep -rqs "$M" /src --exclude-dir=node_modules'
+          rm deploy/.env .env.local
       - run: docker build --target app -t kai .
       - name: İmajda yasak dosya yok
         run: |
