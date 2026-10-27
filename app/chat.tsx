@@ -4,9 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  AlertTriangle, ArrowUp, Check, Copy, File as FileIcon, FileSpreadsheet, FileText, FileType,
-  LogOut, Menu, Square, Upload, Users, X,
+  AlertTriangle, ArrowUp, Check, Copy, Download, File as FileIcon, FileSpreadsheet, FileText, FileType,
+  HardDrive, LogOut, Menu, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Upload, Users, X,
 } from "lucide-react";
+import { useChats } from "./use-chats";
+import { searchChats, titleFrom, type Message, type StoredChat } from "@/lib/local-store";
 import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
 import { contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
@@ -17,7 +19,6 @@ type Card = Partial<DocMeta> & {
   serverId?: string;
   progress?: { stage: string; done: number; total: number };
 };
-interface Message { role: "user" | "assistant"; content: string; error?: boolean; meta?: ChatMeta; status?: string }
 type UploadEvent =
   | { type: "progress"; stage: string; done: number; total: number }
   | { type: "done"; doc: DocMeta }
@@ -60,6 +61,21 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const [streaming, setStreaming] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [backupNote, setBackupNote] = useState<string | null>(null);
+  const backupInput = useRef<HTMLInputElement>(null);
+  const streamingRef = useRef(false);
+  const chatIdRef = useRef<string | null>(null);
+  useEffect(() => { streamingRef.current = streaming; chatIdRef.current = chatId; });
+  const local = useChats(username, async (id) => {
+    // Another tab changed the open chat: show its version unless this tab is mid-answer.
+    if (id !== chatIdRef.current || streamingRef.current) return;
+    const c = await local.get(id);
+    if (c) setMessages(c.messages);
+    else { setChatId(null); setMessages([]); }
+  });
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -172,7 +188,25 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     setStreaming(true);
     const ac = new AbortController();
     abortRef.current = ac;
-    const setLast = (fn: (m: Message) => Message) => setMessages((ms) => [...ms.slice(0, -1), fn(ms[ms.length - 1])]);
+    let last: Message = { role: "assistant", content: "" };
+    const setLast = (fn: (m: Message) => Message) => {
+      last = fn(last);
+      const m = last;
+      setMessages((ms) => [...ms.slice(0, -1), m]);
+    };
+    // Saved before the answer starts (a closed tab keeps the question) and again when it ends.
+    const id = chatId ?? crypto.randomUUID();
+    const prev = chatId ? local.chats.find((c) => c.id === chatId) : undefined;
+    const createdAt = prev?.createdAt ?? Date.now();
+    const persist = (msgs: Message[]) =>
+      local.save({
+        id, createdAt, updatedAt: Date.now(), pinned: prev?.pinned, model,
+        title: prev?.title ?? titleFrom(q),
+        docIds: ready.map((f) => f.serverId!).filter(Boolean),
+        messages: msgs.filter((m) => m.content || m.error).map(({ role, content, error, meta }) => ({ role, content, ...(error ? { error } : {}), ...(meta ? { meta } : {}) })),
+      });
+    setChatId(id);
+    persist(history);
 
     try {
       const res = await api("/api/chat", {
@@ -214,8 +248,27 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     } finally {
       setStreaming(false);
       abortRef.current = null;
+      persist([...history, last]);
     }
   };
+
+  const openChat = (c: StoredChat) => {
+    if (streaming) return;
+    setChatId(c.id);
+    setMessages(c.messages);
+    setDrawer(false);
+  };
+  const newChat = () => {
+    if (streaming) return;
+    setChatId(null);
+    setMessages([]);
+    setDrawer(false);
+  };
+  const deleteChat = (c: StoredChat) => {
+    if (c.id === chatId) newChat();
+    local.remove(c);
+  };
+  const visibleChats = searchChats(local.chats, query);
 
   const hasReport = ready.some((f) => f.kind === "pdf" || f.kind === "docx");
   const CONSISTENCY =
@@ -240,6 +293,61 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           <X size={18} />
         </button>
       </div>
+
+      <section className="flex min-h-0 flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-muted">Sohbetler</span>
+          <button onClick={newChat} disabled={streaming} className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted hover:bg-subtle hover:text-fg disabled:opacity-40">
+            <Plus size={14} /> Yeni sohbet
+          </button>
+        </div>
+        {local.chats.length > 0 && (
+          <label className="flex h-8 items-center gap-2 rounded-lg border border-line bg-panel px-2.5 text-sm focus-within:border-accent">
+            <Search size={14} className="shrink-0 text-muted" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Sohbetlerde ara" aria-label="Sohbetlerde ara" className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted" />
+          </label>
+        )}
+        <ul className="-mx-1 flex max-h-56 flex-col overflow-y-auto px-1">
+          {visibleChats.map((c) => (
+            <li key={c.id} className={`group flex items-center gap-1 rounded-md pr-1 ${c.id === chatId ? "bg-subtle" : "hover:bg-subtle"}`}>
+              {renaming === c.id ? (
+                <input
+                  autoFocus
+                  defaultValue={c.title}
+                  aria-label="Sohbet adı"
+                  className="m-1 h-7 min-w-0 flex-1 rounded border border-accent bg-panel px-1.5 text-sm outline-none"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                    if (e.key === "Escape") { e.stopPropagation(); setRenaming(null); }
+                  }}
+                  onBlur={(e) => {
+                    const t = e.currentTarget.value.trim();
+                    if (renaming && t && t !== c.title) local.patch(c.id, { title: t.slice(0, 200) });
+                    setRenaming(null);
+                  }}
+                />
+              ) : (
+                <button onClick={() => openChat(c)} disabled={streaming} className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-sm disabled:cursor-not-allowed">
+                  {c.pinned && <Pin size={12} className="shrink-0 text-accent" aria-label="Sabitlendi" />}
+                  <span className="truncate" title={c.title}>{c.title}</span>
+                </button>
+              )}
+              <span className="flex shrink-0 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+                <button onClick={() => local.patch(c.id, { pinned: !c.pinned })} className="rounded p-1 text-muted hover:text-fg" aria-label={c.pinned ? "Sabitlemeyi kaldır" : "Sabitle"} title={c.pinned ? "Sabitlemeyi kaldır" : "Sabitle"}>
+                  {c.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+                </button>
+                <button onClick={() => setRenaming(c.id)} className="rounded p-1 text-muted hover:text-fg" aria-label="Yeniden adlandır" title="Yeniden adlandır">
+                  <Pencil size={13} />
+                </button>
+                <button onClick={() => deleteChat(c)} disabled={streaming && c.id === chatId} className="rounded p-1 text-muted hover:text-danger disabled:opacity-40" aria-label="Sil" title="Sil">
+                  <Trash2 size={13} />
+                </button>
+              </span>
+            </li>
+          ))}
+          {query && !visibleChats.length && <li className="px-2 py-1.5 text-xs text-muted">Eşleşen sohbet yok.</li>}
+        </ul>
+      </section>
 
       <section className="flex flex-col gap-2">
         <label htmlFor="model" className="text-xs font-medium text-muted">Model</label>
@@ -320,7 +428,37 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         </ul>
       </section>
 
-      <p className="text-xs text-muted">Bağlam: {fmtNum(numCtx)} token</p>
+      <section className="flex flex-col gap-1.5 text-xs text-muted">
+        <p className="flex items-start gap-1.5">
+          <HardDrive size={13} className="mt-px shrink-0" />
+          <span>
+            Sohbetler yalnızca bu tarayıcıda saklanır; cihazlar arası eşitleme yok.
+            {local.storage?.usage !== undefined && ` Kullanılan: ${fmtSize(local.storage.usage)}.`}
+            {local.storage && !local.storage.persisted && " Tarayıcı yer açmak için silebilir; düzenli yedek alın."}
+          </span>
+        </p>
+        <div className="flex gap-1">
+          <button onClick={local.exportBackup} className="flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-subtle hover:text-fg">
+            <Download size={13} /> Yedek al
+          </button>
+          <button onClick={() => backupInput.current?.click()} className="flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-subtle hover:text-fg">
+            <Upload size={13} /> Yedekten yükle
+          </button>
+          <input
+            ref={backupInput}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) setBackupNote(await local.importBackup(f));
+            }}
+          />
+        </div>
+        {backupNote && <p role="status">{backupNote}</p>}
+        <p>Bağlam: {fmtNum(numCtx)} token</p>
+      </section>
       <div className="-mx-2 flex items-center gap-1 border-t border-line px-2 pt-3 text-sm">
         <span className="min-w-0 flex-1 truncate text-muted" title={username}>{username}</span>
         {isAdmin && (
@@ -358,6 +496,12 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           <ThemeToggle />
         </header>
 
+        {local.error && (
+          <div role="alert" className="flex items-center gap-2 border-b border-line bg-warn-bg px-4 py-2.5 text-sm text-warn-fg">
+            <AlertTriangle size={16} className="shrink-0" />
+            <span>{local.error}</span>
+          </div>
+        )}
         {!modelOk && (
           <div role="alert" className="flex items-center gap-2 border-b border-line bg-warn-bg px-4 py-2.5 text-sm text-warn-fg">
             <AlertTriangle size={16} className="shrink-0" />
@@ -432,6 +576,12 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           <p className="mt-2 text-center text-xs text-muted">Enter gönder · Shift+Enter yeni satır · Esc durdur</p>
         </div>
 
+        {local.pendingDelete && (
+          <div role="status" className="absolute bottom-24 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-lg bg-fg px-4 py-2 text-sm text-bg shadow-lg">
+            <span className="max-w-60 truncate">“{local.pendingDelete.title}” silindi</span>
+            <button onClick={local.undoDelete} className="font-medium underline underline-offset-2">Geri al</button>
+          </div>
+        )}
         {dragging && (
           <div className="pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-xl border-2 border-dashed border-accent bg-accent-soft/80 text-sm font-medium text-accent">
             Dosyaları buraya bırakın
