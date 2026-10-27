@@ -1,5 +1,6 @@
 import { requireApiUser } from "@/lib/auth";
-import { ALLOWED_MODELS, cptFor, getDoc, NUM_CTX, OLLAMA_URL, recordTokens, type Doc } from "@/lib/server";
+import { ALLOWED_MODELS, cptFor, getDoc, NUM_CTX, recordTokens, type Doc } from "@/lib/server";
+import { chatProvider, type Msg } from "@/lib/provider";
 import { parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
@@ -9,8 +10,6 @@ import { verifyNumbers } from "@/lib/checks";
 import { EMBED_MODEL, retrieve, TOP_K, windows } from "@/lib/rag";
 
 export const runtime = "nodejs";
-
-type OllamaMsg = { role: "system" | "user" | "assistant"; content: string };
 
 const SYSTEM = `Yalnızca verilen doküman içeriğine dayanarak cevap ver. Bilgi dokümanda yoksa açıkça "dokümanda bu bilgi yok" de; tahmin yürütme, bilgi uydurma.
 Mümkünse sayfa numarasını ("Sayfa 4") ya da sayfa adını ("Sheet: Bütçe") belirt.
@@ -34,70 +33,26 @@ const MAX_NOTES = 2048;
 
 const fail = (error: string, status: number) => Response.json({ error }, { status });
 
-// gpt-oss cannot switch reasoning off, only down
-const thinkParam = (model: string, think: boolean) => (model.startsWith("gpt-oss") ? (think ? "high" : "low") : think);
-
-/**
- * One Ollama chat call, always streamed: long generations would otherwise hit fetch's 5-minute
- * no-data timeout. onText gets answer pieces, onThinking the running count of reasoning chunks.
- */
+/** One model call (lib/provider). onText gets answer pieces, onThinking the running count of reasoning chunks. */
 async function streamChatUnqueued(
   model: string,
-  messages: OllamaMsg[],
+  messages: Msg[],
   think: boolean,
   signal: AbortSignal,
   onText: (piece: string) => void = () => {},
   onThinking: (n: number) => void = () => {},
   numPredict?: number,
 ): Promise<string> {
-  const res = await fetch(`${OLLAMA_URL}/api/chat`, {
-    method: "POST",
-    signal,
-    body: JSON.stringify({
-      model,
-      stream: true,
-      think: thinkParam(model, think),
-      // Same num_ctx as every other call: a different value makes Ollama reload the model.
-      // Always capped: at temperature 0 a model can fall into a repetition loop and generate until num_ctx
-      // (seen: 58k tokens, ~15 min), blocking Ollama for every later request.
-      options: { num_ctx: NUM_CTX, temperature: 0, num_predict: numPredict ?? MAX_ANSWER },
-      messages,
-    }),
-  });
-  if (!res.ok || !res.body) throw new Error(`ollama_http_${res.status}`);
-  const decoder = new TextDecoder();
-  let buf = "";
-  let text = "";
-  let thought = 0;
-  const handle = (line: string) => {
-    if (!line.trim()) return;
-    const j = JSON.parse(line) as { message?: { content?: string; thinking?: string }; error?: string; done?: boolean; done_reason?: string; prompt_eval_count?: number };
-    if (j.error) throw new Error("ollama_stream_error");
-    if (j.message?.thinking) onThinking(++thought);
-    if (j.message?.content) {
-      text += j.message.content;
-      onText(j.message.content);
-    }
-    if (j.done_reason === "length" && text && !numPredict) onText("\n\n…(cevap uzunluk sınırında kesildi)");
-    if (j.done && j.prompt_eval_count) recordTokens(model, messages.reduce((n, m) => n + m.content.length, 0), j.prompt_eval_count);
-  };
-  const reader = res.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const lines = buf.split("\n");
-    buf = lines.pop() ?? "";
-    lines.forEach(handle);
-  }
-  handle(buf);
-  return text;
+  const r = await chatProvider.chat({ model, messages, think, maxTokens: numPredict ?? MAX_ANSWER, signal, onText, onThinking });
+  if (r.truncated && r.text && !numPredict) onText("\n\n…(cevap uzunluk sınırında kesildi)");
+  if (r.promptTokens) recordTokens(model, messages.reduce((n, m) => n + m.content.length, 0), r.promptTokens);
+  return r.text;
 }
 
 /** Every model call waits for a slot on the shared GPU (lib/admission); a full queue throws Busy. */
 const streamChat = (...args: Parameters<typeof streamChatUnqueued>) => admission.model.run(() => streamChatUnqueued(...args), args[3]);
 
-const chatOnce = async (model: string, messages: OllamaMsg[], signal: AbortSignal, numPredict?: number) =>
+const chatOnce = async (model: string, messages: Msg[], signal: AbortSignal, numPredict?: number) =>
   (await streamChat(model, messages, false, signal, undefined, undefined, numPredict)).trim();
 
 export async function POST(req: Request) {
@@ -116,10 +71,9 @@ export async function POST(req: Request) {
   if (selected.some((d) => !d)) {
     return fail("Dosya sunucuda bulunamadı. Dosyayı kaldırıp tekrar yükleyin.", 409);
   }
-  const ok = await fetch(`${OLLAMA_URL}/api/version`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false);
-  if (!ok) return fail("Ollama çalışmıyor — `ollama serve` komutunu çalıştırın.", 503);
+  if (!(await chatProvider.healthy())) return fail("Model sunucusu çalışmıyor. Yöneticinize bildirin.", 503);
 
-  const signal = req.signal; // Esc in the UI aborts generation in Ollama too
+  const signal = req.signal; // Esc in the UI aborts generation on the model server too
   const history = messages.slice(-8); // ponytail: last 8 turns only; long chats could still overflow num_ctx
   const question = messages.filter((m) => m.role === "user").slice(-2).map((m) => m.content).join("\n");
   const totalChars = selected.reduce((n, d) => n + d.chars, 0);
@@ -180,7 +134,7 @@ export async function POST(req: Request) {
         }
         if (admission.model.full) status("Sırada bekleniyor…");
         if (think) status("Düşünüyor…");
-        const final: OllamaMsg[] = [{ role: "system", content: `${SYSTEM}${hint}\n\n${context}` }, ...history];
+        const final: Msg[] = [{ role: "system", content: `${SYSTEM}${hint}\n\n${context}` }, ...history];
         answer = await streamChat(model, final, think, signal, send, (n) => {
           // Keeps the connection busy and shows the wait isn't stuck.
           if (n % 50 === 0) status(`Düşünüyor… (${n} adım)`);

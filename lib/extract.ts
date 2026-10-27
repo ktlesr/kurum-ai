@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkCriteria, checkMaxRows, compactTables, markUncertain } from "./checks";
-import { NUM_CTX, OLLAMA_URL } from "./server";
+import { visionProvider } from "./provider";
 import { logError } from "./log";
 import { writeFileAtomic } from "./atomic";
 import { runJsonLines } from "./proc";
@@ -17,6 +17,8 @@ export const DOCLING_PYTHON =
   process.env.DOCLING_PYTHON ??
   path.join(process.cwd(), ".venv-docling", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
 export const VISION_MODEL = process.env.VISION_MODEL ?? "gemma4:12b";
+// ponytail: fixed cap; a table strip is a few hundred tokens of markdown
+const VISION_MAX_TOKENS = 4096;
 const VISION_VERIFY = process.env.VISION_VERIFY !== "false";
 const DOCLING_OFFLINE = process.env.DOCLING_OFFLINE !== "false";
 const PIPELINE = "v9"; // bump to invalidate cached extractions
@@ -60,21 +62,10 @@ async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Pr
   if (hit !== null) return hit;
   // The slot covers the whole call, body included: a provider that sends headers early is still "busy".
   const text = await admission.model.run(async () => {
-    const res = await fetch(`${OLLAMA_URL}/api/chat`, {
-    method: "POST",
-    signal,
-    body: JSON.stringify({
-      model: VISION_MODEL,
-      stream: false,
-      think: false,
-      // Same num_ctx as chat: a different value makes Ollama reload the model between calls.
-      options: { temperature: 0, num_ctx: NUM_CTX },
-      messages: [{ role: "user", content: VISION_PROMPT, images: [png] }],
-    }),
-    });
-    const j = (await res.json()) as { message?: { content: string }; error?: string };
-    if (!res.ok || !j.message) throw new Error(`vision_http_${res.status}`);
-    return j.message.content.trim();
+    const r = await visionProvider.chat({ model: VISION_MODEL, messages: [{ role: "user", content: VISION_PROMPT, images: [png] }], maxTokens: VISION_MAX_TOKENS, signal });
+    // A cut-off reading is a failed reading: never cached, never compared (the caller marks verification skipped).
+    if (r.truncated) throw new Error("vision_truncated");
+    return r.text.trim();
   }, signal);
   writeFileAtomic(file, text);
   return text;
