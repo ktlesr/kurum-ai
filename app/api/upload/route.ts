@@ -6,6 +6,10 @@ export const runtime = "nodejs";
 
 const fail = (error: string, status = 400) => Response.json({ error }, { status });
 
+// Uploads still being parsed, per user. Counted against the doc cap so parallel uploads can't overshoot it.
+// ponytail: per-process, like the doc map itself; one app instance.
+const inflight = new Map<string, number>();
+
 /**
  * Streams NDJSON: {type:"progress",stage,done,total}… then {type:"done",doc} or {type:"error",error}.
  * Extraction with table verification can take minutes, so the card needs live progress.
@@ -18,8 +22,22 @@ export async function POST(req: Request) {
   if (!(file instanceof File)) return fail("Dosya bulunamadı.");
   if (file.size > MAX_BYTES) return fail("Dosya 25 MB sınırını aşıyor.", 413);
   if (file.size === 0) return fail("Dosya boş.");
-  if (docsOf(user.id).length >= MAX_DOCS_PER_USER) return fail(`En fazla ${MAX_DOCS_PER_USER} dosya yüklenebilir. Önce bir dosyayı kaldırın.`, 409);
-  const buf = Buffer.from(await file.arrayBuffer());
+  // Check and reserve in one synchronous step (no await between), released when parsing ends either way.
+  const busy = inflight.get(user.id) ?? 0;
+  if (docsOf(user.id).length + busy >= MAX_DOCS_PER_USER) return fail(`En fazla ${MAX_DOCS_PER_USER} dosya yüklenebilir. Önce bir dosyayı kaldırın.`, 409);
+  inflight.set(user.id, busy + 1);
+  const release = () => {
+    const n = (inflight.get(user.id) ?? 1) - 1;
+    if (n > 0) inflight.set(user.id, n);
+    else inflight.delete(user.id);
+  };
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(await file.arrayBuffer());
+  } catch (e) {
+    release();
+    throw e;
+  }
 
   const enc = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
@@ -37,6 +55,8 @@ export async function POST(req: Request) {
         if (req.signal.aborted) return;
         if (!(e instanceof UserError)) console.error(e);
         send({ type: "error", error: e instanceof UserError ? e.message : "Dosya okunamadı. Bozuk ya da parola korumalı olabilir." });
+      } finally {
+        release();
       }
       try { ctrl.close(); } catch {}
     },
