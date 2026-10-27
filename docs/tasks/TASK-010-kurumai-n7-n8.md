@@ -6,3 +6,4 @@
 - Canlı yığına uygulanmadı (kullanıcı onayı gerekir).
 
 **Codex bulguları ve karar**
+- Codex — **APPROVED WITH NOTES**: N7/N8 doğru. Notlar işlendi: LDAP override'ı kurum CA dosyasını (yalnızca `kurum-ca.pem`, Caddy anahtarı değil) salt okunur bağlıyor — önceden belgelenen LDAPS kurulumu bu mount olmadan çalışmıyordu; DOCKER-USER kuralının dönüş ve ağlar arası trafiği koruması gerektiği yazıldı.

@@ -1,7 +1,12 @@
 # LDAP/AD açıkken: Open WebUI'nin dizin sunucusuna ulaşması için yönlendirilebilir ağa da bağlanır.
-# Bu durumda dışarı çıkış ağ düzeyinde açıktır; host güvenlik duvarında (DOCKER-USER zinciri) yalnızca
-# LDAP_SERVER_HOST:LDAP_SERVER_PORT'a izin verin.
+# Bu durumda dışarı çıkış ağ düzeyinde açıktır; host güvenlik duvarında (DOCKER-USER zinciri) frontend ağından
+# dışarıya yalnızca LDAP_SERVER_HOST:LDAP_SERVER_PORT'a izin verin (ESTABLISHED/RELATED dönüş trafiği ve
+# Docker ağları arası trafik açık kalmalı).
+# Kurum CA'sı: certs/kurum-ca.pem (LDAP_CA_CERT_FILE=/certs/kurum-ca.pem). Yalnızca bu dosya bağlanır;
+# Caddy'nin özel anahtarı (certs/key.pem) Open WebUI'ye açılmaz. Dosya yoksa önce koyun.
 # Kullanım: docker compose -f compose.prod.yml -f compose.ldap.yml up -d
 services:
   open-webui:
     networks: [backend, frontend]
+    volumes:
+      - ./certs/kurum-ca.pem:/certs/kurum-ca.pem:ro
