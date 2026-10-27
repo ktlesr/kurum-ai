@@ -21,7 +21,7 @@ export interface DocMeta {
   rows?: number;
   sheets?: number;
   warning?: string;
-  verify?: { tables: number; numbers: number; uncertain: number };
+  verify?: { tables: number; numbers: number; uncertain: number; skipped?: string };
 }
 
 export interface Doc extends DocMeta {
@@ -107,7 +107,10 @@ const LEGACY_VISION_WARNING = /^Görsel model \(.*\) çalışmadı:/;
 
 export function toMeta(doc: Doc): DocMeta {
   const meta: DocMeta & { text?: string; chunks?: Chunk[]; ownerId?: string } = { ...doc };
-  if (meta.warning && LEGACY_VISION_WARNING.test(meta.warning)) meta.warning = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
+  const safe = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
+  if (meta.warning && LEGACY_VISION_WARNING.test(meta.warning)) meta.warning = safe;
+  // The same raw text was also stored in verify.skipped.
+  if (meta.verify?.skipped && LEGACY_VISION_WARNING.test(meta.verify.skipped)) meta.verify = { ...meta.verify, skipped: safe };
   delete meta.text;
   delete meta.chunks;
   delete meta.ownerId;
