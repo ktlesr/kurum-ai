@@ -1,3 +1,4 @@
+import { requireApiUser } from "@/lib/auth";
 import { cptFor, docs, NUM_CTX, OLLAMA_URL, recordTokens, type Doc } from "@/lib/server";
 import { contextBudget, contextRatio, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { verifyNumbers } from "@/lib/checks";
@@ -98,6 +99,8 @@ const chatOnce = async (model: string, messages: OllamaMsg[], signal: AbortSigna
   (await streamChat(model, messages, false, signal, undefined, undefined, numPredict)).trim();
 
 export async function POST(req: Request) {
+  const user = await requireApiUser(req);
+  if (user instanceof Response) return user;
   const { model, fileIds, messages, think = false, scope } = (await req.json()) as {
     model: string;
     fileIds: string[];

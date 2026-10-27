@@ -137,6 +137,7 @@ Ardından FAZ 2 (IndexedDB/OPFS yerel çalışma alanı, sohbet kalıcılığı 
 
 ## 8. İnceleme kaydı
 
+- **Codex dördüncü tur:** FAZ 0 audit **APPROVED**; PR-0 (CI) **APPROVED**.
 - **Codex üçüncü tur:** CHANGES REQUIRED, tek P2 (§5 eşdeğerlik ifadesi) — düzeltildi.
 - **Codex ikinci tur:** CHANGES REQUIRED — `:cloud` çelişkisi, kanıt düzeyleri (S4/N6/N8), N5'in `firstNum` kök nedeni, PR-2c kabul kriterleri, PR-3'ün bölünmesi. Bu sürüm hepsini işler.
 - **Codex (salt-okunur, 2026-10-27), ilk tur:** CHANGES REQUIRED. Sınıf düzeltmeleri (S12→P1, S13→P1, R2→P0, R3→P0), 10 yeni bulgu (N1–N10), PR'ların küçültülmesi, kanıt düzeyi düzeltmeleri. Bu sürüm hepsini işler. N4/N5 Claude tarafından ayrıca çalıştırılarak doğrulandı.

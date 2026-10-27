@@ -1,3 +1,4 @@
+import { requireApiUser } from "@/lib/auth";
 import { charsPerToken, DEFAULT_MODEL, NUM_CTX, OLLAMA_URL } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +9,9 @@ interface Tag {
   capabilities?: string[];
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const user = await requireApiUser(req);
+  if (user instanceof Response) return user;
   try {
     const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(3000), cache: "no-store" });
     const { models } = (await res.json()) as { models: Tag[] };

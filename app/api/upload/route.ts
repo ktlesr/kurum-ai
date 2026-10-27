@@ -1,4 +1,5 @@
 import { deleteDoc, docs, MAX_BYTES, saveDoc, toMeta, type Doc } from "@/lib/server";
+import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
 
 export const runtime = "nodejs";
@@ -10,6 +11,8 @@ const fail = (error: string, status = 400) => Response.json({ error }, { status 
  * Extraction with table verification can take minutes, so the card needs live progress.
  */
 export async function POST(req: Request) {
+  const user = await requireApiUser(req);
+  if (user instanceof Response) return user;
   const form = await req.formData().catch(() => null);
   const file = form?.get("file");
   if (!(file instanceof File)) return fail("Dosya bulunamadı.");
@@ -41,11 +44,15 @@ export async function POST(req: Request) {
 }
 
 /** Docs uploaded earlier (they survive restarts), so the page can restore its file list. */
-export async function GET() {
+export async function GET(req: Request) {
+  const user = await requireApiUser(req);
+  if (user instanceof Response) return user;
   return Response.json([...docs.values()].map(toMeta));
 }
 
 export async function DELETE(req: Request) {
+  const user = await requireApiUser(req);
+  if (user instanceof Response) return user;
   deleteDoc(new URL(req.url).searchParams.get("id") ?? "");
   return new Response(null, { status: 204 });
 }

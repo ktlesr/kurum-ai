@@ -4,7 +4,8 @@ Dosya yükleyip hakkında soru sorabileceğiniz tek sayfalık arayüz. Tamamen y
 
 ## Gereksinimler
 
-- Node.js 20+ ve pnpm
+- Node.js 22+ ve pnpm
+- PostgreSQL (yalnızca hesap ve oturumlar; sohbet/doküman içeriği yazılmaz)
 - Ollama (`ollama serve`) ve şu modeller:
   ```bash
   ollama pull gemma4:12b       # sohbet + tablo doğrulama (görsel)
@@ -16,9 +17,16 @@ Dosya yükleyip hakkında soru sorabileceğiniz tek sayfalık arayüz. Tamamen y
 
 ```bash
 pnpm install
+# Geliştirme veritabanı (bir kez):
+docker run -d --name kurumai-dev-pg -e POSTGRES_USER=kurumai -e POSTGRES_PASSWORD=kurumai-dev -e POSTGRES_DB=kurumai   -p 127.0.0.1:5491:5432 --restart unless-stopped postgres:17-alpine
+echo "DATABASE_URL=postgres://kurumai:kurumai-dev@127.0.0.1:5491/kurumai" >> .env.local
+# İlk yönetici (parola ortam değişkeninden okunur, komut satırına yazılmaz):
+ADMIN_PASSWORD='en-az-10-karakter' node --env-file=.env.local scripts/create-admin.ts admin
 pnpm dev          # http://localhost:3000
-pnpm test         # kontrol fonksiyonlarının testleri
+pnpm test         # birim testleri
 ```
+
+Tablolar ilk istekte otomatik oluşturulur (`lib/db.ts` migration listesi). Yeni kullanıcılar giriş sayfasından hesap ister; yönetici `/admin` sayfasından onaylar.
 
 Üretim modu: `pnpm build && pnpm start`
 
@@ -32,10 +40,12 @@ python -m venv .venv-docling
 
 Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docling ve OCR modelleri bir kez indirilir; sonrasında internet gerekmez. Global Python'daki torch/torchvision sürümleriyle çakışmaması için ayrı ortam kullanılıyor.
 
-## `.env.local` değişkenleri (hepsi isteğe bağlı)
+## `.env.local` değişkenleri
 
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
+| `DATABASE_URL` | — (**zorunlu**) | PostgreSQL bağlantısı |
+| `COOKIE_SECURE` | `true` (üretimde) | Yalnızca HTTPS'siz ağ testinde `false`; üretimde HTTPS arkasında açık kalmalı |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama adresi |
 | `DEFAULT_MODEL` | `gemma4:12b` | Açılışta seçili sohbet modeli |
 | `NUM_CTX` | `16384` | Bağlam penceresi (token). gemma4 kayan pencereli dikkat kullandığı için bellek neredeyse artmıyor (RTX 5090'da 64k: 9,2 GB, 128k: 9,5 GB, 256k: ~8,3 GB). Bu makinede `131072` kullanılıyor (~380 bin karakter) |
@@ -97,6 +107,8 @@ Sonuç `.cache/` altında dosya özetiyle saklanır. Aynı dosya tekrar yükleni
 Bu makinede doğrulandı: `HF_HUB_OFFLINE=1` ile Docling 20 sayfalık raporu 13 sn'de okudu.
 
 ## API
+
+Tüm uçlar oturum ister (yoksa `401`); GET dışı isteklerde farklı `Origin` `403` döner.
 
 - `POST /api/upload`: NDJSON akışı döner (`progress` olayları, ardından `done` veya `error`).
 - `GET /api/upload`: kayıtlı dosyaların listesi. `DELETE /api/upload?id=…`: dosyayı siler.
