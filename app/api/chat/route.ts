@@ -6,7 +6,7 @@ import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
 import { contextBudget, contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
-import { verifyNumbers } from "@/lib/checks";
+import { checkPages, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { retrieve, TOP_K, windows } from "@/lib/rag";
 
 export const runtime = "nodejs";
@@ -88,7 +88,7 @@ export async function POST(req: Request) {
     async start(ctrl) {
       const send = (s: string) => ctrl.enqueue(enc.encode(s));
       const status = (s: string) => send(STATUS_SEP + s + STATUS_SEP);
-      const meta: ChatMeta = { mode: "full", sources: selected.map((d) => d.name), unverified: [], uncertain: [] };
+      const meta: ChatMeta = { mode: "full", sources: selected.map((d) => d.name), unverified: [], uncertain: [], ...(selected.length === 1 ? { doc: selected[0].name, pages: pageNumbers(selected[0].text) } : {}) };
       let answer = "";
       try {
         let context: string;
@@ -152,6 +152,8 @@ export async function POST(req: Request) {
         // Numbers the user typed count as known too (not earlier answers — they may be the hallucination).
         const source = [...selected.map((d) => d.text), ...messages.filter((m) => m.role === "user").map((m) => m.content)].join("\n");
         Object.assign(meta, verifyNumbers(answer, source));
+        const badPages = checkPages(answer, selected.map((d) => d.text));
+        if (badPages.length) meta.badPages = badPages;
         send(META_SEP + JSON.stringify(meta));
       } catch (e) {
         if (!signal.aborted) {

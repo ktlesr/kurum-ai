@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkCriteria, checkMaxRows, compactTables, markUncertain, normNum, verifyNumbers } from "./checks.ts";
+import { checkCriteria, checkMaxRows, checkPages, compactTables, markUncertain, normNum, verifyNumbers } from "./checks.ts";
 
 test("normNum handles Turkish thousands and decimal comma", () => {
   assert.equal(normNum("698.264.164"), "698264164");
@@ -90,4 +90,11 @@ test("verifyNumbers separates unknown, uncertain and known numbers", () => {
   const r = verifyNumbers("Oran %94,7; bütçe 698264164 TL; değer 78; fark 12.5; madde 3", source);
   assert.deepEqual(r.unverified, ["12.5"]);
   assert.deepEqual(r.uncertain, ["78"]);
+});
+
+test("checkPages flags pages no document has; skips docs without page markers", () => {
+  const doc = "--- Sayfa 1 ---\na\n--- Sayfa 2 ---\nb\n--- Sayfa 3 ---\nc";
+  assert.deepEqual(checkPages("Sayfa 2'de ve sayfa 7'de; ayrıca Sayfa 3–12 arası.", [doc]), ["Sayfa 7", "Sayfa 12"]);
+  assert.deepEqual(checkPages("Sayfa 2", [doc, "--- Sayfa 1 ---\nx"]), []);
+  assert.deepEqual(checkPages("Sayfa 99", [doc, "işaretsiz metin"]), []);
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -10,7 +10,7 @@ import {
 import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
 import { useChats } from "./use-chats";
-import { contextRatio, ERROR_SEP, META_SEP, parseSource, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
+import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
 import { searchChats, titleFrom, type Message, type StoredChat } from "@/lib/local-store";
 import type { DocKind, DocMeta } from "@/lib/server";
 
@@ -318,8 +318,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const current = chatId ? local.chats.find((c) => c.id === chatId) : undefined;
 
   /** A source chip from an answer → open that doc at that page/sheet in the side panel. */
-  const openSource = (chip: string) => {
-    const hit = parseSource(chip, ready.map((f) => f.name));
+  const openSource = (chip: string, docName?: string) => {
+    const hit = parseSource(chip, ready.map((f) => f.name), docName);
     const doc = hit && ready.find((f) => f.name === hit.doc);
     if (hit && doc?.serverId) setSource({ serverId: doc.serverId, label: hit.label });
   };
@@ -746,15 +746,18 @@ const mdComponents: Components = {
   table: ({ children }) => <div className="table-wrap"><table>{children}</table></div>,
   // Never load images a model answer points to: a URL can carry document text off-site (audit N1). CSP blocks them too.
   img: ({ alt }) => <span className="text-muted">[görsel: {alt || "adsız"}]</span>,
-  // External links aren't clickable either: a click would hand the URL (and anything the model put in it) to that site.
-  a: ({ href, children }) =>
-    // Only in-page anchors stay links. Paths don't: a backslash path like /\host resolves to another site in browsers.
-    href && /^#[^\\]*$/.test(href) ? (
-      <a href={href}>{children}</a>
-    ) : (
-      <span title={href}>{children} <span className="text-xs text-muted">(dış bağlantı devre dışı)</span></span>
-    ),
+  a: ({ href, children }) => <SafeLink href={href}>{children}</SafeLink>,
 };
+
+// External links aren't clickable either: a click would hand the URL (and anything the model put in it) to that site.
+function SafeLink({ href, children }: { href?: string; children?: ReactNode }) {
+  // Only in-page anchors stay links. Paths don't: a backslash path like /\host resolves to another site in browsers.
+  return href && /^#[^\\]*$/.test(href) ? (
+    <a href={href}>{children}</a>
+  ) : (
+    <span title={href}>{children} <span className="text-xs text-muted">(dış bağlantı devre dışı)</span></span>
+  );
+}
 
 /** Right panel (plan §3.1): the extracted text of one document, by page/sheet, scrolled to the cited section. */
 function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: string; onClose: () => void }) {
@@ -818,8 +821,23 @@ function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: s
   );
 }
 
-function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (chip: string) => void }) {
+function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (chip: string, doc?: string) => void }) {
   const [copied, setCopied] = useState(false);
+  // Only links made by linkPages (they carry this nonce) open the source panel.
+  const [nonce] = useState(() => crypto.randomUUID().slice(0, 8));
+  const pagePlugins = useMemo(() => [remarkGfm, linkPages(m.meta, nonce)], [m.meta, nonce]);
+  const components = useMemo<Components>(() => ({
+    ...mdComponents,
+    a: (props) => {
+      const page = props.href?.startsWith(`#sayfa-${nonce}-`) ? props.href.slice(`#sayfa-${nonce}-`.length) : undefined;
+      if (!page) return <SafeLink href={props.href}>{props.children}</SafeLink>;
+      return (
+        <button type="button" onClick={() => onSource(`Sayfa ${page}`, m.meta?.doc)} className="text-accent underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Kaynak panelinde aç">
+          {props.children}
+        </button>
+      );
+    },
+  }), [onSource, nonce, m.meta]);
   if (m.role === "user") {
     return <div className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-accent-fg">{m.content}</div>;
   }
@@ -840,7 +858,7 @@ function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (c
         </p>
       )}
       <div className={`md ${live ? "streaming" : ""}`}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{m.content}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={live ? [remarkGfm] : pagePlugins} components={live ? mdComponents : components}>{m.content}</ReactMarkdown>
       </div>
       {!live && m.meta && <MetaNotes meta={m.meta} onSource={onSource} />}
       {!live && m.content && (
@@ -855,13 +873,13 @@ function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (c
   );
 }
 
-function MetaNotes({ meta, onSource }: { meta: ChatMeta; onSource: (chip: string) => void }) {
+function MetaNotes({ meta, onSource }: { meta: ChatMeta; onSource: (chip: string, doc?: string) => void }) {
   return (
     <div className="mt-3 flex flex-col gap-2 text-xs">
       <div className="flex flex-wrap items-center gap-1.5 text-muted">
         <span>{meta.mode === "rag" ? "Kullanılan bölümler:" : meta.mode === "scan" ? "Taranan bölümler:" : "Kaynak:"}</span>
         {meta.sources.map((s) => (
-          <button key={s} onClick={() => onSource(s)} className="rounded-md border border-line bg-panel px-1.5 py-0.5 hover:border-accent hover:text-fg" title="Kaynak panelinde aç">
+          <button key={s} onClick={() => onSource(s, meta.doc)} className="rounded-md border border-line bg-panel px-1.5 py-0.5 hover:border-accent hover:text-fg" title="Kaynak panelinde aç">
             {s}
           </button>
         ))}
@@ -871,6 +889,12 @@ function MetaNotes({ meta, onSource }: { meta: ChatMeta; onSource: (chip: string
         <p className="flex items-start gap-1.5 text-danger">
           <AlertTriangle size={13} className="mt-px shrink-0" />
           <span>Kaynakta bulunamayan sayılar: {meta.unverified.join(", ")}. Hesaplanmış ya da uydurulmuş olabilir; kontrol edin.</span>
+        </p>
+      )}
+      {meta.badPages && meta.badPages.length > 0 && (
+        <p className="flex items-start gap-1.5 text-danger">
+          <AlertTriangle size={13} className="mt-px shrink-0" />
+          <span>Belgede olmayan sayfa referansı: {meta.badPages.join(", ")}. Model sayfa numarasını yanlış vermiş olabilir; kontrol edin.</span>
         </p>
       )}
       {meta.uncertain.length > 0 && (

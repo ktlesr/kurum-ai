@@ -151,6 +151,24 @@ export function verifyNumbers(answer: string, source: string): { unverified: str
 }
 
 /**
+ * "Sayfa N" references in an answer that no selected document has (plan §5.3: a made-up page number is never
+ * accepted). Ranges ("Sayfa 3–5") check both ends. Checked only when every document has page markers; a DOCX or
+ * TXT without them can't say which pages exist.
+ */
+/** Page numbers a document's text has markers for. */
+export const pageNumbers = (text: string) => [...text.matchAll(/^--- Sayfa (\d+) ---$/gm)].map((m) => Number(m[1]));
+
+export function checkPages(answer: string, docTexts: string[]): string[] {
+  const sets = docTexts.map((t) => new Set(pageNumbers(t).map(String)));
+  if (!sets.length || sets.some((s) => !s.size)) return [];
+  const bad = new Set<string>();
+  for (const m of answer.matchAll(/\bSayfa\s+(\d+)(?:\s*[-–]\s*(\d+))?/gi)) {
+    for (const n of [m[1], m[2]]) if (n && !sets.some((s) => s.has(String(Number(n))))) bad.add(`Sayfa ${Number(n)}`);
+  }
+  return [...bad];
+}
+
+/**
  * Drops Docling's image placeholders and normalises separator rows. Equal neighbouring cells are kept: the markdown
  * can't tell a merged cell's repeat from two real equal values, and losing real data is worse than a repeat (N4).
  */

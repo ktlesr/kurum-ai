@@ -28,6 +28,12 @@ export interface ChatMeta {
   sources: string[];
   unverified: string[];
   uncertain: string[];
+  /** The one document of a single-document answer: page links and chips resolve against it, never another doc. */
+  doc?: string;
+  /** Pages that document has (from its page markers); page links are made only for these. */
+  pages?: number[];
+  /** Cited pages no selected document has (lib/checks checkPages). Optional: older saved chats lack it. */
+  badPages?: string[];
   note?: string;
 }
 
@@ -50,12 +56,58 @@ export function docSections(text: string): DocSection[] {
 
 /**
  * Which doc and section a source chip points at. Chips look like "Sayfa 4", "Sayfa 3 – 5", "Sheet: X", a doc name
- * (whole document), or "<doc> · <label>" when several docs were in context.
+ * (whole document), or "<doc> · <label>" when several docs were in context. With doc (a single-document answer's
+ * meta.doc) the chip is resolved against that document only; if it's gone, nothing opens.
  */
-export function parseSource(chip: string, docNames: string[]): { doc: string; label?: string } | null {
-  const sep = chip.indexOf(" · ");
-  const [doc, rest] = sep >= 0 ? [chip.slice(0, sep), chip.slice(sep + 3)] : docNames.includes(chip) ? [chip, undefined] : [docNames[0], chip];
-  if (!doc || !docNames.includes(doc)) return null;
-  // A range points at its first page.
-  return { doc, label: rest?.replace(/^(Sayfa \d+)\s*–.*$/, "$1") };
+export function parseSource(chip: string, docNames: string[], doc?: string): { doc: string; label?: string } | null {
+  const first = (l: string) => l.replace(/^(Sayfa \d+)\s*–.*$/, "$1"); // a range points at its first page
+  if (doc !== undefined) return docNames.includes(doc) ? { doc, label: chip === doc ? undefined : first(chip) } : null;
+  if (docNames.includes(chip)) return { doc: chip, label: undefined };
+  // "<doc> · <label>": matched against the real names, longest first (a name may contain " · "), and the rest must
+  // be a section label, so a removed "a.pdf · ek.pdf" never resolves to "a.pdf".
+  const named = docNames
+    .filter((d) => chip.startsWith(`${d} · `) && /^(Sayfa \d+( – \d+)?|Başlangıç|Bölüm \d+)$|^Sheet: /.test(chip.slice(d.length + 3)))
+    .sort((x, y) => y.length - x.length)[0];
+  if (named) return { doc: named, label: first(chip.slice(named.length + 3)) };
+  // A bare label from an older single-document answer (no meta.doc): the first document, as before.
+  return chip.includes(" · ") || !docNames[0] ? null : { doc: docNames[0], label: first(chip) };
+}
+
+/** Minimal mdast shape (remark's syntax tree); only what linkPages touches. */
+export interface MdNode {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MdNode[];
+}
+
+// Never rewritten: text already in a link, and code.
+const NO_LINK = new Set(["link", "linkReference", "inlineCode", "code", "definition", "html"]);
+
+/**
+ * remark plugin: "Sayfa N" in a finished single-document answer becomes a link that opens the source panel there.
+ * Works on text nodes, so code and existing links stay as they are. The href carries a per-render nonce: a link the
+ * model wrote itself ("[x](#sayfa-47)") can't pass as one of these. Not for several documents (a bare page number
+ * doesn't say which one) and not for pages the document doesn't have.
+ */
+export function linkPages(meta: ChatMeta | undefined, nonce: string) {
+  const pages = new Set(meta?.doc ? meta.pages : []);
+  const walk = (node: MdNode) => {
+    if (!node.children || NO_LINK.has(node.type)) return;
+    node.children = node.children.flatMap((c): MdNode[] => {
+      if (c.type !== "text") return walk(c), [c];
+      const out: MdNode[] = [];
+      let last = 0;
+      for (const m of c.value!.matchAll(/\bSayfa (\d+)\b/g)) {
+        if (!pages.has(Number(m[1]))) continue;
+        if (m.index > last) out.push({ type: "text", value: c.value!.slice(last, m.index) });
+        out.push({ type: "link", url: `#sayfa-${nonce}-${Number(m[1])}`, children: [{ type: "text", value: m[0] }] });
+        last = m.index + m[0].length;
+      }
+      if (!out.length) return [c];
+      if (last < c.value!.length) out.push({ type: "text", value: c.value!.slice(last) });
+      return out;
+    });
+  };
+  return () => (tree: MdNode) => { if (pages.size) walk(tree); };
 }
