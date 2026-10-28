@@ -25,6 +25,9 @@ services:
       APP_ORIGIN: ${APP_ORIGIN:?} # e.g. https://ai.example.com — mutations are refused without it
       MODEL_PROVIDER: ${MODEL_PROVIDER:-vllm}
       MODEL_URL: ${MODEL_URL:-http://host.docker.internal:8000/v1}
+      # gemma4's sliding-window attention keeps 128k cheap (README); 16k made every 30-page document a section scan.
+      # vLLM: keep equal to the server's --max-model-len.
+      NUM_CTX: ${NUM_CTX:-131072}
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes: [appdata:/app/.cache]
     expose: ["3000"]

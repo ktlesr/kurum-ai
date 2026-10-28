@@ -32,6 +32,8 @@ export interface Doc extends DocMeta {
   sourceHash?: string;
   text: string;
   chunks?: Chunk[];
+  /** Whole-document notes per window, keyed by model (chat route); memory only, like chunks. */
+  digests?: Record<string, { label: string; text: string }[]>;
 }
 
 // Docs survive restarts as .cache/userdocs/<ownerId>/<id>.json; globalThis keeps the map across dev hot reloads.
@@ -105,7 +107,7 @@ export function uniqueName(userId: string, name: string): string {
 }
 
 export function saveDoc(doc: Doc) {
-  writeFileAtomic(path.join(DOCS_DIR, doc.ownerId, `${doc.id}.json`), JSON.stringify({ ...doc, chunks: undefined }));
+  writeFileAtomic(path.join(DOCS_DIR, doc.ownerId, `${doc.id}.json`), JSON.stringify({ ...doc, chunks: undefined, digests: undefined }));
   // Only after the file is safely on disk: a failed write must not leave a doc that vanishes on restart (audit R3).
   docs.set(doc.id, doc);
 }
@@ -147,13 +149,14 @@ export function recordTokens(model: string, chars: number, tokens: number) {
 const LEGACY_VISION_WARNING = /^Görsel model \(.*\) çalışmadı:/;
 
 export function toMeta(doc: Doc): DocMeta {
-  const meta: DocMeta & { text?: string; chunks?: Chunk[]; ownerId?: string; sourceHash?: string } = { ...doc };
+  const meta: DocMeta & Partial<Pick<Doc, "text" | "chunks" | "digests" | "ownerId" | "sourceHash">> = { ...doc };
   const safe = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
   if (meta.warning && LEGACY_VISION_WARNING.test(meta.warning)) meta.warning = safe;
   // The same raw text was also stored in verify.skipped.
   if (meta.verify?.skipped && LEGACY_VISION_WARNING.test(meta.verify.skipped)) meta.verify = { ...meta.verify, skipped: safe };
   delete meta.text;
   delete meta.chunks;
+  delete meta.digests;
   delete meta.ownerId;
   delete meta.sourceHash;
   return meta;

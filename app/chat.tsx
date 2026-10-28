@@ -369,7 +369,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             }}
             rows={1}
             aria-label="Soru"
-            placeholder={ready.length ? "Belgeleriniz hakkında bir soru sorun…" : "Bir soru sorun ya da belge ekleyin…"}
+            placeholder={ready.length ? "Belgeleriniz hakkında soru sorun, karşılaştırma ya da yorum isteyin…" : "Bir soru sorun ya da belge ekleyin…"}
             className="field-sizing-content max-h-48 min-h-9 flex-1 resize-none bg-transparent px-1 py-1.5 text-[15px] outline-none placeholder:text-muted disabled:cursor-not-allowed"
           />
           {streaming ? (
@@ -398,7 +398,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         <span className="grid size-8 place-items-center rounded-lg bg-brand text-sm font-semibold text-bg" aria-hidden>K</span>
         <div className="min-w-0 flex-1">
           <p className="text-[15px] font-semibold leading-tight tracking-tight">Kurum AI</p>
-          <p className="text-xs text-muted">Belge asistanı</p>
+          <p className="text-xs text-muted">Kurum asistanı</p>
         </div>
         <button className="rounded-md p-1.5 text-muted hover:bg-subtle md:hidden" onClick={() => setDrawer(false)} aria-label="Menüyü kapat">
           <X size={18} />
@@ -607,7 +607,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
               <div className="text-center">
                 <h2 className="text-2xl font-semibold tracking-tight text-brand">{greeting()}, {username}</h2>
                 <p className="mt-2 text-sm text-muted">
-                  {ready.length ? "Belgeleriniz hazır. Bir soru sorun ya da hazır işlerden birini seçin." : "Bir soru sorun. Belge eklerseniz cevaplar yalnızca belgelerinize dayanır."}
+                  {ready.length ? "Belgeleriniz hazır. Bir soru sorun ya da hazır işlerden birini seçin." : "Bir soru sorun ya da belge ekleyin; belgeleri inceleyip karşılaştırma ve değerlendirme yapabilirim."}
                 </p>
               </div>
               {composer}
@@ -891,7 +891,7 @@ function MetaNotes({ meta, onSource }: { meta: ChatMeta; onSource: (chip: string
       {meta.unverified.length > 0 && (
         <p className="flex items-start gap-1.5 text-danger">
           <AlertTriangle size={13} className="mt-px shrink-0" />
-          <span>Kaynakta bulunamayan sayılar: {meta.unverified.join(", ")}. Hesaplanmış ya da uydurulmuş olabilir; kontrol edin.</span>
+          <span>Belgelerde geçmeyen sayılar: {meta.unverified.join(", ")}. Genel bilgiden ya da hesaplamadan gelmiş olabilir; belgeye dayandırılıyorsa kontrol edin.</span>
         </p>
       )}
       {meta.misplaced && meta.misplaced.length > 0 && (
