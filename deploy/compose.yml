@@ -1,6 +1,7 @@
 # Dokploy (Docker Compose) for the GB10 / DGX Spark. Domain + HTTPS: set in Dokploy's Domains tab (Traefik → app:3000).
 # Secrets come from Dokploy's Environment tab, never from this file. Required: POSTGRES_PASSWORD, APP_ORIGIN.
 # First admin: docker compose exec app sh -c 'ADMIN_PASSWORD=… node scripts/create-admin.ts admin'
+# Model weights are not downloaded here: put them under VLLM_MODELS_DIR on the host first (README → vLLM).
 name: kurum-ai-web
 
 services:
@@ -11,6 +12,8 @@ services:
     restart: unless-stopped
     depends_on:
       db: { condition: service_healthy }
+      # Started, not healthy: loading the model takes minutes; the UI says "model server unreachable" until then.
+      vllm: { condition: service_started }
     # Everything else (DEFAULT_MODEL, ALLOWED_MODELS, EMBED_URL, VISION_URL, MODEL_API_KEY, limits — README table)
     # comes from Dokploy's .env as is; only what this stack defines is set here.
     env_file:
@@ -23,10 +26,18 @@ services:
       PGDATABASE: kurumai
       PGPASSWORD: ${POSTGRES_PASSWORD:?}
       APP_ORIGIN: ${APP_ORIGIN:?} # e.g. https://ai.example.com — mutations are refused without it
+      # Chat and table vision: vLLM below (prefix caching keeps follow-up questions on the same documents fast,
+      # for several users at once). Embeddings: Ollama on the host via its OpenAI-compatible /v1 API.
       MODEL_PROVIDER: ${MODEL_PROVIDER:-vllm}
-      MODEL_URL: ${MODEL_URL:-http://host.docker.internal:8000/v1}
+      MODEL_URL: ${MODEL_URL:-http://vllm:8000/v1}
+      MODEL_API_KEY: ${VLLM_API_KEY:?}
+      DEFAULT_MODEL: ${VLLM_MODEL_NAME:-gemma4-26b}
+      ALLOWED_MODELS: ${ALLOWED_MODELS:-${VLLM_MODEL_NAME:-gemma4-26b}}
+      VISION_MODEL: ${VISION_MODEL:-${VLLM_MODEL_NAME:-gemma4-26b}}
+      EMBED_URL: ${EMBED_URL:-http://host.docker.internal:11434/v1}
+      EMBED_MODEL: ${EMBED_MODEL:-embeddinggemma}
       # gemma4's sliding-window attention keeps 128k cheap (README); 16k made every 30-page document a section scan.
-      # vLLM: keep equal to the server's --max-model-len.
+      # Same value as vLLM's --max-model-len below.
       NUM_CTX: ${NUM_CTX:-131072}
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes: [appdata:/app/.cache]
@@ -34,6 +45,53 @@ services:
     # cgroup cap for the app and its Docling child (audit S5: RLIMIT_AS breaks torch; a cgroup limit doesn't).
     mem_limit: ${APP_MEM_LIMIT:-16g}
     # One instance per database (lib/boot takes an advisory lock and refuses a second one).
+
+  # NVIDIA's NGC vLLM image for DGX Spark / GB10 (arm64; upstream vllm/vllm-openai doesn't support GB10). Same image
+  # and flags as the kurum-ai pilot (kurum-ai/compose.prod.yml). Reachable only inside this stack, and still keyed.
+  vllm:
+    image: nvcr.io/nvidia/vllm:${VLLM_VERSION:-26.09-py3}
+    restart: unless-stopped
+    command:
+      - vllm
+      - serve
+      # NVFP4 (~17 GB): Blackwell FP4 reads a quarter of bf16's bytes per token, so answers come faster. Full
+      # precision: VLLM_MODEL=google/gemma-4-26B-A4B-it (~52 GB).
+      - /models/llm/${VLLM_MODEL:-RedHatAI/gemma-4-26B-A4B-it-NVFP4}
+      - --served-model-name=${VLLM_MODEL_NAME:-gemma4-26b}
+      - --host=0.0.0.0
+      - --port=8000
+      # Unified memory is shared with Docling, Ollama (embeddings) and the OS.
+      - --gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.5}
+      - --max-model-len=${NUM_CTX:-131072}
+      # The same documents asked about again reuse their computed prefix instead of re-reading it.
+      - --enable-prefix-caching
+      # Separates reasoning from the answer (the app shows "Düşünüyor…" and streams only the answer).
+      - --reasoning-parser=gemma4
+    environment:
+      VLLM_API_KEY: ${VLLM_API_KEY:?}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      VLLM_NO_USAGE_STATS: "1"
+      DO_NOT_TRACK: "1"
+    volumes:
+      - ${VLLM_MODELS_DIR:-/opt/kurum-ai/models/llm}:/models/llm:ro
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15m
+      retries: 5
 
   db:
     image: postgres:17-alpine

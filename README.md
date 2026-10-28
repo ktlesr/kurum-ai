@@ -144,3 +144,19 @@ docker compose exec app sh -c 'ADMIN_PASSWORD=… node scripts/create-admin.ts a
 ```
 
 `app-docling` ilk kurulumda modelleri indirmek için yönetici sayfası → **Ayarlar** → Docling çevrimdışı modu **Kapat**; bir PDF okunduktan sonra yeniden **Aç** (yeniden deploy gerekmez).
+
+### vLLM (GB10)
+
+Sohbet ve tablo okuma aynı stack'teki `vllm` servisinden gelir (NGC `nvcr.io/nvidia/vllm`, varsayılan model `RedHatAI/gemma-4-26B-A4B-it-NVFP4`). Aynı belgelere sorulan sonraki sorular, belgenin hesaplanmış kısmı önbellekte kaldığı için birkaç saniyede başlar (prefix caching); bu birden çok kullanıcı için de geçerlidir. Embedding (parça arama) cihazdaki Ollama'dan, OpenAI uyumlu `/v1` ucuyla alınır (`embeddinggemma`).
+
+1. Model ağırlıklarını cihaza indirin (internet çıkışı kısa süreliğine açıkken), ör. `VLLM_MODELS_DIR=/opt/kurum-ai/models/llm` altına: `huggingface-cli download RedHatAI/gemma-4-26B-A4B-it-NVFP4 --local-dir /opt/kurum-ai/models/llm/RedHatAI/gemma-4-26B-A4B-it-NVFP4` (ya da `kurum-ai/scripts/download-models.sh`).
+2. Environment sekmesine `VLLM_API_KEY` (rastgele uzun bir değer) ekleyin. Ollama döneminden kalan `MODEL_PROVIDER`, `MODEL_URL`, `DEFAULT_MODEL`, `ALLOWED_MODELS`, `VISION_MODEL`, `VISION_URL`, `EMBED_URL` satırları varsa silin: compose varsayılanları vLLM'i (ve embedding için Ollama `/v1`) gösterir; kalan eski bir değer onların önüne geçer (ör. `ALLOWED_MODELS=gemma4:12b` yeni modeli listeden çıkarır).
+3. Ollama'da `embeddinggemma` yüklü olmalı (`ollama pull embeddinggemma`) ve Ollama konteynerlerden erişilebilir olmalı (`OLLAMA_HOST=0.0.0.0`; bu Ollama'yı yerel ağa da açar, güvenlik duvarında 11434'ü yalnızca Docker ağlarına izin verin). Cihazda NVIDIA Container Toolkit kurulu olmalı.
+4. Deploy. vLLM'in modeli yüklemesi birkaç dakika sürer; bu sırada arayüz "Model sunucusuna ulaşılamıyor" der.
+
+| Değişken | Varsayılan | Açıklama |
+| --- | --- | --- |
+| `VLLM_MODEL` | `RedHatAI/gemma-4-26B-A4B-it-NVFP4` | `VLLM_MODELS_DIR` altındaki model klasörü. Tam hassasiyet: `google/gemma-4-26B-A4B-it` (~52 GB, daha yavaş) |
+| `VLLM_MODEL_NAME` | `gemma4-26b` | Arayüzde görünen ad |
+| `VLLM_GPU_MEMORY_UTILIZATION` | `0.5` | Birleşik belleğin vLLM'e ayrılan payı (Docling, Ollama ve sistem için yer kalır) |
+| `NUM_CTX` | `131072` | Bağlam uzunluğu; vLLM `--max-model-len` ile aynı |
