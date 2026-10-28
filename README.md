@@ -66,7 +66,7 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 | `VISION_MODEL` | `gemma4:12b` | Görsel tabloların ikinci okuması için görsel model |
 | `VISION_VERIFY` | `true` | `false` yapılırsa ikinci okuma atlanır (hızlı ama doğrulamasız) |
 | `DOCLING_PYTHON` | `.venv-docling/Scripts/python.exe` | Docling kurulu Python yolu |
-| `DOCLING_OFFLINE` | `true` | Docling'i çevrimdışı modda çalıştırır (`HF_HUB_OFFLINE=1`). Modeller önceden indirilmiş olmalı; ilk kurulumda bir kez `false` yapın ya da aşağıdaki kapalı ağ adımlarını izleyin |
+| `DOCLING_OFFLINE` | `true` | Docling'i çevrimdışı modda çalıştırır (`HF_HUB_OFFLINE=1`). Modeller önceden indirilmiş olmalı; ilk kurulumda bir kez `false` yapın ya da aşağıdaki kapalı ağ adımlarını izleyin. Yönetici sayfasındaki **Ayarlar** bölümünden de açılıp kapatılır; oradaki seçim bu değerin önüne geçer |
 
 ## Desteklenen dosyalar
 
@@ -143,4 +143,4 @@ Dokploy'da **Docker Compose** uygulaması olarak `deploy/compose.yml` kullanıl�
 docker compose exec app sh -c 'ADMIN_PASSWORD=… node scripts/create-admin.ts admin'
 ```
 
-`app-docling` ilk açılışta modelleri indirmek için bir kez `DOCLING_OFFLINE=false` ile çalıştırılır; sonra `true`.
+`app-docling` ilk kurulumda modelleri indirmek için yönetici sayfası → **Ayarlar** → Docling çevrimdışı modu **Kapat**; bir PDF okunduktan sonra yeniden **Aç** (yeniden deploy gerekmez).

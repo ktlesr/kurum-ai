@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getUser } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, setSetting } from "@/lib/db";
+import { doclingOffline } from "@/lib/extract";
 import { ThemeToggle } from "../theme-toggle";
 
 export const metadata = { title: "Kullanıcılar · Kurum AI" };
@@ -23,6 +24,16 @@ async function setStatus(form: FormData) {
   revalidatePath("/admin");
 }
 
+async function setOffline(form: FormData) {
+  "use server";
+  const me = await getUser();
+  if (me?.role !== "admin") return;
+  const v = form.get("offline");
+  if (v !== "true" && v !== "false") return;
+  await setSetting("docling_offline", v);
+  revalidatePath("/admin");
+}
+
 export default async function AdminPage() {
   const me = await getUser();
   if (!me) redirect("/login");
@@ -31,6 +42,7 @@ export default async function AdminPage() {
   const sql = await db();
   const users = await sql<{ id: string; username: string; role: string; status: keyof typeof STATUS; created_at: Date }[]>`
     SELECT id, username, role, status, created_at FROM users ORDER BY status = 'pending' DESC, created_at DESC`;
+  const offline = await doclingOffline();
 
   const btn = "rounded-md border border-line px-2.5 py-1 text-xs font-medium hover:bg-subtle";
   return (
@@ -66,6 +78,20 @@ export default async function AdminPage() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <h2 className="mt-10 mb-3 text-base font-semibold tracking-tight">Ayarlar</h2>
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-line bg-panel px-4 py-3 text-sm">
+        <div className="min-w-0 flex-1">
+          <p className="font-medium">Docling çevrimdışı modu: {offline ? <span className="text-ok">Açık</span> : <span className="text-warn-fg">Kapalı</span>}</p>
+          <p className="mt-1 text-xs text-muted">
+            Açıkken Docling model indirmek için internete çıkmaz (Hugging Face çevrimdışı modu, önerilen). İlk kurulumda OCR/tablo modellerini indirmek için kapatın, bir PDF yükleyin, sonra yeniden açın. Bir sonraki belge okumasından itibaren geçerlidir.
+          </p>
+        </div>
+        <form action={setOffline}>
+          <input type="hidden" name="offline" value={offline ? "false" : "true"} />
+          <button className={btn}>{offline ? "Kapat (modelleri indir)" : "Aç"}</button>
+        </form>
       </div>
     </main>
   );

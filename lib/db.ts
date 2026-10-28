@@ -34,6 +34,8 @@ const MIGRATIONS = [
     created_at timestamptz NOT NULL DEFAULT now()
   );
   CREATE INDEX sessions_user ON sessions(user_id);`,
+  // Admin-editable settings (admin page); a missing key falls back to its env default.
+  `CREATE TABLE settings (key text PRIMARY KEY, value text NOT NULL);`,
 ];
 
 async function migrate(sql: postgres.Sql) {
@@ -47,6 +49,15 @@ async function migrate(sql: postgres.Sql) {
     if (!row) await tx`INSERT INTO schema_version VALUES (${MIGRATIONS.length})`;
     else if (from < MIGRATIONS.length) await tx`UPDATE schema_version SET version = ${MIGRATIONS.length}`;
   });
+}
+
+export async function getSetting(key: string): Promise<string | undefined> {
+  const [row] = await (await db())<{ value: string }[]>`SELECT value FROM settings WHERE key = ${key}`;
+  return row?.value;
+}
+
+export async function setSetting(key: string, value: string) {
+  await (await db())`INSERT INTO settings VALUES (${key}, ${value}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
 }
 
 /** Migrated client. First call per process runs pending migrations. */

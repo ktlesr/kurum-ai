@@ -12,6 +12,7 @@ import { withJobDir } from "./workspace";
 import { admission, DOCLING_TIMEOUT_MS } from "./admission";
 import { Busy } from "./limits";
 import { UserError } from "./errors";
+import { getSetting } from "./db";
 
 export const DOCLING_PYTHON =
   process.env.DOCLING_PYTHON ||
@@ -20,7 +21,11 @@ export const VISION_MODEL = process.env.VISION_MODEL || "gemma4:12b";
 // ponytail: fixed cap; a table strip is a few hundred tokens of markdown
 const VISION_MAX_TOKENS = 4096;
 const VISION_VERIFY = process.env.VISION_VERIFY !== "false";
-const DOCLING_OFFLINE = process.env.DOCLING_OFFLINE !== "false";
+/** Admin page setting first, env (DOCLING_OFFLINE) when unset; an unreadable DB means offline (the safe side). */
+export async function doclingOffline(): Promise<boolean> {
+  const v = await getSetting("docling_offline").catch(() => "true");
+  return (v ?? process.env.DOCLING_OFFLINE) !== "false";
+}
 const PIPELINE = "v9"; // bump to invalidate cached extractions
 /** Page limit for every PDF path: Docling, the unpdf fallback, and cached results. */
 export const MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
@@ -71,10 +76,12 @@ async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Pr
   return text;
 }
 
-function runDocling(file: string, signal: AbortSignal, onLine: (l: PageLine) => void): Promise<void> {
+async function runDocling(file: string, signal: AbortSignal, onLine: (l: PageLine) => void): Promise<void> {
   const script = path.join(process.cwd(), "scripts", "extract.py");
   // Offline by default: models must already be on disk (README → kapalı ağ); nothing is fetched at runtime.
-  const offline = DOCLING_OFFLINE ? { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1" } : {};
+  // Set both ways: an inherited HF_HUB_OFFLINE=1 must not override the admin's "off".
+  const flag = (await doclingOffline()) ? "1" : "0";
+  const offline = { HF_HUB_OFFLINE: flag, TRANSFORMERS_OFFLINE: flag, HF_DATASETS_OFFLINE: flag };
   // Settles only after Docling exited, so the caller's temp-file cleanup never races the running process.
   return runJsonLines<PageLine>(/*turbopackIgnore: true*/ DOCLING_PYTHON, [script, file], { signal, env: { ...process.env, ...offline, PYTHONIOENCODING: "utf-8", DOCLING_MAX_PAGES: String(MAX_PAGES) } }, onLine);
 }
