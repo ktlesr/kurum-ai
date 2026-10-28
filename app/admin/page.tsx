@@ -5,6 +5,7 @@ import { getUser } from "@/lib/auth";
 import { db, getSetting, setSetting } from "@/lib/db";
 import { doclingOffline } from "@/lib/extract";
 import { modelConfig } from "@/lib/model-config";
+import { customAddresses, presets, serverOf } from "@/lib/models";
 import { ThemeToggle } from "../theme-toggle";
 import { ModelsForm } from "./models-form";
 
@@ -97,7 +98,7 @@ export default async function AdminPage() {
         </form>
       </div>
       <div className="mt-4">
-        <ModelsForm cfg={cfg} saved={!!savedModels} />
+        <ModelsForm cfg={cfg} server={serverOf(cfg)} saved={!!savedModels} custom={customAddresses(cfg, presets(process.env))} />
       </div>
     </main>
   );

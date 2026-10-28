@@ -1,6 +1,7 @@
 # Dokploy (Docker Compose) for the GB10 / DGX Spark. Domain + HTTPS: set in Dokploy's Domains tab (Traefik → app:3000).
 # Secrets come from Dokploy's Environment tab, never from this file. Required: POSTGRES_PASSWORD, APP_ORIGIN.
 # First admin: docker compose exec app sh -c 'ADMIN_PASSWORD=… node scripts/create-admin.ts admin'
+# vLLM (and its "models" service) run only with COMPOSE_PROFILES=vllm; without it the stack is app + db + Ollama.
 # Model weights: the one-off "models" service downloads them into the vllmmodels volume on the first deploy (needs
 # internet once); later deploys find them and skip. Already on the host? VLLM_MODELS_DIR=/that/dir (README → vLLM).
 name: kurum-ai-web
@@ -31,7 +32,7 @@ services:
       # for several users at once). Embeddings: Ollama on the host via its OpenAI-compatible /v1 API.
       MODEL_PROVIDER: ${MODEL_PROVIDER:-vllm}
       MODEL_URL: ${MODEL_URL:-http://vllm:8000/v1}
-      MODEL_API_KEY: ${VLLM_API_KEY:?}
+      MODEL_API_KEY: ${VLLM_API_KEY:-}
       DEFAULT_MODEL: ${VLLM_MODEL_NAME:-gemma4-26b}
       ALLOWED_MODELS: ${ALLOWED_MODELS:-${VLLM_MODEL_NAME:-gemma4-26b}}
       VISION_MODEL: ${VISION_MODEL:-${VLLM_MODEL_NAME:-gemma4-26b}}
@@ -54,6 +55,7 @@ services:
   # disk; each deploy checks that list offline, so a deleted file means a new download. An interrupted download
   # resumes on the next deploy. Exits 0 and stays stopped.
   models:
+    profiles: [vllm]
     image: python:3.12-slim
     restart: "no"
     environment:
@@ -70,7 +72,10 @@ services:
     volumes:
       - ${VLLM_MODELS_DIR:-vllmmodels}:/models/llm
 
+  # Only with COMPOSE_PROFILES=vllm in the Environment tab: without a working GPU runtime the container can't start
+  # and every deploy would fail. Off: chat runs on Ollama (admin page → Ayarlar → Model sunucusu).
   vllm:
+    profiles: [vllm]
     image: nvcr.io/nvidia/vllm:${VLLM_VERSION:-26.09-py3}
     restart: unless-stopped
     depends_on:
@@ -92,7 +97,9 @@ services:
       # Separates reasoning from the answer (the app shows "Düşünüyor…" and streams only the answer).
       - --reasoning-parser=gemma4
     environment:
-      VLLM_API_KEY: ${VLLM_API_KEY:?}
+      # Not ":?": compose interpolates every service, profile or not, so a required key would break the GPU-less
+      # deploy. Unset = no key on vLLM; it's still reachable only inside this stack. Set it (README).
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
       VLLM_NO_USAGE_STATS: "1"

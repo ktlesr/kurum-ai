@@ -24,3 +24,17 @@ sonrasında korunuyor. vLLM: 1. soru 30 sn, aynı belgeye 2. soru 2 sn.
 select, geri gösterim sınırı), tur 5 onay.
 
 **Not:** tablo okuma sonuç dosyasının adı değiştiği için aynı dosya yeniden yüklenirse bir kez yeniden okunur.
+
+## Tur 2 (kullanıcı geri bildirimi): sade form, GPU'suz yeşil deploy
+
+- Form yalnızca **vLLM / Ollama** seçtiriyor (canlı "çalışıyor / ulaşılamıyor"); adresler kurulumdan gelir
+  (`presets`: VLLM_URL / OLLAMA_URL, yoksa env, yoksa compose varsayılanları). Sohbet modelleri sunucunun
+  listesinden işaretlenir (embedding modelleri gizli ve sunucu tarafında reddedilir). Tablo okuma varsayılan
+  sohbet modelini izler, embedding Ollama'da kalır; ikisi "Gelişmiş"te. Ollama'da embedding modeli yoksa
+  `ollama pull` uyarısı. Kurulum dışı eski adres varsa uyarı.
+- Form action yerine doğrudan server action (useTransition): React form sıfırlaması yok.
+- `compose.yml`: `models` + `vllm` `vllm` profilinde; `COMPOSE_PROFILES=vllm` ile açılır. GPU araç seti çalışana kadar
+  deploy yeşil, sohbet Ollama'da. `VLLM_API_KEY` artık zorunlu değil (profil kapalıyken interpolasyon için).
+- Canlı hata: vLLM konteyneri `libnvidia-egl-wayland.so.1.1.21` bağlanamadığı için açılamıyor (NVIDIA Container
+  Toolkit / ldcache). Sunucu terminali gerektirir.
+- Codex: tur 1 CHANGES REQUIRED (4), tur 2 APPROVED WITH NOTES (not kapatıldı).

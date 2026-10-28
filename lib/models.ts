@@ -37,13 +37,57 @@ export function envConfig(env: Record<string, string | undefined>): ModelConfig 
   };
 }
 
+export type Server = "vllm" | "ollama";
+export type Presets = Record<Server, string>;
+
+/**
+ * Where each server lives in this deployment, so the admin only picks "vLLM" or "Ollama" and never types an
+ * address: VLLM_URL / OLLAMA_URL, else what the deployment's own settings point at, else the compose defaults.
+ */
+export function presets(env: Record<string, string | undefined>): Presets {
+  const kind = kindOf(env.MODEL_PROVIDER);
+  return {
+    vllm: env.VLLM_URL || (kind === "openai" && env.MODEL_URL) || "http://vllm:8000/v1",
+    ollama: env.OLLAMA_URL || (kind === "ollama" && env.MODEL_URL) || env.EMBED_URL?.replace(/\/v1\/?$/, "") || "http://host.docker.internal:11434",
+  };
+}
+
+export const serverOf = (cfg: ModelConfig): Server => (cfg.chat.kind === "openai" ? "vllm" : "ollama");
+
+/**
+ * Addresses of a saved config that aren't this deployment's (an older, hand-typed setting): saving on the admin
+ * page replaces them with the presets, so the page says so first.
+ */
+export function customAddresses(cfg: ModelConfig, p: Presets): string[] {
+  const own = new Set([p.vllm, p.ollama, `${p.ollama}/v1`]);
+  return [...new Set([cfg.chat.url, cfg.embed.url, cfg.vision.url])].filter((u) => !own.has(u));
+}
+
+/** The admin page's few choices → a full config. Embeddings always from Ollama; table reading on the chat server. */
+export function buildConfig(input: unknown, p: Presets): ModelConfig | string {
+  if (typeof input !== "object" || input === null) return "Ayarlar okunamadı.";
+  const x = input as { server?: unknown; models?: unknown; defaultModel?: unknown; embedModel?: unknown; visionModel?: unknown };
+  if (x.server !== "vllm" && x.server !== "ollama") return "Model sunucusu seçin.";
+  // Embedding-only models can't answer (all common ones say "embed"; same rule as the admin page's list).
+  if (Array.isArray(x.models) && x.models.some((m) => /embed/i.test(String(m)))) return "Embedding modelleri sohbet modeli olarak seçilemez.";
+  const chat: Endpoint = x.server === "vllm" ? { kind: "openai", url: p.vllm } : { kind: "ollama", url: p.ollama };
+  return validateConfig({
+    chat,
+    models: x.models,
+    defaultModel: x.defaultModel,
+    embed: { kind: "ollama", url: p.ollama, model: x.embedModel },
+    vision: { ...chat, model: x.visionModel || x.defaultModel },
+  });
+}
+
 /**
  * Origins MODEL_API_KEY may be sent to: the servers the deployment itself configured (env), plus MODEL_KEY_HOSTS
  * (comma-separated origins). A server an admin adds on the page gets no key.
  */
 export function keyOrigins(env: Record<string, string | undefined>): Set<string> {
   const c = envConfig(env);
-  const list = [c.chat.url, c.embed.url, c.vision.url, ...(env.MODEL_KEY_HOSTS ?? "").split(",")];
+  const p = presets(env);
+  const list = [c.chat.url, c.embed.url, c.vision.url, p.vllm, p.ollama, ...(env.MODEL_KEY_HOSTS ?? "").split(",")];
   const out = new Set<string>();
   for (const u of list) {
     try {
