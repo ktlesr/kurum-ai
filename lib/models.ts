@@ -37,6 +37,22 @@ export function envConfig(env: Record<string, string | undefined>): ModelConfig 
   };
 }
 
+/**
+ * Origins MODEL_API_KEY may be sent to: the servers the deployment itself configured (env), plus MODEL_KEY_HOSTS
+ * (comma-separated origins). A server an admin adds on the page gets no key.
+ */
+export function keyOrigins(env: Record<string, string | undefined>): Set<string> {
+  const c = envConfig(env);
+  const list = [c.chat.url, c.embed.url, c.vision.url, ...(env.MODEL_KEY_HOSTS ?? "").split(",")];
+  const out = new Set<string>();
+  for (const u of list) {
+    try {
+      if (u.trim()) out.add(new URL(u.trim()).origin);
+    } catch {}
+  }
+  return out;
+}
+
 const MODEL = /^[\w.:/@+-]{1,128}$/;
 
 function endpoint(x: unknown, what: string): Endpoint | string {

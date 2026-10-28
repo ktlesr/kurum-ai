@@ -35,7 +35,7 @@ export function ModelsForm({ cfg, saved }: { cfg: ModelConfig; saved: boolean })
       <div>
         <p className="font-medium">Model sunucuları ve modeller</p>
         <p className="mt-1 text-xs text-muted">
-          {saved ? "Bu sayfada kaydedilmiş ayarlar kullanılıyor." : "Kurulumdaki varsayılanlar (ortam değişkenleri) kullanılıyor."} vLLM için adres /v1 ile biter (ör. http://vllm:8000/v1), Ollama için bitmez (ör. http://host.docker.internal:11434). API anahtarı burada değil, kurulumda (MODEL_API_KEY) tutulur ve buraya yazılan her vLLM/OpenAI uyumlu adrese gönderilir; yalnızca güvendiğiniz sunucuları girin.
+          {saved ? "Bu sayfada kaydedilmiş ayarlar kullanılıyor." : "Kurulumdaki varsayılanlar (ortam değişkenleri) kullanılıyor."} vLLM için adres /v1 ile biter (ör. http://vllm:8000/v1), Ollama için bitmez (ör. http://host.docker.internal:11434). API anahtarı burada değil, kurulumda (MODEL_API_KEY) tutulur ve yalnızca kurulumda tanımlı sunuculara (ya da MODEL_KEY_HOSTS) gönderilir; anahtar isteyen yeni bir sunucu için kurulumdaki MODEL_KEY_HOSTS listesine ekleyin.
         </p>
       </div>
       <Server id="chat" label="Sohbet" hint="Soruları cevaplayan model sunucusu." value={cfg.chat} v={v} />

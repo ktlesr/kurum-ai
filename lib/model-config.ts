@@ -1,6 +1,6 @@
 import "server-only";
 import { getSetting, setSetting } from "./db";
-import { envConfig, validateConfig, type Endpoint, type ModelConfig } from "./models";
+import { envConfig, keyOrigins, validateConfig, type Endpoint, type ModelConfig } from "./models";
 import { makeProvider, type Provider } from "./provider";
 
 export const NUM_CTX = Number(process.env.NUM_CTX) || 16384;
@@ -35,10 +35,19 @@ export async function saveModelConfig(cfg: ModelConfig | null) {
 
 const providers = new Map<string, Provider>();
 
-/** One provider per server; the API key (MODEL_API_KEY) stays in env, never in the database or on the page. */
+const KEY_ORIGINS = keyOrigins(process.env);
+
+/**
+ * One provider per server. The API key (MODEL_API_KEY) stays in env, never in the database or on the page, and
+ * goes only to the deployment's own servers (lib/models keyOrigins): an address typed on the admin page can't
+ * collect it.
+ */
 export function providerOf(e: Endpoint): Provider {
   const key = `${e.kind}|${e.url}`;
   let p = providers.get(key);
-  if (!p) providers.set(key, (p = makeProvider(e.kind, e.url, { apiKey: process.env.MODEL_API_KEY, numCtx: NUM_CTX })));
+  if (!p) {
+    const apiKey = KEY_ORIGINS.has(new URL(e.url).origin) ? process.env.MODEL_API_KEY : undefined;
+    providers.set(key, (p = makeProvider(e.kind, e.url, { apiKey, numCtx: NUM_CTX })));
+  }
   return p;
 }
