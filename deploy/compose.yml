@@ -4,6 +4,7 @@
 # vLLM (and its "models" service) run only with COMPOSE_PROFILES=vllm; without it the stack is app + db + Ollama.
 # Model weights: the one-off "models" service downloads them into the vllmmodels volume on the first deploy (needs
 # internet once); later deploys find them and skip. Already on the host? VLLM_MODELS_DIR=/that/dir (README → vLLM).
+# "browser": Chromium for linked pages that load their figures by script, isolated on the internal "browsing" network.
 name: kurum-ai-web
 
 services:
@@ -41,6 +42,12 @@ services:
       # gemma4's sliding-window attention keeps 128k cheap (README); 16k made every 30-page document a section scan.
       # Same value as vLLM's --max-model-len below.
       NUM_CTX: ${NUM_CTX:-131072}
+      # Linked pages (admin page → Bağlantıdan okuma) open in the "browser" container; its only way out is the
+      # app's guard proxy at WEB_PROXY_URL. WEB_BROWSER=off: pages are read without running their scripts.
+      WEB_BROWSER: ${WEB_BROWSER:-ws://browser:3100/kai}
+      WEB_PROXY_URL: http://app:3101
+    # "default" is what this stack always had (db, vLLM); "browsing" adds the browser container.
+    networks: [default, browsing]
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes: [appdata:/app/.cache]
     expose: ["3000"]
@@ -124,6 +131,21 @@ services:
       start_period: 15m
       retries: 5
 
+  # No route out (internal network), no documents, keys or database: pages it opens reach the internet only through
+  # the app's guard proxy, which refuses internal addresses. Down or failing: the app reads pages without scripts.
+  browser:
+    build:
+      context: ..
+      target: browser
+    restart: unless-stopped
+    networks: [browsing]
+    read_only: true
+    tmpfs: ["/tmp:size=512m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: ${BROWSER_MEM_LIMIT:-2g}
+    pids_limit: 512
+
   db:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -136,6 +158,12 @@ services:
       test: ["CMD", "pg_isready", "-U", "kurumai"]
       interval: 5s
       retries: 20
+
+networks:
+  # Created by compose. Name it here (no "name:"): Dokploy prefixes it per stack.
+  default:
+  browsing:
+    internal: true
 
 volumes:
   appdata:

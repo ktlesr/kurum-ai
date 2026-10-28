@@ -50,6 +50,22 @@ FROM runtime AS app
 COPY --from=files /app ./
 USER app
 
+# The "browser" service (deploy/compose.yml): Chromium for pages whose figures only appear after their scripts run.
+# Its own image and container: no app code, documents or keys in it. playwright-core matches the app's exactly
+# (client and server must be the same version).
+FROM node:22-bookworm-slim AS browser
+RUN apt-get update && apt-get install -y --no-install-recommends chromium \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /srv
+COPY package.json /tmp/package.json
+RUN npm install --no-save --no-package-lock "playwright-core@$(node -p "require('/tmp/package.json').dependencies['playwright-core']")" \
+  && rm /tmp/package.json && groupadd -r browser && useradd -r -g browser -d /tmp browser
+COPY scripts/browser-server.mjs ./
+ENV HOME=/tmp NODE_ENV=production
+USER browser
+EXPOSE 3100
+CMD ["node", "browser-server.mjs"]
+
 FROM docling AS app-docling
 COPY --from=files /app ./
 USER app

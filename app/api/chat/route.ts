@@ -10,7 +10,8 @@ import { contextBudget, contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type Chat
 import { checkColumns, checkPages, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { retrieve, TOP_K, windows } from "@/lib/rag";
 import { getSetting } from "@/lib/db";
-import { FEEDS, findUrls, MAX_CHARS_TOTAL, onSite, parsePick, readPage, siteOf, webReason, type Page } from "@/lib/web";
+import { findUrls, MAX_CHARS_TOTAL, onSite, parsePick, siteOf, webReason, type Page } from "@/lib/web";
+import { readWeb } from "@/lib/browser";
 
 export const runtime = "nodejs";
 
@@ -175,7 +176,7 @@ export async function POST(req: Request) {
           const host = new URL(u).host;
           status(`Bağlantı okunuyor: ${host}`);
           try {
-            pages.push(await admission.web.run(() => readPage(u, signal), signal));
+            pages.push(await admission.web.run(() => readWeb(u, signal), signal));
           } catch (e) {
             if (signal.aborted) throw e;
             if (e instanceof Busy) {
@@ -190,17 +191,18 @@ export async function POST(req: Request) {
         // links on the same site (redirects can't leave it) and read those too. The model only names numbers, so
         // no text of its own reaches a URL. The selector sees the question and the page, never a document; what a
         // hostile page could still learn is which of its own links got picked (a few bits, to a site the user named).
+        const asked = messages.findLast((m) => m.role === "user")?.content ?? "";
         let follow = MAX_FOLLOW;
         for (const p of pages.slice()) {
           if (follow <= 0) break;
           const site = siteOf(new URL(p.url).hostname);
-          const links = [...(FEEDS[site] ?? []), ...p.links].filter((l) => onSite(new URL(l.url).hostname, site) && !pages.some((q) => q.url === l.url));
+          const links = p.links.filter((l) => onSite(new URL(l.url).hostname, site) && !pages.some((q) => q.url === l.url));
           if (!links.length) continue;
           status("Sayfadaki bağlantılar inceleniyor…");
           const list = links.map((l, i) => `${i + 1}. ${l.text.replace(/[<>]/g, "")} — ${new URL(l.url).pathname.slice(0, 120)}`).join("\n");
           const pick = await chatOnce(chat, model, [
             { role: "system", content: FOLLOW },
-            { role: "user", content: `Soru: ${messages.findLast((m) => m.role === "user")?.content ?? ""}\n\n<sayfa>\n${p.text.slice(0, 8000).replace(/<\/?sayfa/gi, "< sayfa")}\n</sayfa>\n\n<bağlantılar>\n${list}\n</bağlantılar>` },
+            { role: "user", content: `Soru: ${asked}\n\n<sayfa>\n${p.text.slice(0, 8000).replace(/<\/?sayfa/gi, "< sayfa")}\n</sayfa>\n\n<bağlantılar>\n${list}\n</bağlantılar>` },
           ], signal, 12).catch((e) => {
             if (signal.aborted) throw e;
             return ""; // no pick (model busy or failed): answer from the page itself
@@ -210,7 +212,7 @@ export async function POST(req: Request) {
           for (const l of chosen) {
             status(`Bağlantı okunuyor: ${l.text.slice(0, 60)}`);
             try {
-              const page = await admission.web.run(() => readPage(l.url, signal, { site }), signal);
+              const page = await admission.web.run(() => readWeb(l.url, signal, { site }), signal);
               pages.push(page.title ? page : { ...page, title: l.text.slice(0, 200) }); // a data file has no title
             } catch (e) {
               if (signal.aborted) throw e;

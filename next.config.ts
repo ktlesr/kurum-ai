@@ -6,6 +6,8 @@ const nextConfig: NextConfig = {
   output: "standalone",
   // Runtime data and local model files must never land in a build/standalone output (audit S12).
   outputFileTracingExcludes: { "*": [".cache/**", ".venv-docling/**", "kurum-ai/**", ".env*"] },
+  // playwright-core (lib/browser.ts) reads its own JSON files at runtime; the tracer only follows the JS.
+  outputFileTracingIncludes: { "/api/chat": ["./node_modules/playwright-core/**/*", "./node_modules/.pnpm/playwright-core@*/node_modules/playwright-core/**/*"] },
   // CSP is per-request (nonce) in proxy.ts; these are static and cover API routes too.
   async headers() {
     return [

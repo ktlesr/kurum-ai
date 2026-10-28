@@ -51,6 +51,10 @@ test("onSite: the site and its subdomains only, never siblings or parents", () =
   assert.ok(!onSite("github.io", "alice.github.io"));
 });
 
+test("htmlToText: the named entities Turkish pages use are decoded", () => {
+  assert.equal(htmlToText("<title>Saat 11.00&rsquo;de &Ouml;deme &amp; &uuml;&ccedil;</title>").title, "Saat 11.00’de Ödeme & üç");
+});
+
 test("parsePick: one or two valid numbers only; anything else follows nothing", () => {
   assert.deepEqual(parsePick("3", 5), [2]);
   assert.deepEqual(parsePick(" 3, 5.", 5), [2, 4]);
@@ -84,7 +88,7 @@ test("readPage: internal addresses refused by default (literal and by name)", as
 
 test("readPage: page text, redirects followed and capped, wrong type and size refused", async () => {
   const o = { allowPrivate: true };
-  assert.deepEqual(await readPage(`${base}/page`, signal, o), { url: `${base}/page`, title: "T", text: "merhaba", links: [] });
+  assert.deepEqual(await readPage(`${base}/page`, signal, o), { url: `${base}/page`, title: "T", text: "merhaba", links: [], html: true });
   assert.equal((await readPage(`${base}/xml`, signal, o)).text, "<Kur>\n<USD>49.69</USD>\n</Kur>");
   assert.equal((await readPage(`${base}/go`, signal, o)).text, "merhaba");
   assert.equal(await reason(readPage(`${base}/loop`, signal, o)), "redirects");

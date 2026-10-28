@@ -62,7 +62,7 @@ export class WebError extends Error {}
  * resolves to a public address first and an internal one later (DNS rebinding) is still refused. allowPrivate is
  * for the test only.
  */
-function guardedLookup(allowPrivate: boolean) {
+export function guardedLookup(allowPrivate: boolean) {
   return (host: string, opts: object, cb: (err: Error | null, address: string | { address: string; family: number }[], family?: number) => void) => {
     dnsLookup(host, { ...opts, all: true }, (err, addrs) => {
       if (err) return cb(err, "");
@@ -97,13 +97,20 @@ function get(url: URL, signal: AbortSignal, allowPrivate: boolean): Promise<{ st
   });
 }
 
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+// The named entities Turkish pages actually use; the rest are rare enough to stay as written.
+const ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", sbquo: "‚",
+  bdquo: "„", laquo: "«", raquo: "»", ndash: "–", mdash: "—", hellip: "…", middot: "·", bull: "•", copy: "©", reg: "®",
+  trade: "™", deg: "°", euro: "€", pound: "£", times: "×", divide: "÷", plusmn: "±", frac12: "½", shy: "",
+  ccedil: "ç", Ccedil: "Ç", ouml: "ö", Ouml: "Ö", uuml: "ü", Uuml: "Ü", gbreve: "ğ", Gbreve: "Ğ", scedil: "ş",
+  Scedil: "Ş", inodot: "ı", imath: "ı", Idot: "İ", acirc: "â", Acirc: "Â", icirc: "î", Icirc: "Î", ucirc: "û", Ucirc: "Û",
+};
 const SKIP = new Set(["script", "style", "noscript", "svg", "template", "iframe", "head", "title"]);
 const BLOCK = new Set(["p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "table", "ul", "ol", "header", "footer", "blockquote", "br"]);
 
 const decode = (t: string) =>
   t.replace(/&(#\d{1,7}|#x[0-9a-f]{1,6}|[a-z]{2,8});/gi, (m, e: string) => {
-    if (e[0] !== "#") return ENTITIES[e.toLowerCase()] ?? m;
+    if (e[0] !== "#") return ENTITIES[e] ?? ENTITIES[e.toLowerCase()] ?? m;
     const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : Number(e.slice(1));
     // Control characters stay out: the chat stream frames status, meta and errors with \x1d–\x1f.
     return n > 0 && n <= 0x10ffff && (n >= 0x20 || n === 9 || n === 10) ? String.fromCodePoint(n) : " ";
@@ -204,16 +211,8 @@ export function parsePick(answer: string, count: number): number[] {
   return [...new Set([m[1], m[2]].filter(Boolean).map(Number))].filter((n) => n >= 1 && n <= count).map((n) => n - 1);
 }
 
-/**
- * Data files a site publishes but its pages only load by script (the HTML has no figures). Offered to the model
- * next to the page's own links when that site is read.
- * ponytail: hand-kept list; add a site when its pages turn out to hold no data.
- */
-export const FEEDS: Record<string, Link[]> = {
-  "tcmb.gov.tr": [{ url: "https://www.tcmb.gov.tr/kurlar/today.xml", text: "Bugünkü döviz kurları (TCMB günlük kur verisi, XML: USD, EUR ve diğer dövizlerin alış/satış kurları)" }],
-};
-
-export interface Page { url: string; title: string; text: string; links: Link[] }
+/** `html`: an HTML page (lib/browser can render it with its scripts); data files and plain text are final. */
+export interface Page { url: string; title: string; text: string; links: Link[]; html?: boolean }
 
 /**
  * GET one page: http(s) only, ports 80/443, no credentials in the address, never an internal address (redirects
@@ -254,7 +253,7 @@ export async function readPage(raw: string, signal: AbortSignal, opts: { allowPr
     }
     if (/text\/html|application\/xhtml/i.test(r.type) || /^\s*<(!doctype|html)/i.test(body)) {
       const { title, text, links } = htmlToText(body, url);
-      return { url: url.href, title: title.slice(0, 200), text: text.slice(0, MAX_CHARS), links };
+      return { url: url.href, title: title.slice(0, 200), text: text.slice(0, MAX_CHARS), links, html: true };
     }
     // Data files read as they are (the model reads XML/JSON fine); indentation is only spent tokens.
     if (/^application\/([\w.-]+\+)?(xml|json)\b/i.test(r.type)) return { url: url.href, title: "", text: body.replace(/\n\s+/g, "\n").slice(0, MAX_CHARS), links: [] };
