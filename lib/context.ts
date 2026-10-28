@@ -28,6 +28,8 @@ export interface ChatMeta {
   sources: string[];
   unverified: string[];
   uncertain: string[];
+  /** Comparison-table figures under the wrong document's column (lib/checks checkColumns). */
+  misplaced?: string[];
   /** The one document of a single-document answer: page links and chips resolve against it, never another doc. */
   doc?: string;
   /** Pages that document has (from its page markers); page links are made only for these. */

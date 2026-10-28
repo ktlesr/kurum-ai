@@ -6,7 +6,7 @@ import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
 import { contextBudget, contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
-import { checkPages, pageNumbers, verifyNumbers } from "@/lib/checks";
+import { checkColumns, checkPages, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { retrieve, TOP_K, windows } from "@/lib/rag";
 
 export const runtime = "nodejs";
@@ -154,6 +154,8 @@ export async function POST(req: Request) {
         Object.assign(meta, verifyNumbers(answer, source));
         const badPages = checkPages(answer, selected.map((d) => d.text));
         if (badPages.length) meta.badPages = badPages;
+        const misplaced = checkColumns(answer, selected);
+        if (misplaced.length) meta.misplaced = misplaced;
         send(META_SEP + JSON.stringify(meta));
       } catch (e) {
         if (!signal.aborted) {

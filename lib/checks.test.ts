@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkCriteria, checkMaxRows, checkPages, compactTables, markUncertain, normNum, verifyNumbers } from "./checks.ts";
+import { checkColumns, checkCriteria, checkMaxRows, checkPages, compactTables, markUncertain, normNum, verifyNumbers } from "./checks.ts";
 
 test("normNum handles Turkish thousands and decimal comma", () => {
   assert.equal(normNum("698.264.164"), "698264164");
@@ -97,4 +97,36 @@ test("checkPages flags pages no document has; skips docs without page markers", 
   assert.deepEqual(checkPages("Sayfa 2'de ve sayfa 7'de; ayrıca Sayfa 3–12 arası.", [doc]), ["Sayfa 7", "Sayfa 12"]);
   assert.deepEqual(checkPages("Sayfa 2", [doc, "--- Sayfa 1 ---\nx"]), []);
   assert.deepEqual(checkPages("Sayfa 99", [doc, "işaretsiz metin"]), []);
+});
+
+test("checkColumns flags a figure put under the wrong document's column", () => {
+  const docs = [
+    { name: "cagri-2025.pdf", text: "Destek üst limiti 1.500.000 TL. Süre 12 ay." },
+    { name: "cagri-2026.pdf", text: "Destek üst limiti 2.000.000 TL. Süre 18 ay." },
+  ];
+  const ok = "| Konu | cagri-2025.pdf | cagri-2026.pdf |\n| --- | --- | --- |\n| Limit | 1.500.000 TL (Sayfa 3) | 2.000.000 TL (Sayfa 2) |\n| Süre | 12 ay | 18 ay |";
+  assert.deepEqual(checkColumns(ok, docs), []);
+  const swapped = "| Konu | Çağrı 2025 (cagri-2025) | cagri-2026 |\n|---|---|---|\n| Limit | 2.000.000 TL | 1.500.000 TL |";
+  assert.deepEqual(checkColumns(swapped, docs), [
+    "2.000.000: cagri-2025.pdf sütununda, ama yalnızca cagri-2026.pdf içinde geçiyor",
+    "1.500.000: cagri-2026.pdf sütununda, ama yalnızca cagri-2025.pdf içinde geçiyor",
+  ]);
+  // Numbers in neither document, page refs and single digits are left to the other checks.
+  assert.deepEqual(checkColumns("| | cagri-2025 | cagri-2026 |\n| --- | --- | --- |\n| x | 999 (Sayfa 18) | 7 |", docs), []);
+  assert.deepEqual(checkColumns(swapped, docs.slice(0, 1)), []);
+  // Short names: "a" doesn't claim the "Fark" column.
+  const ab = [{ name: "a.pdf", text: "100 TL" }, { name: "b.pdf", text: "200 TL" }];
+  assert.deepEqual(checkColumns("| Konu | a | b | Fark |\n| --- | --- | --- | --- |\n| x | 100 | 200 | 100 |", ab), []);
+  assert.deepEqual(checkColumns("| Konu | a | b |\n| --- | --- | --- |\n| x | 200 | 100 |", ab).length, 2);
+  // Escaped pipe in a cell, no outer pipes, one-dash separators.
+  const ab2 = [{ name: "alpha.pdf", text: "100" }, { name: "beta.pdf", text: "200" }];
+  assert.deepEqual(checkColumns("| Konu | alpha | beta |\n| --- | --- | --- |\n| A \\| B | 100 | 200 |", ab2), []);
+  assert.equal(checkColumns("Konu | alpha | beta\n- | - | -\nx | 200 | 100", ab2).length, 2);
+  // Similar names: "rapor-ek.pdf" is its own column; a "Fark" header never belongs to "fark.pdf".
+  const re = [{ name: "rapor.pdf", text: "200" }, { name: "rapor-ek.pdf", text: "100" }];
+  assert.equal(checkColumns("| Konu | rapor.pdf | rapor-ek.pdf |\n|---|---|---|\n| x | 200 | 200 |", re).length, 1);
+  // A header naming both documents belongs to neither.
+  assert.deepEqual(checkColumns("| Konu | rapor.pdf / rapor-ek.pdf |\n|---|---|\n| x | 100 |", re), []);
+  const fk = [{ name: "a.pdf", text: "200" }, { name: "fark.pdf", text: "100" }];
+  assert.deepEqual(checkColumns("| Konu | a.pdf | fark.pdf | Fark |\n|---|---|---|---|\n| x | 200 | 100 | 200 |", fk), []);
 });

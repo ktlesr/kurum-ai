@@ -324,12 +324,15 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     if (hit && doc?.serverId) setSource({ serverId: doc.serverId, label: hit.label });
   };
 
+  // Column headers are the file names as they are: lib/checks checkColumns matches figures to documents by them.
+  const compare = (names: string[]) =>
+    `Dokümanları madde/kalem bazında karşılaştır (ör. tutarlar, oranlar, süreler, şartlar, yükümlülükler). Sonucu tek bir Markdown tablosu olarak ver; sütunlar tam olarak şunlar olsun: | Konu | ${names.join(" | ")} | Fark |. Her hücrede değeri dokümanda yazdığı gibi ve sayfa numarasıyla ver, ör. "1.500.000 TL (Sayfa 3)"; bir dokümanda o konu yoksa "yok" yaz. Tablodan sonra birbiriyle çelişen bilgileri ayrıca madde madde belirt.`;
   const CONSISTENCY =
     "Dokümanı tutarlılık açısından incele: tablolardaki değerler, [Kod kontrolü] sonuçları ve sonuç/değerlendirme bölümü birbiriyle uyumlu mu? Bulguları sayfa numarasıyla madde madde listele; uyumsuzluk yoksa bunu açıkça söyle.";
   // Quick tasks (plan §3.2). All of them need the whole document.
   const suggestions: [label: string, prompt: string][] = [
     ["Özetle", "Dokümanın tamamını özetle: amacı ve kapsamı, ana bölümleri, temel bulguları ve sonuçları."],
-    ...(ready.length > 1 ? [["Karşılaştır", "Dokümanları karşılaştır: ortak noktaları, farkları ve birbiriyle çelişen bilgileri dosya adı ve sayfa numarasıyla listele."] as [string, string]] : []),
+    ...(ready.length > 1 ? [["Karşılaştır", compare(ready.map((f) => f.name))] as [string, string]] : []),
     ["Rakamları kontrol et", hasReport ? CONSISTENCY : "Dokümandaki önemli rakamları (tutarlar, oranlar, toplamlar) dokümanda yazdığı gibi, konumlarıyla listele; birbiriyle tutarsız görünenleri ayrıca belirt."],
     ["Şartları çıkar", "Dokümandaki şartları, yükümlülükleri, süreleri ve koşulları madde madde, sayfa numaralarıyla çıkar."],
     ["Ana başlıklar", "Dokümanın ana başlıklarını ve bölümlerini sırayla, sayfa numaralarıyla listele."],
@@ -889,6 +892,12 @@ function MetaNotes({ meta, onSource }: { meta: ChatMeta; onSource: (chip: string
         <p className="flex items-start gap-1.5 text-danger">
           <AlertTriangle size={13} className="mt-px shrink-0" />
           <span>Kaynakta bulunamayan sayılar: {meta.unverified.join(", ")}. Hesaplanmış ya da uydurulmuş olabilir; kontrol edin.</span>
+        </p>
+      )}
+      {meta.misplaced && meta.misplaced.length > 0 && (
+        <p className="flex items-start gap-1.5 text-danger">
+          <AlertTriangle size={13} className="mt-px shrink-0" />
+          <span>Yanlış belgeye yazılmış olabilecek değerler: {meta.misplaced.join("; ")}. Kontrol edin.</span>
         </p>
       )}
       {meta.badPages && meta.badPages.length > 0 && (

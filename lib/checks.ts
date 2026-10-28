@@ -151,13 +151,61 @@ export function verifyNumbers(answer: string, source: string): { unverified: str
 }
 
 /**
+ * Comparison tables: a number in a document's column that this document doesn't have but another one does, i.e. a
+ * figure put under the wrong document (the typical comparison mistake). A column belongs to a document when its
+ * header names it (with or without the extension). Numbers in no document at all are verifyNumbers' job.
+ */
+export function checkColumns(answer: string, docs: { name: string; text: string }[]): string[] {
+  if (docs.length < 2) return [];
+  const nums = docs.map((d) => new Set([...d.text.matchAll(NUM)].map((m) => normNum(m[0]).replace(/^-/, ""))));
+  const base = (n: string) => n.toLocaleLowerCase("tr").replace(/\.[a-z0-9]+$/i, "");
+  // Best match wins: the exact name/base (3) over a header containing the full name (2) over one containing a base
+  // of 4+ letters (1), so "rapor-ek.pdf" isn't claimed by "rapor.pdf" too. A tie (a header naming two documents)
+  // belongs to neither. The fixed helper columns of the compare prompt are never a document's.
+  const docOf = (header: string) => {
+    const h = header.toLocaleLowerCase("tr");
+    if (h === "konu" || h === "fark") return -1;
+    const score = (n: string): number => {
+      const full = n.toLocaleLowerCase("tr");
+      return h === full || h === base(n) ? 3 : h.includes(full) ? 2 : base(n).length >= 4 && h.includes(base(n)) ? 1 : 0;
+    };
+    const scores = docs.map((d) => score(d.name));
+    const best = Math.max(...scores);
+    return best > 0 && scores.filter((x) => x === best).length === 1 ? scores.indexOf(best) : -1;
+  };
+  // GFM rows: outer pipes optional, "\|" is a pipe inside a cell.
+  const cells = (line: string) => line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim());
+  const SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+  const out = new Set<string>();
+  const lines = answer.split("\n");
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (!lines[i].includes("|") || !lines[i + 1].includes("-") || !SEP.test(lines[i + 1])) continue;
+    const cols = cells(lines[i]).map(docOf);
+    for (let r = i + 2; r < lines.length && lines[r].includes("|") && lines[r].trim(); r++) {
+      cells(lines[r]).forEach((cell, c) => {
+        const d = cols[c];
+        if (d === undefined || d < 0) return;
+        // Page references aren't figures.
+        for (const [raw] of cell.replace(/sayfa\s+\d+(\s*[-–]\s*\d+)?/gi, "").matchAll(NUM)) {
+          const n = normNum(raw).replace(/^-/, "");
+          if (/^\d$/.test(n) || nums[d].has(n)) continue;
+          const other = docs.filter((_, k) => k !== d && nums[k].has(n)).map((x) => x.name);
+          if (other.length) out.add(`${raw}: ${docs[d].name} sütununda, ama yalnızca ${other.join(", ")} içinde geçiyor`);
+        }
+      });
+    }
+  }
+  return [...out];
+}
+
+/** Page numbers a document's text has markers for. */
+export const pageNumbers = (text: string) => [...text.matchAll(/^--- Sayfa (\d+) ---$/gm)].map((m) => Number(m[1]));
+
+/**
  * "Sayfa N" references in an answer that no selected document has (plan §5.3: a made-up page number is never
  * accepted). Ranges ("Sayfa 3–5") check both ends. Checked only when every document has page markers; a DOCX or
  * TXT without them can't say which pages exist.
  */
-/** Page numbers a document's text has markers for. */
-export const pageNumbers = (text: string) => [...text.matchAll(/^--- Sayfa (\d+) ---$/gm)].map((m) => Number(m[1]));
-
 export function checkPages(answer: string, docTexts: string[]): string[] {
   const sets = docTexts.map((t) => new Set(pageNumbers(t).map(String)));
   if (!sets.length || sets.some((s) => !s.size)) return [];
