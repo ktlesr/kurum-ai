@@ -8,6 +8,8 @@ services:
     build:
       context: ..
       target: ${APP_TARGET:-app} # app-docling: Docling inside the image
+      # ponytail: build steps use the host's network/DNS; Docker's build bridge can't resolve on some hosts (EAI_AGAIN).
+      network: host
     restart: unless-stopped
     depends_on:
       db: { condition: service_healthy }
