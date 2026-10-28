@@ -3,7 +3,7 @@ import { extractText, getDocumentProxy } from "unpdf";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import type { DocKind } from "./server";
-import { extractWithDocling, MAX_PAGES, tooManyPages, type Extracted, type Progress } from "./extract";
+import { extractWithDocling, MAX_PAGES, readImage, tooManyPages, type Extracted, type Progress } from "./extract";
 
 export interface Parsed {
   kind: DocKind;
@@ -42,13 +42,21 @@ export async function parseFile(name: string, buf: Buffer, onProgress: (p: Progr
       return parseSheet(XLSX.read(buf, { type: "buffer" }));
     case "csv":
       return parseSheet(XLSX.read(decodeText(buf), { type: "string" }));
+    case "png":
+    case "jpg":
+    case "jpeg":
+    case "webp": {
+      onProgress({ stage: "Görsel okunuyor", done: 0, total: 1 });
+      const text = await readImage(buf, signal);
+      return { kind: "text", text, rows: text.split("\n").length, ...(text ? {} : { warning: "Görselde okunacak içerik bulunamadı." }) };
+    }
     case "txt":
     case "md": {
       const text = decodeText(buf);
       return { kind: "text", text, rows: text.split("\n").length };
     }
     default:
-      throw new UserError(`"${ext || name}" türü desteklenmiyor. PDF, DOCX, XLSX, XLS, CSV, TXT veya MD yükleyin.`);
+      throw new UserError(`"${ext || name}" türü desteklenmiyor. PDF, DOCX, XLSX, XLS, CSV, TXT, MD ya da PNG/JPG görsel yükleyin.`);
   }
 }
 

@@ -79,6 +79,21 @@ async function readStrip(png: string, signal: AbortSignal, cacheDir: string, vis
   return text;
 }
 
+const IMAGE_PROMPT = `Bu görüntü bir kullanıcının yüklediği ekran görüntüsü ya da fotoğraftır. İçeriğini yazıya dök:
+- Görüntüdeki tüm metni aynen, okunduğu sırayla yaz; tabloları Markdown tablo olarak yaz.
+- Rakamları, tarihleri ve birimleri değiştirmeden yaz. Okuyamadığın yere [okunamadı] yaz, tahmin etme.
+- Metin dışı önemli içerik varsa (grafik, şema, fotoğraf) en sonda "Görsel:" başlığıyla kısaca tarif et.
+- Yorum ekleme.`;
+
+/** Text of an uploaded image (screenshot, photo), read by the institution's own vision model. */
+export async function readImage(buf: Buffer, signal: AbortSignal): Promise<string> {
+  const { vision } = await modelConfig();
+  return admission.model.run(async () => {
+    const r = await providerOf(vision).chat({ model: vision.model, messages: [{ role: "user", content: IMAGE_PROMPT, images: [buf.toString("base64")] }], maxTokens: VISION_MAX_TOKENS, signal });
+    return r.text.trim() + (r.truncated ? "\n…(okuma yarıda kesildi)" : "");
+  }, signal);
+}
+
 async function runDocling(file: string, signal: AbortSignal, onLine: (l: PageLine) => void): Promise<void> {
   const script = path.join(process.cwd(), "scripts", "extract.py");
   // Offline by default: models must already be on disk (README → kapalı ağ); nothing is fetched at runtime.

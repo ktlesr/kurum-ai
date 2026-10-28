@@ -5,7 +5,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   AlertTriangle, ArrowUp, BookOpen, Check, ChevronDown, Copy, Download, File as FileIcon, FileSpreadsheet, FileText,
-  FileType, HardDrive, LogOut, Menu, Paperclip, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Upload, Users, X,
+  FileType, HardDrive, Image as ImageIcon, LogOut, Menu, Paperclip, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Upload, Users, X,
 } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
@@ -38,9 +38,11 @@ const PROFILES: { id: Profile; label: string; hint: string }[] = [
   { id: "deep", label: "Derin analiz", hint: "Önce düşünür, belgenin tamamını kullanır; daha yavaş, daha kapsamlı." },
 ];
 
-const ACCEPT = ".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md";
+const ACCEPT = ".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg,.webp";
 const MAX_BYTES = 25 * 1024 * 1024;
-const ICONS = { pdf: FileText, docx: FileType, sheet: FileSpreadsheet, text: FileIcon } as const;
+const ICONS = { pdf: FileText, docx: FileType, sheet: FileSpreadsheet, text: FileIcon, image: ImageIcon } as const;
+// A screenshot or photo is stored as text (what the vision model read), but its card still shows it's an image.
+const iconKey = (f: { name: string; kind: DocKind }) => (/\.(png|jpe?g|webp)$/i.test(f.name) ? "image" : f.kind);
 
 const kindOf = (name: string): DocKind => {
   const ext = name.toLowerCase().split(".").pop();
@@ -361,13 +363,21 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             onClick={() => fileInput.current?.click()}
             className="grid size-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-subtle hover:text-fg"
             aria-label="Belge ekle"
-            title="Belge ekle (PDF, DOCX, XLSX, CSV, TXT · en fazla 25 MB)"
+            title="Belge ya da görsel ekle (PDF, DOCX, XLSX, CSV, TXT, PNG, JPG · en fazla 25 MB) · ekran görüntüsü yapıştırılabilir"
           >
             <Paperclip size={18} />
           </button>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => {
+              // A pasted screenshot is attached like an uploaded file (read by the local vision model); text pastes as usual.
+              const imgs = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+              if (!imgs.length) return;
+              e.preventDefault();
+              const stamp = new Date().toLocaleString("tr-TR").replace(/[^\d]+/g, "-");
+              upload(imgs.map((f, i) => new File([f], `ekran-goruntusu-${stamp}${imgs.length > 1 ? `-${i + 1}` : ""}.${f.type === "image/jpeg" ? "jpg" : f.type === "image/webp" ? "webp" : "png"}`, { type: f.type })));
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
@@ -701,7 +711,7 @@ function IconButton({ label, onClick, children, danger, disabled }: { label: str
 }
 
 function FileChip({ f, onOpen, onRemove }: { f: Card; onOpen: () => void; onRemove: () => void }) {
-  const Icon = ICONS[f.kind];
+  const Icon = ICONS[iconKey(f)];
   return (
     <span className={`flex max-w-56 items-center gap-1.5 rounded-lg border py-1 pl-2 pr-1 text-xs ${f.status === "error" ? "border-danger/40 text-danger" : "border-line bg-subtle"}`}>
       {f.status === "uploading" ? <span className="size-3 shrink-0 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-label="Okunuyor" /> : <Icon size={13} className="shrink-0 text-accent" />}
@@ -716,7 +726,7 @@ function FileChip({ f, onOpen, onRemove }: { f: Card; onOpen: () => void; onRemo
 }
 
 function DocCard({ f, active, onOpen, onRemove }: { f: Card; active: boolean; onOpen: () => void; onRemove: () => void }) {
-  const Icon = ICONS[f.kind];
+  const Icon = ICONS[iconKey(f)];
   const details = [
     fmtSize(f.size),
     f.pages && `${fmtNum(f.pages)} sayfa`,
@@ -850,6 +860,9 @@ function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (c
     ...mdComponents,
     a: (props) => {
       const page = props.href?.startsWith(`#sayfa-${nonce}-`) ? props.href.slice(`#sayfa-${nonce}-`.length) : undefined;
+      // A page this answer read (listed under it) opens like the list's own links; any other address stays text.
+      if (!page && props.href && m.meta?.web?.some((w) => w.url === props.href))
+        return <a href={props.href} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2">{props.children}</a>;
       if (!page) return <SafeLink href={props.href}>{props.children}</SafeLink>;
       return (
         <button type="button" onClick={() => onSource(`Sayfa ${page}`, m.meta?.doc)} className="text-accent underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Kaynak panelinde aç">

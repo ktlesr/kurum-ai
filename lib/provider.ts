@@ -101,12 +101,15 @@ function ollama(base: string, numCtx: number): Provider {
   };
 }
 
+/** Image type from the first base64 characters (PNG, JPEG, WebP signatures). */
+const mimeOf = (b64: string) => (b64.startsWith("/9j/") ? "image/jpeg" : b64.startsWith("UklGR") ? "image/webp" : "image/png");
+
 /** vLLM and other OpenAI-compatible servers. `base` includes the /v1 prefix. */
 function openai(base: string, apiKey: string | undefined): Provider {
   const headers = { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) };
   const toWire = (m: Msg) =>
     m.images?.length
-      ? { role: m.role, content: [{ type: "text", text: m.content }, ...m.images.map((b64) => ({ type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } }))] }
+      ? { role: m.role, content: [{ type: "text", text: m.content }, ...m.images.map((b64) => ({ type: "image_url", image_url: { url: `data:${mimeOf(b64)};base64,${b64}` } }))] }
       : { role: m.role, content: m.content };
   return {
     kind: "openai",

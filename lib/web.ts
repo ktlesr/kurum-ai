@@ -12,6 +12,7 @@ const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_CHARS = 30_000;
 const TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 3;
+const MAX_LINKS = 150;
 
 /**
  * http(s) addresses in a message, in order, at most MAX_URLS: trailing punctuation isn't part of the address
@@ -104,21 +105,28 @@ const decode = (t: string) =>
   t.replace(/&(#\d{1,7}|#x[0-9a-f]{1,6}|[a-z]{2,8});/gi, (m, e: string) => {
     if (e[0] !== "#") return ENTITIES[e.toLowerCase()] ?? m;
     const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : Number(e.slice(1));
-    return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+    // Control characters stay out: the chat stream frames status, meta and errors with \x1d–\x1f.
+    return n > 0 && n <= 0x10ffff && (n >= 0x20 || n === 9 || n === 10) ? String.fromCodePoint(n) : " ";
   });
+
+export interface Link { url: string; text: string }
 
 /**
  * Readable text of an HTML page: scripts, styles, head and markup dropped, block ends kept as line breaks.
  * One forward pass with indexOf (no backtracking regex): linear in the page size even for broken HTML such as a
  * run of "<" without ">" (a regex there is quadratic and would stall the server).
+ * With `base`, also the page's http(s) links with their text (resolved against it, no fragments, at most MAX_LINKS).
  */
-export function htmlToText(html: string): { title: string; text: string } {
-  const lower = html.toLowerCase();
+export function htmlToText(html: string, base?: URL): { title: string; text: string; links: Link[] } {
+  // ASCII only: toLowerCase turns "İ" into two characters, and every index after it would point elsewhere in html.
+  const lower = html.replace(/[A-Z]+/g, (s) => s.toLowerCase());
   const t0 = lower.indexOf("<title");
   const t1 = t0 < 0 ? -1 : lower.indexOf(">", t0);
   const t2 = t1 < 0 ? -1 : lower.indexOf("</title", t1);
   const title = t2 < 0 ? "" : decode(html.slice(t1 + 1, t2)).replace(/\s+/g, " ").trim();
   const out: string[] = [];
+  const links: Link[] = [];
+  let open: { href: string; at: number } | null = null;
   let i = 0;
   while (i < html.length) {
     const lt = html.indexOf("<", i);
@@ -142,21 +150,77 @@ export function htmlToText(html: string): { title: string; text: string } {
       i = endGt < 0 ? html.length : endGt + 1;
       continue;
     }
+    if (base && name === "a") {
+      if (!closing) {
+        // Bounded slice of this one tag; the pattern has no nested repetition.
+        const href = /\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i.exec(html.slice(lt, Math.min(gt, lt + 2048)));
+        open = href ? { href: decode(href[1] ?? href[2] ?? href[3]), at: out.length } : null;
+      } else if (open && links.length < MAX_LINKS) {
+        const text = decode(out.slice(open.at).join("")).replace(/[\s\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 120);
+        const url = link(open.href, base);
+        if (text && url && !links.some((l) => l.url === url)) links.push({ url, text });
+        open = null;
+      }
+    }
     if (name === "td" || name === "th") out.push(closing ? " | " : "");
     else if (BLOCK.has(name) && (closing || name === "br")) out.push("\n");
     i = gt + 1;
   }
-  const text = decode(out.join("")).replace(/[ \t\u00a0]+/g, " ").replace(/\n\s*\n+/g, "\n\n").trim();
-  return { title, text };
+  const text = decode(out.join("")).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, " ").replace(/[ \t\u00a0]+/g, " ").replace(/\n\s*\n+/g, "\n\n").trim();
+  return { title, text, links };
 }
 
-export interface Page { url: string; title: string; text: string }
+/** An absolute http(s) address without its fragment, or null (mailto:, javascript:, in-page anchors, junk). */
+function link(href: string, base: URL): string | null {
+  try {
+    const u = new URL(href, base);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    u.hash = "";
+    return u.href === base.href.replace(/#.*$/, "") ? null : u.href;
+  } catch {
+    return null;
+  }
+}
+
+/** A host without its "www.": the site a followed link must stay on. */
+export const siteOf = (host: string) => host.toLowerCase().replace(/^www\./, "");
+
+/**
+ * `host` is the site itself or one of its subdomains (evds3.tcmb.gov.tr on tcmb.gov.tr). Never a sibling or a
+ * parent: alice.github.io and bob.github.io are different sites, and that needs no public-suffix list.
+ */
+export function onSite(host: string, site: string): boolean {
+  const h = siteOf(host);
+  return h === site || h.endsWith(`.${site}`);
+}
+
+/**
+ * The selector's answer (route FOLLOW prompt): "VAR"/"YOK" or one or two link numbers, nothing else. Anything
+ * looser ("YOK — 1", prose with numbers in it) follows nothing.
+ */
+export function parsePick(answer: string, count: number): number[] {
+  const m = /^\s*(\d{1,3})(?:\s*,\s*(\d{1,3}))?\s*\.?\s*$/.exec(answer);
+  if (!m) return [];
+  return [...new Set([m[1], m[2]].filter(Boolean).map(Number))].filter((n) => n >= 1 && n <= count).map((n) => n - 1);
+}
+
+/**
+ * Data files a site publishes but its pages only load by script (the HTML has no figures). Offered to the model
+ * next to the page's own links when that site is read.
+ * ponytail: hand-kept list; add a site when its pages turn out to hold no data.
+ */
+export const FEEDS: Record<string, Link[]> = {
+  "tcmb.gov.tr": [{ url: "https://www.tcmb.gov.tr/kurlar/today.xml", text: "Bugünkü döviz kurları (TCMB günlük kur verisi, XML: USD, EUR ve diğer dövizlerin alış/satış kurları)" }],
+};
+
+export interface Page { url: string; title: string; text: string; links: Link[] }
 
 /**
  * GET one page: http(s) only, ports 80/443, no credentials in the address, never an internal address (redirects
- * re-checked), at most 2 MB and 15 s, HTML or plain text. Throws WebError with a short reason.
+ * re-checked), at most 2 MB and 15 s, HTML, plain text or XML/JSON data (e.g. a rate feed). Throws WebError with a
+ * short reason. With `site`, every hop (redirects too) must stay on that site (onSite).
  */
-export async function readPage(raw: string, signal: AbortSignal, opts: { allowPrivate?: boolean } = {}): Promise<Page> {
+export async function readPage(raw: string, signal: AbortSignal, opts: { allowPrivate?: boolean; site?: string } = {}): Promise<Page> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -167,6 +231,7 @@ export async function readPage(raw: string, signal: AbortSignal, opts: { allowPr
   for (let hop = 0; ; hop++) {
     if (url.protocol !== "http:" && url.protocol !== "https:") throw new WebError("scheme");
     if (url.username || url.password) throw new WebError("credentials");
+    if (opts.site && !onSite(url.hostname, opts.site)) throw new WebError("offsite");
     const port = url.port || (url.protocol === "https:" ? "443" : "80");
     if (!opts.allowPrivate && port !== "80" && port !== "443") throw new WebError("port");
     // A literal address skips DNS (and the lookup hook): check it here.
@@ -188,10 +253,12 @@ export async function readPage(raw: string, signal: AbortSignal, opts: { allowPr
       body = r.body.toString("utf8");
     }
     if (/text\/html|application\/xhtml/i.test(r.type) || /^\s*<(!doctype|html)/i.test(body)) {
-      const { title, text } = htmlToText(body);
-      return { url: url.href, title: title.slice(0, 200), text: text.slice(0, MAX_CHARS) };
+      const { title, text, links } = htmlToText(body, url);
+      return { url: url.href, title: title.slice(0, 200), text: text.slice(0, MAX_CHARS), links };
     }
-    if (/^text\//i.test(r.type) || !r.type) return { url: url.href, title: "", text: body.slice(0, MAX_CHARS) };
+    // Data files read as they are (the model reads XML/JSON fine); indentation is only spent tokens.
+    if (/^application\/([\w.-]+\+)?(xml|json)\b/i.test(r.type)) return { url: url.href, title: "", text: body.replace(/\n\s+/g, "\n").slice(0, MAX_CHARS), links: [] };
+    if (/^text\//i.test(r.type) || !r.type) return { url: url.href, title: "", text: body.slice(0, MAX_CHARS), links: [] };
     throw new WebError("type");
   }
 }
@@ -201,7 +268,7 @@ export const webReason = (e: unknown) => {
   const m = e instanceof WebError ? e.message : (e as { name?: string })?.name === "TimeoutError" ? "timeout" : "network";
   const t: Record<string, string> = {
     invalid: "adres geçersiz", scheme: "yalnızca http/https", credentials: "adreste kullanıcı adı/parola var", port: "yalnızca 80/443 portları",
-    private: "iç ağ adresi", redirects: "çok fazla yönlendirme", too_large: "sayfa çok büyük", type: "HTML ya da metin değil", timeout: "zaman aşımı",
+    private: "iç ağ adresi", offsite: "başka siteye yönlendirdi", redirects: "çok fazla yönlendirme", too_large: "sayfa çok büyük", type: "HTML, metin ya da veri dosyası değil", timeout: "zaman aşımı",
   };
   return t[m] ?? (m.startsWith("http_") ? `sunucu ${m.slice(5)} döndürdü` : "bağlanılamadı");
 };

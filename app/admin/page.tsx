@@ -112,7 +112,7 @@ export default async function AdminPage() {
         <div className="min-w-0 flex-1">
           <p className="font-medium">Bağlantıdan okuma: {webOn ? <span className="text-ok">Açık</span> : <span className="text-muted">Kapalı</span>}</p>
           <p className="mt-1 text-xs text-muted">
-            Açıkken kullanıcı sorusuna bir web adresi yazarsa sayfa okunur ve cevapta kullanılır (güncel bilgi için). Yalnızca o adrese sayfa isteği gider; belgeler ve soru metni dışarı gönderilmez. İç ağ adresleri okunmaz.
+            Açıkken kullanıcı sorusuna bir web adresi yazarsa sayfa okunur ve cevapta kullanılır (güncel bilgi için). Cevap sayfada yoksa aynı sitedeki en ilgili 2 bağlantı da okunur (ör. TCMB ana sayfasından günlük kur verisi). Yalnızca bu adreslere sayfa isteği gider; belgeler ve soru metni dışarı gönderilmez. İç ağ adresleri okunmaz.
           </p>
         </div>
         <form action={setWeb}>

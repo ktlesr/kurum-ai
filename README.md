@@ -70,7 +70,7 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 
 ## Desteklenen dosyalar
 
-PDF, DOCX (eski `.doc` yok), XLSX / XLS / CSV (her sheet Markdown tablo olarak), TXT / MD. Dosya başına en fazla 25 MB. UTF-8 okunamayan TXT/CSV dosyaları Windows-1254 (Türkçe) olarak okunur.
+PDF, DOCX (eski `.doc` yok), XLSX / XLS / CSV (her sheet Markdown tablo olarak), TXT / MD, PNG / JPG / WEBP görsel (ekran görüntüsü soru kutusuna yapıştırılabilir; metni ve tabloları kurumun kendi görsel modeli `VISION_MODEL` okur, görsel dışarı çıkmaz). Dosya başına en fazla 25 MB. UTF-8 okunamayan TXT/CSV dosyaları Windows-1254 (Türkçe) olarak okunur.
 
 ## Nasıl çalışır
 
@@ -95,6 +95,7 @@ Sonuç `.cache/` altında dosya özetiyle saklanır. Aynı dosya tekrar yükleni
   - *Belirli bilgi* (ör. "raporu kim hazırladı?") → **RAG:** metin sayfa/sheet bilgisiyle ~800 token'lık, %15 örtüşmeli parçalara bölünür; `EMBED_MODEL` ile en ilgili 6 parça bulunur.
   - *Bütünü gerektiren* (özet, tüm rakamlar, tutarlılık) → **bölüm bölüm tarama:** doküman bağlama sığan pencerelere bölünür, her pencereden soruyla ilgili notlar çıkarılır, cevap bu notlardan yazılır. Yavaştır: 16k bağlamda 20 sayfalık rapor 7 pencere, ~3 dakika sürdü. Beklerken arayüzde "bölüm 3/7 taranıyor" gibi ilerleme görünür.
   - Kullanılan ya da taranan bölümler cevabın altında "Sayfa 4" gibi etiketlerle gösterilir.
+- **Bağlantıdan okuma** (Yönetici → Ayarlar, varsayılan kapalı): soruya yazılan web adresi okunur. Cevap o sayfada yoksa model sayfadaki aynı siteye ait bağlantılardan en ilgili 2 tanesini seçer, onlar da okunur (model yalnızca numara seçer, adres yazamaz). Sayfaları yalnızca script ile veri yükleyen siteler için bilinen veri dosyaları da aday olarak sunulur (`FEEDS`, `lib/web.ts`: TCMB günlük kurları). XML/JSON veri dosyaları da okunur.
 - **Tutarlı cevaplar:** Sıcaklık 0 kullanılıyor; aynı soru aynı cevabı verir, rastgele örnekleme kaynaklı uydurma azalır.
 - **Model başına token ölçümü:** Bağlama sığma hesabı, modelin gerçek token sayımından öğrenilir (Ollama her cevapta bildiriyor). Ölçüm yapılana kadar temkinli 2,2 karakter/token kullanılır. Ölçülen değerler: gemma4 ~2,9, gpt-oss ~2,2.
 - Cevap bittikten sonra içindeki her sayı kaynak metinde aranır. Bulunamayanlar ("hesaplanmış ya da uydurulmuş olabilir") ve belirsiz okunanlar (`(?)`) cevabın altında uyarı olarak gösterilir.

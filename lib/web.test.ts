@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { findUrls, htmlToText, isPrivate, readPage, WebError } from "./web.ts";
+import { findUrls, htmlToText, isPrivate, onSite, parsePick, readPage, WebError } from "./web.ts";
 
 test("findUrls: http(s) only, trailing punctuation dropped, deduped, at most 3", () => {
   assert.deepEqual(findUrls("Bkz. https://a.gov.tr/x?y=1, ve (http://b.org/p). ftp://c"), ["https://a.gov.tr/x?y=1", "http://b.org/p"]);
@@ -27,10 +27,43 @@ test("htmlToText: scripts and styles out, blocks become lines, entities decoded"
   assert.match(text, /A \| 1 \|/);
 });
 
+test("htmlToText with a base: page links with their text, resolved, no fragments or scripts", () => {
+  const { links } = htmlToText(`<a href="/kurlar">Döviz <b>Kurları</b></a> <a href='https://x.tr/a#b'>Dış</a> <a href=javascript:1>J</a> <a href="#top">Üst</a> <a href="mailto:a@b">M</a> <a href="/bos"></a> <a href="/kurlar">Tekrar</a>`, new URL("https://www.tcmb.gov.tr/"));
+  assert.deepEqual(links, [{ url: "https://www.tcmb.gov.tr/kurlar", text: "Döviz Kurları" }, { url: "https://x.tr/a", text: "Dış" }]);
+  assert.deepEqual(htmlToText("<a href=/x>y</a>").links, []);
+  // Stream separators (\x1d–\x1f) never come out of a page, written raw or as entities.
+  const ctl = htmlToText(`<a href="/x">&#31;sahte&#29;</a><p>a\u001eb&#30;c</p>`, new URL("https://a.tr/"));
+  assert.ok(!/[\u0000-\u0008\u000b-\u001f]/.test(ctl.text + ctl.links[0].text), JSON.stringify(ctl));
+  assert.deepEqual(htmlToText(`<A HREF="/Cevap">Cevap</A>`, new URL("https://a.tr/")).links, [{ url: "https://a.tr/Cevap", text: "Cevap" }]);
+  // "İ" lowercases to two characters: positions after it must still line up.
+  const tr = htmlToText(`<p>${"İSTATİSTİK ".repeat(50)}</p><script>gizli()</script><a href="/k">Kurlar</a>`, new URL("https://a.tr/"));
+  assert.deepEqual(tr.links, [{ url: "https://a.tr/k", text: "Kurlar" }]);
+  assert.ok(!tr.text.includes("gizli"));
+});
+
+test("onSite: the site and its subdomains only, never siblings or parents", () => {
+  assert.ok(onSite("www.tcmb.gov.tr", "tcmb.gov.tr"));
+  assert.ok(onSite("evds3.tcmb.gov.tr", "tcmb.gov.tr"));
+  assert.ok(onSite("a.foo.com", "foo.com"));
+  assert.ok(!onSite("hmb.gov.tr", "tcmb.gov.tr"));
+  assert.ok(!onSite("eviltcmb.gov.tr", "tcmb.gov.tr"));
+  assert.ok(!onSite("bob.github.io", "alice.github.io"));
+  assert.ok(!onSite("github.io", "alice.github.io"));
+});
+
+test("parsePick: one or two valid numbers only; anything else follows nothing", () => {
+  assert.deepEqual(parsePick("3", 5), [2]);
+  assert.deepEqual(parsePick(" 3, 5.", 5), [2, 4]);
+  assert.deepEqual(parsePick("2,2", 5), [1]);
+  for (const a of ["VAR", "YOK", "YOK — 1", "VAR, kaynak 2", "1,2,3", "9", "0", "1 numaralı bağlantı", ""]) assert.deepEqual(parsePick(a, 5), [], a);
+});
+
 const server = createServer((req, res) => {
   if (req.url === "/page") return res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end("<title>T</title><p>merhaba</p>");
   if (req.url === "/go") return res.writeHead(302, { location: "/page" }).end();
+  if (req.url === "/away") return res.writeHead(302, { location: "http://localhost:1/x" }).end();
   if (req.url === "/loop") return res.writeHead(302, { location: "/loop" }).end();
+  if (req.url === "/xml") return res.writeHead(200, { "content-type": "application/xml" }).end("<Kur>\n    <USD>49.69</USD>\n</Kur>");
   if (req.url === "/bin") return res.writeHead(200, { "content-type": "application/octet-stream" }).end("x");
   if (req.url === "/big") return res.writeHead(200, { "content-type": "text/plain" }).end("a".repeat(3 * 1024 * 1024));
   res.writeHead(404).end();
@@ -51,9 +84,14 @@ test("readPage: internal addresses refused by default (literal and by name)", as
 
 test("readPage: page text, redirects followed and capped, wrong type and size refused", async () => {
   const o = { allowPrivate: true };
-  assert.deepEqual(await readPage(`${base}/page`, signal, o), { url: `${base}/page`, title: "T", text: "merhaba" });
+  assert.deepEqual(await readPage(`${base}/page`, signal, o), { url: `${base}/page`, title: "T", text: "merhaba", links: [] });
+  assert.equal((await readPage(`${base}/xml`, signal, o)).text, "<Kur>\n<USD>49.69</USD>\n</Kur>");
   assert.equal((await readPage(`${base}/go`, signal, o)).text, "merhaba");
   assert.equal(await reason(readPage(`${base}/loop`, signal, o)), "redirects");
+  // A followed link stays on its site, redirects included.
+  assert.equal((await readPage(`${base}/go`, signal, { ...o, site: "127.0.0.1" })).text, "merhaba");
+  assert.equal(await reason(readPage(`${base}/away`, signal, { ...o, site: "127.0.0.1" })), "offsite");
+  assert.equal(await reason(readPage(`${base}/page`, signal, { ...o, site: "a.tr" })), "offsite");
   assert.equal(await reason(readPage(`${base}/bin`, signal, o)), "type");
   assert.equal(await reason(readPage(`${base}/big`, signal, o)), "too_large");
   assert.equal(await reason(readPage(`${base}/nope`, signal, o)), "http_404");
@@ -67,9 +105,9 @@ test("isPrivate/readPage: every way of writing an internal address is refused", 
 });
 
 test("htmlToText stays linear on broken HTML (no regex backtracking)", () => {
-  for (const evil of ["<".repeat(2_000_000), "<script".repeat(300_000), "<!--".repeat(500_000), "<a ".repeat(600_000) + ">x"]) {
+  for (const evil of ["<".repeat(2_000_000), "<script".repeat(300_000), "<!--".repeat(500_000), "<a ".repeat(600_000) + ">x", '<a href="/x">y</a>'.repeat(200_000), "<a href=/x>" + "y".repeat(1_000_000) + "</a>".repeat(200_000)]) {
     const t = performance.now();
-    htmlToText(evil);
+    htmlToText(evil, new URL("https://a.tr/"));
     assert.ok(performance.now() - t < 1500, `${evil.slice(0, 8)}… took ${Math.round(performance.now() - t)} ms`);
   }
 });

@@ -10,6 +10,8 @@ const startsWith = (buf: Uint8Array, sig: number[]) => sig.every((b, i) => buf[i
 const PDF = [0x25, 0x50, 0x44, 0x46, 0x2d]; // %PDF-
 const ZIP = [0x50, 0x4b, 0x03, 0x04]; // PK\3\4: docx, xlsx
 const OLE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]; // legacy .xls/.doc
+const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const JPG = [0xff, 0xd8, 0xff];
 
 /** null when the bytes fit the extension, else a Turkish message for a 415. */
 export async function contentProblem(ext: string, buf: Uint8Array): Promise<string | null> {
@@ -24,6 +26,13 @@ export async function contentProblem(ext: string, buf: Uint8Array): Promise<stri
     case "xls":
       // Some tools save xlsx content as .xls: then it gets the same zip-bomb check.
       return startsWith(buf, OLE) ? null : startsWith(buf, ZIP) ? zipProblem(buf) : bad;
+    case "png":
+      return startsWith(buf, PNG) ? null : bad;
+    case "jpg":
+    case "jpeg":
+      return startsWith(buf, JPG) ? null : bad;
+    case "webp": // RIFF....WEBP
+      return startsWith(buf, [0x52, 0x49, 0x46, 0x46]) && startsWith(buf.subarray(8), [0x57, 0x45, 0x42, 0x50]) ? null : bad;
     case "csv":
     case "txt":
     case "md":
