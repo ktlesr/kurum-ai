@@ -1,12 +1,11 @@
 import "server-only";
 import { DEFAULT_CHARS_PER_TOKEN } from "./context";
 import type { Doc } from "./server";
-import { embedProvider } from "./provider";
+import { modelConfig, providerOf } from "./model-config";
 import { admission } from "./admission";
 import { bm25, ranked, rrf } from "./search";
 import { logError } from "./log";
 
-export const EMBED_MODEL = process.env.EMBED_MODEL || "embeddinggemma";
 const CHUNK = Math.round(800 * DEFAULT_CHARS_PER_TOKEN);
 export const TOP_K = 6;
 
@@ -64,8 +63,13 @@ export function windows(docs: Doc[], maxChars: number): Chunk[] {
 const asQuery = (q: string) => `task: search result | query: ${q}`;
 const asDoc = (c: Chunk) => `title: ${c.doc} ${c.label} | text: ${c.text}`;
 
-async function embed(input: string[], signal: AbortSignal): Promise<number[][]> {
-  return admission.model.run(() => embedProvider.embed(EMBED_MODEL, input, signal), signal);
+type Embedder = { key: string; run: (input: string[], signal: AbortSignal) => Promise<number[][]> };
+
+/** The embedding server and model chosen on the admin page; key tells vectors of one model from another's. */
+async function embedder(): Promise<Embedder> {
+  const { embed } = await modelConfig();
+  const p = providerOf(embed);
+  return { key: `${embed.kind}|${embed.url}|${embed.model}`, run: (input, signal) => admission.model.run(() => p.embed(embed.model, input, signal), signal) };
 }
 
 const cosine = (a: number[], b: number[]) => {
@@ -75,18 +79,26 @@ const cosine = (a: number[], b: number[]) => {
 };
 
 /** Embedding ranking (indices into all), best first. Doc embeddings are computed once and kept on the Doc. */
-async function semantic(docs: Doc[], all: Chunk[], query: string, signal: AbortSignal): Promise<number[]> {
+async function semantic(docs: Doc[], all: Chunk[], query: string, signal: AbortSignal, embed: Embedder): Promise<number[]> {
+  // This request's own vectors: another request switching the embedding model may replace d.chunks meanwhile.
+  const mine: Chunk[][] = [];
   for (const d of docs) {
-    if (d.chunks) continue;
+    // Vectors from another embedding model aren't comparable with this query's: recompute.
+    if (d.chunks && d.chunksKey === embed.key) {
+      mine.push(d.chunks);
+      continue;
+    }
     const chunks = chunkText(d.name, d.text);
     for (let i = 0; i < chunks.length; i += 32) {
-      const vecs = await embed(chunks.slice(i, i + 32).map(asDoc), signal);
+      const vecs = await embed.run(chunks.slice(i, i + 32).map(asDoc), signal);
       vecs.forEach((v, k) => (chunks[i + k].vec = v));
     }
     d.chunks = chunks;
+    d.chunksKey = embed.key;
+    mine.push(chunks);
   }
-  const [q] = await embed([asQuery(query)], signal);
-  const vecs = docs.flatMap((d) => d.chunks!);
+  const [q] = await embed.run([asQuery(query)], signal);
+  const vecs = mine.flat();
   // ponytail: brute-force scan; fine up to tens of thousands of chunks
   return vecs.map((c, i) => [cosine(q, c.vec!), i] as const).sort((a, b) => b[0] - a[0]).map(([, i]) => i).slice(0, all.length);
 }
@@ -101,11 +113,12 @@ export async function retrieve(docs: Doc[], query: string, signal: AbortSignal):
   const all = docs.flatMap((d) => d.chunks ?? chunkText(d.name, d.text));
   const keyword = ranked(bm25(all.map((c) => `${c.label} ${c.text}`), query));
   let sem: number[] | null = null;
+  const embed = await embedder();
   try {
-    sem = await semantic(docs, all, query, signal);
+    sem = await semantic(docs, all, query, signal, embed);
   } catch (e) {
     if (signal.aborted) throw e;
-    logError(`rag ${EMBED_MODEL}`, e);
+    logError(`rag ${embed.key}`, e);
   }
   // Nothing matched by keyword and no embeddings: the first chunks beat an empty context.
   const order = sem ? rrf([sem, keyword]) : keyword.length ? keyword : all.map((_, i) => i);

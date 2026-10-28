@@ -1,6 +1,7 @@
 import { requireApiUser } from "@/lib/auth";
-import { ALLOWED_MODELS, cptFor, getDoc, NUM_CTX, recordTokens, type Doc } from "@/lib/server";
-import { chatProvider, type Msg } from "@/lib/provider";
+import { cptFor, getDoc, recordTokens, type Doc } from "@/lib/server";
+import type { Msg, Provider } from "@/lib/provider";
+import { modelConfig, NUM_CTX, providerOf } from "@/lib/model-config";
 import { parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
@@ -42,16 +43,17 @@ type Run = { done: Promise<Digest>; ac: AbortController; waiters: number };
 const digesting = new Map<string, Run>();
 
 /**
- * Whole-document notes of d for model, made once and kept on the Doc (keyed by model only, so the set never grows
- * past the allowed models). Concurrent requests share one run; it lives only while someone waits on it: when the
+ * Whole-document notes of d for model on the chat server `server` (kind|url), made once and kept on the Doc (keyed
+ * by server + model, so the set only grows with what the admin configures). Concurrent requests share one run; it lives only while someone waits on it: when the
  * last waiting request is cancelled, the run is aborted too (no GPU work nobody asked for). A set with a cut-off
  * or empty window isn't kept.
  */
-function digestOf(d: Doc, model: string, budget: number, progress: (s: string) => void, signal: AbortSignal): Promise<Digest> {
-  const cached = d.digests?.[model];
+function digestOf(chat: Provider, server: string, d: Doc, model: string, budget: number, progress: (s: string) => void, signal: AbortSignal): Promise<Digest> {
+  const id = `${server}|${model}`;
+  const cached = d.digests?.[id];
   if (cached) return Promise.resolve(cached);
   if (signal.aborted) return Promise.reject(signal.reason);
-  const key = `${d.id}|${model}`;
+  const key = `${d.id}|${id}`;
   let run = digesting.get(key);
   if (!run) {
     const ac = new AbortController();
@@ -61,14 +63,14 @@ function digestOf(d: Doc, model: string, budget: number, progress: (s: string) =
       let complete = true;
       for (const [i, w] of wins.entries()) {
         progress(`${d.name} bir kez bölüm bölüm okunuyor (sonraki sorular hızlı olacak): ${i + 1}/${wins.length} (${w.label})`);
-        const r = await admission.model.run(() => chatProvider.chat({
+        const r = await admission.model.run(() => chat.chat({
           model, think: false, maxTokens: MAX_NOTES, signal: ac.signal,
           messages: [{ role: "system", content: DIGEST }, { role: "user", content: `<bölüm doküman="${d.name}" konum="${w.label}">\n${w.text}\n</bölüm>` }],
         }), ac.signal);
         if (r.truncated || !r.text.trim()) complete = false;
         made.push({ label: w.label, text: r.text.trim() || "(bu bölümden not çıkarılamadı)" });
       }
-      if (complete) (d.digests ??= {})[model] = made;
+      if (complete) (d.digests ??= {})[id] = made;
       return made;
     })();
     const own: Run = { done, ac, waiters: 0 };
@@ -99,6 +101,7 @@ const fail = (error: string, status: number) => Response.json({ error }, { statu
 
 /** One model call (lib/provider). onText gets answer pieces, onThinking the running count of reasoning chunks. */
 async function streamChatUnqueued(
+  chat: Provider,
   model: string,
   messages: Msg[],
   think: boolean,
@@ -107,17 +110,17 @@ async function streamChatUnqueued(
   onThinking: (n: number) => void = () => {},
   numPredict?: number,
 ): Promise<string> {
-  const r = await chatProvider.chat({ model, messages, think, maxTokens: numPredict ?? MAX_ANSWER, signal, onText, onThinking });
+  const r = await chat.chat({ model, messages, think, maxTokens: numPredict ?? MAX_ANSWER, signal, onText, onThinking });
   if (r.truncated && r.text && !numPredict) onText("\n\n…(cevap uzunluk sınırında kesildi)");
   if (r.promptTokens) recordTokens(model, messages.reduce((n, m) => n + m.content.length, 0), r.promptTokens);
   return r.text;
 }
 
 /** Every model call waits for a slot on the shared GPU (lib/admission); a full queue throws Busy. */
-const streamChat = (...args: Parameters<typeof streamChatUnqueued>) => admission.model.run(() => streamChatUnqueued(...args), args[3]);
+const streamChat = (...args: Parameters<typeof streamChatUnqueued>) => admission.model.run(() => streamChatUnqueued(...args), args[4]);
 
-const chatOnce = async (model: string, messages: Msg[], signal: AbortSignal, numPredict?: number) =>
-  (await streamChat(model, messages, false, signal, undefined, undefined, numPredict)).trim();
+const chatOnce = async (chat: Provider, model: string, messages: Msg[], signal: AbortSignal, numPredict?: number) =>
+  (await streamChat(chat, model, messages, false, signal, undefined, undefined, numPredict)).trim();
 
 export async function POST(req: Request) {
   const user = await requireApiUser(req);
@@ -125,7 +128,9 @@ export async function POST(req: Request) {
   if (!admission.chatPerUser.allow(user.id)) return tooMany("soru");
   // Queue already full: say so with a proper 429 before the stream starts (later Busy goes through ERROR_SEP).
   if (admission.model.saturated) return busy();
-  const parsed = parseChatRequest(await req.json().catch(() => null), ALLOWED_MODELS);
+  const cfg = await modelConfig();
+  const chat = providerOf(cfg.chat);
+  const parsed = parseChatRequest(await req.json().catch(() => null), new Set(cfg.models));
   if (typeof parsed === "string") return fail(parsed, 400);
   // scope "all" = question needs the whole document (suggestion buttons know this); otherwise classified.
   const { model, fileIds, messages, think, scope } = parsed;
@@ -135,7 +140,7 @@ export async function POST(req: Request) {
   if (selected.some((d) => !d)) {
     return fail("Dosya sunucuda bulunamadı. Dosyayı kaldırıp tekrar yükleyin.", 409);
   }
-  if (!(await chatProvider.healthy())) return fail("Model sunucusu çalışmıyor. Yöneticinize bildirin.", 503);
+  if (!(await chat.healthy())) return fail("Model sunucusu çalışmıyor. Yöneticinize bildirin.", 503);
 
   const signal = req.signal; // Esc in the UI aborts generation on the model server too
   const history = messages.slice(-8); // ponytail: last 8 turns only; long chats could still overflow num_ctx
@@ -157,7 +162,7 @@ export async function POST(req: Request) {
           // Plain chat: no context, no number check (there is no source to check against), no source chips.
           if (admission.model.full) status("Sırada bekleniyor…");
           if (think) status("Düşünüyor…");
-          answer = await streamChat(model, [{ role: "system", content: GENERAL }, ...history], think, signal, send, (n) => {
+          answer = await streamChat(chat, model, [{ role: "system", content: GENERAL }, ...history], think, signal, send, (n) => {
             if (n % 50 === 0) status("Düşünüyor…");
           });
           return void ctrl.close();
@@ -168,7 +173,7 @@ export async function POST(req: Request) {
           let whole = scope === "all";
           if (!whole && scope !== "part") {
             status("Soru türü belirleniyor…");
-            whole = /TÜM|TUM/i.test(await chatOnce(model, [{ role: "system", content: CLASSIFY }, { role: "user", content: question }], signal, 5));
+            whole = /TÜM|TUM/i.test(await chatOnce(chat, model, [{ role: "system", content: CLASSIFY }, { role: "user", content: question }], signal, 5));
           }
           if (whole) {
             // Map (once per document, cached on it): question-independent notes of each window. Reduce: answer from them.
@@ -177,7 +182,7 @@ export async function POST(req: Request) {
             meta.sources = [];
             for (const d of selected) {
               // A shared run may report progress after this request ended; its stream is closed by then.
-              const items = await digestOf(d, model, budget, (s) => { try { status(s); } catch {} }, signal);
+              const items = await digestOf(chat, `${cfg.chat.kind}|${cfg.chat.url}`, d, model, budget, (s) => { try { status(s); } catch {} }, signal);
               for (const it of items) {
                 notes.push(`<notlar doküman="${d.name}" konum="${it.label}">\n${it.text}\n</notlar>`);
                 meta.sources.push(selected.length > 1 ? `${d.name} · ${it.label}` : it.label);
@@ -206,7 +211,7 @@ export async function POST(req: Request) {
         if (admission.model.full) status("Sırada bekleniyor…");
         if (think) status("Düşünüyor…");
         const final: Msg[] = [{ role: "system", content: `${SYSTEM}${hint}\n\n${context}` }, ...history];
-        answer = await streamChat(model, final, think, signal, send, (n) => {
+        answer = await streamChat(chat, model, final, think, signal, send, (n) => {
           // Keeps the connection busy and shows the wait isn't stuck.
           if (n % 50 === 0) status("Düşünüyor…"); // also keeps the connection busy
         });

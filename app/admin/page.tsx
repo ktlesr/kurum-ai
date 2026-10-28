@@ -2,9 +2,11 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getUser } from "@/lib/auth";
-import { db, setSetting } from "@/lib/db";
+import { db, getSetting, setSetting } from "@/lib/db";
 import { doclingOffline } from "@/lib/extract";
+import { modelConfig } from "@/lib/model-config";
 import { ThemeToggle } from "../theme-toggle";
+import { ModelsForm } from "./models-form";
 
 export const metadata = { title: "Kullanıcılar · Kurum AI" };
 
@@ -43,6 +45,7 @@ export default async function AdminPage() {
   const users = await sql<{ id: string; username: string; role: string; status: keyof typeof STATUS; created_at: Date }[]>`
     SELECT id, username, role, status, created_at FROM users ORDER BY status = 'pending' DESC, created_at DESC`;
   const offline = await doclingOffline();
+  const [cfg, savedModels] = await Promise.all([modelConfig(), getSetting("models")]);
 
   const btn = "rounded-md border border-line px-2.5 py-1 text-xs font-medium hover:bg-subtle";
   return (
@@ -92,6 +95,9 @@ export default async function AdminPage() {
           <input type="hidden" name="offline" value={offline ? "false" : "true"} />
           <button className={btn}>{offline ? "Kapat (modelleri indir)" : "Aç"}</button>
         </form>
+      </div>
+      <div className="mt-4">
+        <ModelsForm cfg={cfg} saved={!!savedModels} />
       </div>
     </main>
   );

@@ -7,8 +7,7 @@ import path from "node:path";
 import { DEFAULT_CHARS_PER_TOKEN } from "./context";
 import type { Chunk } from "./rag";
 
-export const DEFAULT_MODEL = process.env.DEFAULT_MODEL || "gemma4:12b";
-export const NUM_CTX = Number(process.env.NUM_CTX) || 16384;
+export { NUM_CTX } from "./model-config";
 export const MAX_BYTES = 25 * 1024 * 1024;
 
 export type DocKind = "pdf" | "docx" | "sheet" | "text";
@@ -32,6 +31,8 @@ export interface Doc extends DocMeta {
   sourceHash?: string;
   text: string;
   chunks?: Chunk[];
+  /** Embedding server + model the chunk vectors came from (lib/rag). */
+  chunksKey?: string;
   /** Whole-document notes per window, keyed by model (chat route); memory only, like chunks. */
   digests?: Record<string, { label: string; text: string }[]>;
 }
@@ -107,7 +108,7 @@ export function uniqueName(userId: string, name: string): string {
 }
 
 export function saveDoc(doc: Doc) {
-  writeFileAtomic(path.join(DOCS_DIR, doc.ownerId, `${doc.id}.json`), JSON.stringify({ ...doc, chunks: undefined, digests: undefined }));
+  writeFileAtomic(path.join(DOCS_DIR, doc.ownerId, `${doc.id}.json`), JSON.stringify({ ...doc, chunks: undefined, chunksKey: undefined, digests: undefined }));
   // Only after the file is safely on disk: a failed write must not leave a doc that vanishes on restart (audit R3).
   docs.set(doc.id, doc);
 }
@@ -149,23 +150,16 @@ export function recordTokens(model: string, chars: number, tokens: number) {
 const LEGACY_VISION_WARNING = /^Görsel model \(.*\) çalışmadı:/;
 
 export function toMeta(doc: Doc): DocMeta {
-  const meta: DocMeta & Partial<Pick<Doc, "text" | "chunks" | "digests" | "ownerId" | "sourceHash">> = { ...doc };
+  const meta: DocMeta & Partial<Pick<Doc, "text" | "chunks" | "chunksKey" | "digests" | "ownerId" | "sourceHash">> = { ...doc };
   const safe = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
   if (meta.warning && LEGACY_VISION_WARNING.test(meta.warning)) meta.warning = safe;
   // The same raw text was also stored in verify.skipped.
   if (meta.verify?.skipped && LEGACY_VISION_WARNING.test(meta.verify.skipped)) meta.verify = { ...meta.verify, skipped: safe };
   delete meta.text;
   delete meta.chunks;
+  delete meta.chunksKey;
   delete meta.digests;
   delete meta.ownerId;
   delete meta.sourceHash;
   return meta;
 }
-
-// Server-side allowlist: the client picks among these, never anything else Ollama happens to have
-// (a `:cloud` model would ship the document off-site — audit S2). Default: just the default model.
-export const ALLOWED_MODELS = new Set(
-  (process.env.ALLOWED_MODELS || DEFAULT_MODEL).split(",").map((m) => m.trim()).filter(Boolean),
-);
-/** What the UI preselects: DEFAULT_MODEL if allowed, else the first allowed one. */
-export const PREFERRED_MODEL = ALLOWED_MODELS.has(DEFAULT_MODEL) ? DEFAULT_MODEL : [...ALLOWED_MODELS][0];

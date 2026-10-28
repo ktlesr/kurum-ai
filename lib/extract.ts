@@ -4,7 +4,8 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkCriteria, checkMaxRows, compactTables, markUncertain } from "./checks";
-import { visionProvider } from "./provider";
+import { modelConfig, providerOf } from "./model-config";
+import type { ModelConfig } from "./models";
 import { logError } from "./log";
 import { writeFileAtomic } from "./atomic";
 import { runJsonLines } from "./proc";
@@ -17,7 +18,6 @@ import { getSetting } from "./db";
 export const DOCLING_PYTHON =
   process.env.DOCLING_PYTHON ||
   path.join(process.cwd(), ".venv-docling", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
-export const VISION_MODEL = process.env.VISION_MODEL || "gemma4:12b";
 // ponytail: fixed cap; a table strip is a few hundred tokens of markdown
 const VISION_MAX_TOKENS = 4096;
 const VISION_VERIFY = process.env.VISION_VERIFY !== "false";
@@ -60,14 +60,17 @@ const VISION_PROMPT = `Bu görüntü bir teknik rapordaki tablonun bir kesitidir
 - Yorum ekleme.`;
 
 
+/** Server + model: the same model name on another server is another reading. */
+const visionId = (v: ModelConfig["vision"]) => `${v.kind}|${v.url}|${v.model}`;
+
 /** One vision read per image strip; cached (in this doc's own cache dir) so pipeline changes don't redo minutes of work. */
-async function readStrip(png: string, signal: AbortSignal, cacheDir: string): Promise<string> {
-  const file = path.join(cacheDir, "strips", `${createHash("sha256").update(VISION_MODEL + VISION_PROMPT + png).digest("hex")}.txt`);
+async function readStrip(png: string, signal: AbortSignal, cacheDir: string, vision: ModelConfig["vision"]): Promise<string> {
+  const file = path.join(cacheDir, "strips", `${createHash("sha256").update(visionId(vision) + VISION_PROMPT + png).digest("hex")}.txt`);
   const hit = await readFile(file, "utf8").catch(() => null);
   if (hit !== null) return hit;
   // The slot covers the whole call, body included: a provider that sends headers early is still "busy".
   const text = await admission.model.run(async () => {
-    const r = await visionProvider.chat({ model: VISION_MODEL, messages: [{ role: "user", content: VISION_PROMPT, images: [png] }], maxTokens: VISION_MAX_TOKENS, signal });
+    const r = await providerOf(vision).chat({ model: vision.model, messages: [{ role: "user", content: VISION_PROMPT, images: [png] }], maxTokens: VISION_MAX_TOKENS, signal });
     // A cut-off reading is a failed reading: never cached, never compared (the caller marks verification skipped).
     if (r.truncated) throw new Error("vision_truncated");
     return r.text.trim();
@@ -112,7 +115,9 @@ export async function extractWithDocling(
   // turbopackIgnore: runtime paths; otherwise the build traces the whole project (.cache with user text, model files)
   if (!existsSync(/*turbopackIgnore: true*/ DOCLING_PYTHON)) return null;
 
-  const cacheFile = path.join(cacheDir, `result-${PIPELINE}-${VISION_VERIFY ? VISION_MODEL.replace(/[^\w.-]/g, "_") : "noverify"}.json`);
+  // The table-reading model (admin page) is part of the result: another model's reading is another result.
+  const { vision } = await modelConfig();
+  const cacheFile = path.join(cacheDir, `result-${PIPELINE}-${VISION_VERIFY ? createHash("sha256").update(visionId(vision)).digest("hex").slice(0, 16) : "noverify"}.json`);
   const cached = await readFile(cacheFile, "utf8").catch(() => null);
   if (cached) {
     const hit = JSON.parse(cached) as Extracted;
@@ -169,11 +174,11 @@ export async function extractWithDocling(
       if (!VISION_VERIFY || verify.skipped) continue;
       // allSettled, not all: every strip read (and its cache write) has finished before we go on, so nothing
       // writes into cacheDir after the upload is over and the cache may already have been deleted.
-      const reads = await Promise.allSettled(t.strips.map((s) => readStrip(s, signal, cacheDir)));
+      const reads = await Promise.allSettled(t.strips.map((s) => readStrip(s, signal, cacheDir, vision)));
       const failed = reads.find((r) => r.status === "rejected");
       if (failed) {
         if (signal.aborted) throw signal.reason;
-        logError(`vision ${VISION_MODEL}`, failed.reason);
+        logError(`vision ${vision.model}`, failed.reason);
         verify.skipped = "Görsel model çalışmadı; tablolar ikinci kez doğrulanamadı.";
         continue;
       }

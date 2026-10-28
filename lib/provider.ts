@@ -1,7 +1,8 @@
 // Model server behind one small interface (audit K3): Ollama for development, vLLM (OpenAI-compatible API) on the GB10.
 // No "server-only": the test drives it against a fake server.
 
-export type ProviderKind = "ollama" | "openai";
+import type { ProviderKind } from "./models";
+export type { ProviderKind };
 export type Msg = { role: "system" | "user" | "assistant"; content: string; images?: string[] };
 
 export interface ChatOpts {
@@ -167,14 +168,3 @@ export function makeProvider(kind: ProviderKind, url: string, opts: { apiKey?: s
   const base = url.replace(/\/$/, "");
   return kind === "openai" ? openai(base, opts.apiKey) : ollama(base, opts.numCtx);
 }
-
-const env = process.env;
-export const PROVIDER_KIND: ProviderKind = env.MODEL_PROVIDER === "openai" || env.MODEL_PROVIDER === "vllm" ? "openai" : "ollama";
-/** Chat server. vLLM serves one model per process, so embeddings and vision may live elsewhere (EMBED_URL, VISION_URL). */
-// `||`, not `??`: an empty variable (compose "X=") means unset.
-export const MODEL_URL = env.MODEL_URL || env.OLLAMA_URL || (PROVIDER_KIND === "openai" ? "http://localhost:8000/v1" : "http://localhost:11434");
-const numCtx = Number(env.NUM_CTX) || 16384;
-const make = (url: string) => makeProvider(PROVIDER_KIND, url, { apiKey: env.MODEL_API_KEY, numCtx });
-export const chatProvider = make(MODEL_URL);
-export const embedProvider = make(env.EMBED_URL || MODEL_URL);
-export const visionProvider = make(env.VISION_URL || MODEL_URL);

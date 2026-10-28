@@ -51,13 +51,16 @@ async function migrate(sql: postgres.Sql) {
   });
 }
 
+// The client in a variable first: "(await db())`…`" was compiled to "await db()`…`" (tagging the promise).
 export async function getSetting(key: string): Promise<string | undefined> {
-  const [row] = await (await db())<{ value: string }[]>`SELECT value FROM settings WHERE key = ${key}`;
+  const sql = await db();
+  const [row] = await sql<{ value: string }[]>`SELECT value FROM settings WHERE key = ${key}`;
   return row?.value;
 }
 
 export async function setSetting(key: string, value: string) {
-  await (await db())`INSERT INTO settings VALUES (${key}, ${value}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
+  const sql = await db();
+  await sql`INSERT INTO settings VALUES (${key}, ${value}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
 }
 
 /** Migrated client. First call per process runs pending migrations. */
