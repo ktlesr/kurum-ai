@@ -222,7 +222,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   /** scope "all": the question needs the whole document (summaries etc.), so a too-large doc is scanned, not searched. */
   const send = async (text: string, scope?: "all") => {
     const q = text.trim();
-    if (!q || streaming || !ready.length) return;
+    if (!q || streaming) return;
     const history: Message[] = [...messages.filter((m) => !m.error), { role: "user", content: q }];
     setMessages([...history, { role: "assistant", content: "" }]);
     setInput("");
@@ -366,8 +366,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             }}
             rows={1}
             aria-label="Soru"
-            placeholder={ready.length ? "Belgeleriniz hakkında bir soru sorun…" : "Önce bir belge ekleyin"}
-            disabled={!ready.length}
+            placeholder={ready.length ? "Belgeleriniz hakkında bir soru sorun…" : "Bir soru sorun ya da belge ekleyin…"}
             className="field-sizing-content max-h-48 min-h-9 flex-1 resize-none bg-transparent px-1 py-1.5 text-[15px] outline-none placeholder:text-muted disabled:cursor-not-allowed"
           />
           {streaming ? (
@@ -377,7 +376,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           ) : (
             <button
               onClick={() => send(input)}
-              disabled={!input.trim() || !ready.length}
+              disabled={!input.trim()}
               className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent text-accent-fg transition-opacity disabled:opacity-40"
               aria-label="Gönder"
             >
@@ -605,7 +604,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
               <div className="text-center">
                 <h2 className="text-2xl font-semibold tracking-tight text-brand">{greeting()}, {username}</h2>
                 <p className="mt-2 text-sm text-muted">
-                  {ready.length ? "Belgeleriniz hazır. Bir soru sorun ya da hazır işlerden birini seçin." : "Bir belge ekleyin; cevaplar yalnızca belgelerinize dayanır."}
+                  {ready.length ? "Belgeleriniz hazır. Bir soru sorun ya da hazır işlerden birini seçin." : "Bir soru sorun. Belge eklerseniz cevaplar yalnızca belgelerinize dayanır."}
                 </p>
               </div>
               {composer}

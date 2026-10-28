@@ -20,6 +20,10 @@ Sayıları dokümanda yazdığı gibi aktar; kendin hesap yapma, yuvarlama.
 Sayfa başındaki "(Önceki sayfalardan süren bölüm: …)" notu, o sayfadaki tabloların hangi bölüme (ör. hangi bina ve analiz) ait olduğunu gösterir; bir tabloyu bir bölüme bağlarken bunu esas al.
 Kullanıcının dilinde cevap ver. Markdown kullanabilirsin (tablolar dahil).`;
 
+// No document attached: plain assistant for staff (still the institution's own model server).
+const GENERAL = `Kurum personeline yardımcı olan bir asistansın. Açık, doğru ve kısa cevap ver; emin olmadığın bilgiyi uydurma, bilmiyorsan söyle.
+Güncel olaylara ya da internete erişimin yok. Kullanıcının dilinde cevap ver. Markdown kullanabilirsin (tablolar dahil).`;
+
 const CLASSIFY = `Aşağıdaki soru bir dokümana soruluyor. Cevaplamak için dokümanın TAMAMINI okumak mı gerekir (özet, genel değerlendirme, tüm maddeleri/rakamları listeleme, tutarlılık kontrolü, karşılaştırma), yoksa dokümandaki BELİRLİ bir bilgiyi bulmak yeterli mi? Yalnızca TÜM ya da BELİRLİ yaz.`;
 
 const SCAN = (q: string, where: string) =>
@@ -89,6 +93,15 @@ export async function POST(req: Request) {
       try {
         let context: string;
         let hint = "";
+        if (!selected.length) {
+          // Plain chat: no context, no number check (there is no source to check against), no source chips.
+          if (admission.model.full) status("Sırada bekleniyor…");
+          if (think) status("Düşünüyor…");
+          answer = await streamChat(model, [{ role: "system", content: GENERAL }, ...history], think, signal, send, (n) => {
+            if (n % 50 === 0) status(`Düşünüyor… (${n} adım)`);
+          });
+          return void ctrl.close();
+        }
         if (fits) {
           context = selected.map((d) => `<doküman ad="${d.name}">\n${d.text}\n</doküman>`).join("\n\n");
         } else {
