@@ -1,7 +1,8 @@
 # Dokploy (Docker Compose) for the GB10 / DGX Spark. Domain + HTTPS: set in Dokploy's Domains tab (Traefik → app:3000).
 # Secrets come from Dokploy's Environment tab, never from this file. Required: POSTGRES_PASSWORD, APP_ORIGIN.
 # First admin: docker compose exec app sh -c 'ADMIN_PASSWORD=… node scripts/create-admin.ts admin'
-# Model weights are not downloaded here: put them under VLLM_MODELS_DIR on the host first (README → vLLM).
+# Model weights: the one-off "models" service downloads them into the vllmmodels volume on the first deploy (needs
+# internet once); later deploys find them and skip. Already on the host? VLLM_MODELS_DIR=/that/dir (README → vLLM).
 name: kurum-ai-web
 
 services:
@@ -10,10 +11,10 @@ services:
       context: ..
       target: ${APP_TARGET:-app} # app-docling: Docling inside the image
     restart: unless-stopped
+    # Not on vllm: the UI (sign-in, admin page, uploads) is up while the model downloads or loads; chat says
+    # "model server unreachable" until vLLM is ready.
     depends_on:
       db: { condition: service_healthy }
-      # Started, not healthy: loading the model takes minutes; the UI says "model server unreachable" until then.
-      vllm: { condition: service_started }
     # Everything else (DEFAULT_MODEL, ALLOWED_MODELS, EMBED_URL, VISION_URL, MODEL_API_KEY, limits — README table)
     # comes from Dokploy's .env as is; only what this stack defines is set here.
     env_file:
@@ -48,9 +49,32 @@ services:
 
   # NVIDIA's NGC vLLM image for DGX Spark / GB10 (arm64; upstream vllm/vllm-openai doesn't support GB10). Same image
   # and flags as the kurum-ai pilot (kurum-ai/compose.prod.yml). Reachable only inside this stack, and still keyed.
+  # One-off: fetches the vLLM model unless a complete copy is there. .complete lists the model's files and is written
+  # only after all of them (the repo's list, fetched first: no network means failure, not a false "done") are on
+  # disk; each deploy checks that list offline, so a deleted file means a new download. An interrupted download
+  # resumes on the next deploy. Exits 0 and stays stopped.
+  models:
+    image: python:3.12-slim
+    restart: "no"
+    environment:
+      M: ${VLLM_MODEL:-RedHatAI/gemma-4-26B-A4B-it-NVFP4}
+      HF_TOKEN: ${HF_TOKEN:-} # only for gated models
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        python -c "import os, sys; d = '/models/llm/' + os.environ['M']; f = os.path.join(d, '.complete'); names = open(f).read().split() if os.path.isfile(f) else []; sys.exit(0 if names and all(os.path.isfile(os.path.join(d, n)) for n in names) else 1)"
+        && echo "model hazır: $$M" && exit 0;
+        pip install -q --no-cache-dir huggingface_hub==0.26.2 &&
+        python -c "import os, sys, fnmatch; from huggingface_hub import list_repo_files, snapshot_download; m = os.environ['M']; t = os.environ.get('HF_TOKEN') or None; ig = ['original/*', '*.bin', '*.pth', '*.h5', '*.msgpack', '*.onnx', 'onnx/*']; want = [f for f in list_repo_files(m, token=t) if not any(fnmatch.fnmatch(f, p) for p in ig)]; d = '/models/llm/' + m; c = os.path.join(d, '.complete'); os.path.exists(c) and os.remove(c); snapshot_download(m, local_dir=d, ignore_patterns=ig, token=t); miss = [f for f in want if not os.path.isfile(os.path.join(d, f))]; miss and sys.exit('eksik dosyalar: ' + ', '.join(miss)); open(c, 'w').write('\n'.join(want))"
+        && echo "model indirildi: $$M"
+    volumes:
+      - ${VLLM_MODELS_DIR:-vllmmodels}:/models/llm
+
   vllm:
     image: nvcr.io/nvidia/vllm:${VLLM_VERSION:-26.09-py3}
     restart: unless-stopped
+    depends_on:
+      models: { condition: service_completed_successfully }
     command:
       - vllm
       - serve
@@ -74,7 +98,7 @@ services:
       VLLM_NO_USAGE_STATS: "1"
       DO_NOT_TRACK: "1"
     volumes:
-      - ${VLLM_MODELS_DIR:-/opt/kurum-ai/models/llm}:/models/llm:ro
+      - ${VLLM_MODELS_DIR:-vllmmodels}:/models/llm:ro
     ipc: host
     ulimits:
       memlock: -1
@@ -109,3 +133,4 @@ services:
 volumes:
   appdata:
   dbdata:
+  vllmmodels:
