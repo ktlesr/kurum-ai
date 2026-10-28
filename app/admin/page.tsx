@@ -27,6 +27,16 @@ async function setStatus(form: FormData) {
   revalidatePath("/admin");
 }
 
+async function setWeb(form: FormData) {
+  "use server";
+  const me = await getUser();
+  if (me?.role !== "admin") return;
+  const v = form.get("web");
+  if (v !== "true" && v !== "false") return;
+  await setSetting("web_fetch", v);
+  revalidatePath("/admin");
+}
+
 async function setOffline(form: FormData) {
   "use server";
   const me = await getUser();
@@ -46,6 +56,7 @@ export default async function AdminPage() {
   const users = await sql<{ id: string; username: string; role: string; status: keyof typeof STATUS; created_at: Date }[]>`
     SELECT id, username, role, status, created_at FROM users ORDER BY status = 'pending' DESC, created_at DESC`;
   const offline = await doclingOffline();
+  const webOn = (await getSetting("web_fetch").catch(() => undefined)) === "true";
   const [cfg, savedModels] = await Promise.all([modelConfig(), getSetting("models")]);
 
   const btn = "rounded-md border border-line px-2.5 py-1 text-xs font-medium hover:bg-subtle";
@@ -95,6 +106,18 @@ export default async function AdminPage() {
         <form action={setOffline}>
           <input type="hidden" name="offline" value={offline ? "false" : "true"} />
           <button className={btn}>{offline ? "Kapat (modelleri indir)" : "Aç"}</button>
+        </form>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-line bg-panel px-4 py-3 text-sm">
+        <div className="min-w-0 flex-1">
+          <p className="font-medium">Bağlantıdan okuma: {webOn ? <span className="text-ok">Açık</span> : <span className="text-muted">Kapalı</span>}</p>
+          <p className="mt-1 text-xs text-muted">
+            Açıkken kullanıcı sorusuna bir web adresi yazarsa sayfa okunur ve cevapta kullanılır (güncel bilgi için). Yalnızca o adrese sayfa isteği gider; belgeler ve soru metni dışarı gönderilmez. İç ağ adresleri okunmaz.
+          </p>
+        </div>
+        <form action={setWeb}>
+          <input type="hidden" name="web" value={webOn ? "false" : "true"} />
+          <button className={btn}>{webOn ? "Kapat" : "Aç"}</button>
         </form>
       </div>
       <div className="mt-4">

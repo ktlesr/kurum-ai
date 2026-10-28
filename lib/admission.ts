@@ -16,6 +16,8 @@ function make() {
     upload: new Semaphore(num("UPLOAD_CONCURRENCY", 4), num("UPLOAD_QUEUE", 16)),
     /** Docling runs (CPU/GPU heavy, minutes per document). */
     docling: new Semaphore(num("DOCLING_CONCURRENCY", 1), num("DOCLING_QUEUE", 8)),
+    /** Page reads for links in questions (lib/web): network and parsing, across all users. */
+    web: new Semaphore(num("WEB_CONCURRENCY", 4), num("WEB_QUEUE", 16)),
     chatPerUser: new RateLimiter(num("CHAT_PER_MIN", 20), 60_000),
     uploadPerUser: new RateLimiter(num("UPLOAD_PER_MIN", 20), 60_000),
   };

@@ -74,6 +74,16 @@ function cleanTiming(t: unknown): Message["timing"] {
   return secs(total) ? { total, ...(secs(first) ? { first } : {}) } : undefined;
 }
 
+/** A page link from a backup: a parseable http(s) URL, or it's dropped (the page shows and opens it). */
+const webUrl = (u: unknown): u is string => {
+  if (typeof u !== "string") return false;
+  try {
+    return ["http:", "https:"].includes(new URL(u).protocol);
+  } catch {
+    return false;
+  }
+};
+
 function cleanMeta(m: unknown): ChatMeta | undefined {
   const x = m as Partial<ChatMeta> | null;
   if (!x || typeof x !== "object" || !["full", "rag", "scan", "truncated"].includes(x.mode as string)) return undefined;
@@ -83,6 +93,7 @@ function cleanMeta(m: unknown): ChatMeta | undefined {
     unverified: strings(x.unverified),
     uncertain: strings(x.uncertain),
     ...(typeof x.note === "string" ? { note: x.note } : {}),
+    ...(Array.isArray(x.web) ? { web: x.web.filter((w) => webUrl(w?.url)).map((w) => ({ url: w.url, title: typeof w.title === "string" ? w.title : "" })) } : {}),
   };
 }
 

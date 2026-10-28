@@ -904,14 +904,25 @@ function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (c
 function MetaNotes({ meta, onSource }: { meta: ChatMeta; onSource: (chip: string, doc?: string) => void }) {
   return (
     <div className="mt-3 flex flex-col gap-2 text-xs">
-      <div className="flex flex-wrap items-center gap-1.5 text-muted">
+      {meta.web && meta.web.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 text-muted">
+          <span>Okunan sayfalar:</span>
+          {meta.web.map((w) => (
+            // The user's own links (http/https checked on the server and on restore), opened outside the app.
+            <a key={w.url} href={w.url} target="_blank" rel="noopener noreferrer" className="rounded-md border border-line bg-panel px-1.5 py-0.5 hover:border-accent hover:text-fg" title={w.url}>
+              {w.title || new URL(w.url).host}
+            </a>
+          ))}
+        </div>
+      )}
+      {meta.sources.length > 0 && <div className="flex flex-wrap items-center gap-1.5 text-muted">
         <span>{meta.mode === "rag" ? "Kullanılan bölümler:" : meta.mode === "scan" ? "Taranan bölümler:" : "Kaynak:"}</span>
         {meta.sources.map((s) => (
           <button key={s} onClick={() => onSource(s, meta.doc)} className="rounded-md border border-line bg-panel px-1.5 py-0.5 hover:border-accent hover:text-fg" title="Kaynak panelinde aç">
             {s}
           </button>
         ))}
-      </div>
+      </div>}
       {meta.note && <p className="text-warn-fg">{meta.note}</p>}
       {meta.unverified.length > 0 && (
         <p className="flex items-start gap-1.5 text-danger">
