@@ -3,6 +3,8 @@ import { DEFAULT_CHARS_PER_TOKEN } from "./context";
 import type { Doc } from "./server";
 import { embedProvider } from "./provider";
 import { admission } from "./admission";
+import { bm25, ranked, rrf } from "./search";
+import { logError } from "./log";
 
 export const EMBED_MODEL = process.env.EMBED_MODEL || "embeddinggemma";
 const CHUNK = Math.round(800 * DEFAULT_CHARS_PER_TOKEN);
@@ -72,8 +74,8 @@ const cosine = (a: number[], b: number[]) => {
   return dot / (Math.sqrt(na * nb) || 1);
 };
 
-/** Top-k chunks across docs. Doc embeddings are computed once and kept on the Doc. */
-export async function retrieve(docs: Doc[], query: string, signal: AbortSignal): Promise<Chunk[]> {
+/** Embedding ranking (indices into all), best first. Doc embeddings are computed once and kept on the Doc. */
+async function semantic(docs: Doc[], all: Chunk[], query: string, signal: AbortSignal): Promise<number[]> {
   for (const d of docs) {
     if (d.chunks) continue;
     const chunks = chunkText(d.name, d.text);
@@ -84,11 +86,28 @@ export async function retrieve(docs: Doc[], query: string, signal: AbortSignal):
     d.chunks = chunks;
   }
   const [q] = await embed([asQuery(query)], signal);
+  const vecs = docs.flatMap((d) => d.chunks!);
   // ponytail: brute-force scan; fine up to tens of thousands of chunks
-  return docs
-    .flatMap((d) => d.chunks!)
-    .map((c) => ({ c, s: cosine(q, c.vec!) }))
-    .sort((a, b) => b.s - a.s)
-    .slice(0, TOP_K)
-    .map(({ c }) => c);
+  return vecs.map((c, i) => [cosine(q, c.vec!), i] as const).sort((a, b) => b[0] - a[0]).map(([, i]) => i).slice(0, all.length);
+}
+
+/**
+ * Top-k chunks across docs: keyword (BM25) and embedding rankings fused by RRF, so exact figures, codes and names
+ * are found even where the embedding misses them. If the embedding call fails, keyword search alone answers
+ * (semantic: false) instead of falling back to the start of the document.
+ */
+export async function retrieve(docs: Doc[], query: string, signal: AbortSignal): Promise<{ chunks: Chunk[]; semantic: boolean; matched: boolean }> {
+  // Same chunking as the cached embeddings, so index i means the same chunk in both rankings.
+  const all = docs.flatMap((d) => d.chunks ?? chunkText(d.name, d.text));
+  const keyword = ranked(bm25(all.map((c) => `${c.label} ${c.text}`), query));
+  let sem: number[] | null = null;
+  try {
+    sem = await semantic(docs, all, query, signal);
+  } catch (e) {
+    if (signal.aborted) throw e;
+    logError(`rag ${EMBED_MODEL}`, e);
+  }
+  // Nothing matched by keyword and no embeddings: the first chunks beat an empty context.
+  const order = sem ? rrf([sem, keyword]) : keyword.length ? keyword : all.map((_, i) => i);
+  return { chunks: order.slice(0, TOP_K).map((i) => all[i]), semantic: !!sem, matched: keyword.length > 0 };
 }

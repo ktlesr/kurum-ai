@@ -80,6 +80,11 @@ body {
 
 .shadow-card { box-shadow: var(--shadow); }
 
+/* Tailwind 4 resets buttons to the arrow cursor; everything clickable gets the hand. In a layer, so a utility class still wins. */
+@layer base {
+  button:not(:disabled), [role="button"], [role="radio"], select:not(:disabled), summary, label:has(input:not(:disabled)), input[type="file"] { cursor: pointer; }
+}
+
 /* Keyboard focus is always visible; mouse clicks don't draw rings. */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 

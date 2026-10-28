@@ -7,7 +7,7 @@ import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
 import { contextBudget, contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { verifyNumbers } from "@/lib/checks";
-import { EMBED_MODEL, retrieve, TOP_K, windows } from "@/lib/rag";
+import { retrieve, TOP_K, windows } from "@/lib/rag";
 
 export const runtime = "nodejs";
 
@@ -129,20 +129,16 @@ export async function POST(req: Request) {
             context = notes.map((n) => (n.length > share ? `${n.slice(0, share)}\n…(kısaltıldı)` : n)).join("\n\n") || "(Hiçbir bölümde soruyla ilgili bilgi bulunamadı.)";
           } else {
             status("İlgili bölümler aranıyor…");
-            try {
-              const chunks = await retrieve(selected, question, signal);
-              meta.mode = "rag";
-              meta.sources = [...new Set(chunks.map((c) => (selected.length > 1 ? `${c.doc} · ${c.label}` : c.label)))];
-              hint = `\n\nAşağıda dokümanın soruyla en ilgili ${TOP_K} bölümü var; dokümanın tamamı değil.`;
-              context = chunks.map((c) => `<bölüm doküman="${c.doc}" konum="${c.label}">\n${c.text}\n</bölüm>`).join("\n\n");
-            } catch (e) {
-              if (signal.aborted) throw e;
-              const ratio = contextRatio(totalChars, NUM_CTX, cptFor(model));
-              meta.mode = "truncated";
-              logError(`rag ${EMBED_MODEL}`, e);
-              meta.note = `Parça arama çalışmadı; dosyaların yalnızca ilk %${Math.floor(ratio * 100)}'i kullanıldı.`;
-              context = selected.map((d) => `<doküman ad="${d.name}">\n${d.text.slice(0, Math.floor(d.chars * ratio))}\n</doküman>`).join("\n\n");
+            const { chunks, semantic, matched } = await retrieve(selected, question, signal);
+            meta.mode = "rag";
+            meta.sources = [...new Set(chunks.map((c) => (selected.length > 1 ? `${c.doc} · ${c.label}` : c.label)))];
+            if (!semantic) {
+              meta.note = matched
+                ? "Anlamsal arama çalışmadı; bölümler yalnızca anahtar kelimeyle seçildi."
+                : "Anlamsal arama çalışmadı ve soru belgedeki kelimelerle eşleşmedi; belgenin ilk bölümleri kullanıldı.";
             }
+            hint = `\n\nAşağıda dokümanın soruyla en ilgili ${TOP_K} bölümü var; dokümanın tamamı değil.`;
+            context = chunks.map((c) => `<bölüm doküman="${c.doc}" konum="${c.label}">\n${c.text}\n</bölüm>`).join("\n\n");
           }
         }
         if (admission.model.full) status("Sırada bekleniyor…");
