@@ -26,14 +26,16 @@ type UploadEvent =
 
 /**
  * Processing profiles (plan §3.1): each maps to real request parameters.
- * auto = reasoning on, the server decides between whole-doc and search; fast = no reasoning;
- * deep = reasoning + always read the whole document (section scan when it doesn't fit).
+ * Reasoning only in deep: with a whole document in a 128k context, thinking first made every answer slow.
+ * auto = no reasoning, the server decides between whole-doc and search; fast = no reasoning, a too-large document
+ * is always searched (no classifier call) except for quick tasks, which always need it whole; deep = reasoning + always
+ * the whole document.
  */
 type Profile = "auto" | "fast" | "deep";
 const PROFILES: { id: Profile; label: string; hint: string }[] = [
-  { id: "auto", label: "Otomatik", hint: "Soruya göre ilgili bölümleri ya da tüm belgeyi kullanır." },
-  { id: "fast", label: "Hızlı", hint: "Düşünme adımı olmadan, en kısa sürede cevap." },
-  { id: "deep", label: "Derin analiz", hint: "Belgenin tamamını bölüm bölüm okur; daha yavaş, daha kapsamlı." },
+  { id: "auto", label: "Otomatik", hint: "Soruya göre ilgili bölümleri ya da tüm belgeyi kullanır; düşünme adımı yok." },
+  { id: "fast", label: "Hızlı", hint: "Serbest sorularda en hızlı cevap; büyük belgede ilgili bölümleri kullanır. Hazır işler yine tüm belgeyi kapsar." },
+  { id: "deep", label: "Derin analiz", hint: "Önce düşünür, belgenin tamamını kullanır; daha yavaş, daha kapsamlı." },
 ];
 
 const ACCEPT = ".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md";
@@ -255,8 +257,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model,
-          think: profile !== "fast",
-          scope: scope ?? (profile === "deep" ? "all" : undefined),
+          think: profile === "deep",
+          scope: scope ?? (profile === "deep" ? "all" : profile === "fast" ? "part" : undefined),
           fileIds: ready.map((f) => f.serverId),
           messages: history.slice(-HISTORY).map(({ role, content }) => ({ role, content })),
         }),

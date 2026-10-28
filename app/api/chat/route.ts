@@ -166,7 +166,7 @@ export async function POST(req: Request) {
           context = selected.map((d) => `<doküman ad="${d.name}">\n${d.text}\n</doküman>`).join("\n\n");
         } else {
           let whole = scope === "all";
-          if (!whole) {
+          if (!whole && scope !== "part") {
             status("Soru türü belirleniyor…");
             whole = /TÜM|TUM/i.test(await chatOnce(model, [{ role: "system", content: CLASSIFY }, { role: "user", content: question }], signal, 5));
           }

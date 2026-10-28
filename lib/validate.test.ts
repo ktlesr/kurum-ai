@@ -27,5 +27,6 @@ test("fileIds and messages shape and limits", () => {
   assert.equal(typeof parseChatRequest({ ...ok, messages: [{ role: "system", content: "x" }] }, allowed), "string");
   assert.equal(typeof parseChatRequest({ ...ok, messages: [{ role: "user", content: "x".repeat(LIMITS.messageChars + 1) }] }, allowed), "string");
   assert.equal(typeof parseChatRequest({ ...ok, scope: "some" }, allowed), "string");
+  assert.equal((parseChatRequest({ ...ok, scope: "part" }, allowed) as { scope?: string }).scope, "part");
   assert.equal(typeof parseChatRequest({ ...ok, think: "yes" }, allowed), "string");
 });

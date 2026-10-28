@@ -5,7 +5,8 @@ export interface ChatRequest {
   fileIds: string[];
   messages: { role: "user" | "assistant"; content: string }[];
   think: boolean;
-  scope?: "all";
+  /** "all": the whole document is needed; "part": a search is enough (Hızlı profile, no classifier call). */
+  scope?: "all" | "part";
 }
 
 // files = MAX_DOCS_PER_USER in lib/server.ts; the client sends at most HISTORY messages.
@@ -34,7 +35,7 @@ export function parseChatRequest(body: unknown, allowedModels: ReadonlySet<strin
   }
 
   if (b.think !== undefined && typeof b.think !== "boolean") return "think true/false olmalı.";
-  if (b.scope !== undefined && b.scope !== "all") return "scope yalnızca \"all\" olabilir.";
+  if (b.scope !== undefined && b.scope !== "all" && b.scope !== "part") return "scope yalnızca \"all\" ya da \"part\" olabilir.";
 
   return {
     model: b.model,
@@ -42,6 +43,6 @@ export function parseChatRequest(body: unknown, allowedModels: ReadonlySet<strin
     // Rebuilt, so extra keys smuggled into a message never reach Ollama.
     messages: (b.messages as ChatRequest["messages"]).map(({ role, content }) => ({ role, content })),
     think: b.think === true,
-    scope: b.scope as "all" | undefined,
+    scope: b.scope as ChatRequest["scope"],
   };
 }
