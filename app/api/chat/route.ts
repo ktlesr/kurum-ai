@@ -158,7 +158,7 @@ export async function POST(req: Request) {
           if (admission.model.full) status("Sırada bekleniyor…");
           if (think) status("Düşünüyor…");
           answer = await streamChat(model, [{ role: "system", content: GENERAL }, ...history], think, signal, send, (n) => {
-            if (n % 50 === 0) status(`Düşünüyor… (${n} adım)`);
+            if (n % 50 === 0) status("Düşünüyor…");
           });
           return void ctrl.close();
         }
@@ -208,7 +208,7 @@ export async function POST(req: Request) {
         const final: Msg[] = [{ role: "system", content: `${SYSTEM}${hint}\n\n${context}` }, ...history];
         answer = await streamChat(model, final, think, signal, send, (n) => {
           // Keeps the connection busy and shows the wait isn't stuck.
-          if (n % 50 === 0) status(`Düşünüyor… (${n} adım)`);
+          if (n % 50 === 0) status("Düşünüyor…"); // also keeps the connection busy
         });
 
         // Numbers the user typed count as known too (not earlier answers — they may be the hallucination).

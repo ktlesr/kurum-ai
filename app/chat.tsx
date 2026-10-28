@@ -226,12 +226,15 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     const q = text.trim();
     if (!q || streaming) return;
     const history: Message[] = [...messages.filter((m) => !m.error), { role: "user", content: q }];
-    setMessages([...history, { role: "assistant", content: "" }]);
+    const t0 = Date.now();
+    const secs = () => Math.round((Date.now() - t0) / 1000);
+    let first: number | undefined;
+    setMessages([...history, { role: "assistant", content: "", startedAt: t0 }]);
     setInput("");
     setStreaming(true);
     const ac = new AbortController();
     abortRef.current = ac;
-    let last: Message = { role: "assistant", content: "" };
+    let last: Message = { role: "assistant", content: "", startedAt: t0 };
     const setLast = (fn: (m: Message) => Message) => {
       last = fn(last);
       const m = last;
@@ -245,7 +248,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       local.upsert(id, (cur) => ({
         ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
         updatedAt: Date.now(), model, docIds,
-        messages: msgs.filter((m) => m.content || m.error).map(({ role, content, error, meta }) => ({ role, content, ...(error ? { error } : {}), ...(meta ? { meta } : {}) })),
+        messages: msgs.filter((m) => m.content || m.error).map(({ role, content, error, meta, timing }) => ({ role, content, ...(error ? { error } : {}), ...(meta ? { meta } : {}), ...(timing ? { timing } : {}) })),
       }));
     setChatId(id);
     persist(history);
@@ -281,6 +284,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         const statuses = body.match(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"));
         const content = body.replace(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"), "");
         const status = statuses ? statuses[statuses.length - 1].slice(1, -1) : undefined;
+        if (first === undefined && content.trim()) first = secs();
         setLast((m) => ({ ...m, content, status }));
       }
       // A failure mid-answer: show it as an error turn, which also keeps it out of the next request's history.
@@ -294,6 +298,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         checkModels();
       }
     } finally {
+      if (!last.error) setLast((m) => ({ ...m, startedAt: undefined, timing: { first, total: secs() } }));
       setStreaming(false);
       abortRef.current = null;
       persist([...history, last]);
@@ -826,6 +831,16 @@ function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: s
   );
 }
 
+/** Seconds since `since`, ticking while shown (the wait before the first word). */
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <span className="tabular-nums">{Math.max(0, Math.round((now - since) / 1000))} sn</span>;
+}
+
 function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (chip: string, doc?: string) => void }) {
   const [copied, setCopied] = useState(false);
   // Only links made by linkPages (they carry this nonce) open the source panel.
@@ -856,10 +871,11 @@ function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (c
   }
   return (
     <div className="group">
-      {live && !m.content && (
+      {live && !m.content.trim() && (
         <p className="mb-2 flex items-center gap-2 text-sm text-muted" role="status">
           <span className="size-3 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-hidden />
           {m.status ?? "Cevap hazırlanıyor…"}
+          {m.startedAt && <Elapsed since={m.startedAt} />}
         </p>
       )}
       <div className={`md ${live ? "streaming" : ""}`}>
@@ -867,12 +883,19 @@ function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (c
       </div>
       {!live && m.meta && <MetaNotes meta={m.meta} onSource={onSource} />}
       {!live && m.content && (
-        <button
-          onClick={() => navigator.clipboard.writeText(m.content).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}
-          className="mt-2 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted opacity-70 hover:bg-subtle hover:text-fg group-hover:opacity-100"
-        >
-          {copied ? <Check size={13} className="text-ok" /> : <Copy size={13} />} {copied ? "Kopyalandı" : "Kopyala"}
-        </button>
+        <div className="mt-2 flex items-center gap-3">
+          <button
+            onClick={() => navigator.clipboard.writeText(m.content).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}
+            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted opacity-70 hover:bg-subtle hover:text-fg group-hover:opacity-100"
+          >
+            {copied ? <Check size={13} className="text-ok" /> : <Copy size={13} />} {copied ? "Kopyalandı" : "Kopyala"}
+          </button>
+          {m.timing && (
+            <span className="text-xs tabular-nums text-muted" title="Soru gönderildikten sonra ilk kelimenin geldiği ve cevabın bittiği süre">
+              {m.timing.first !== undefined && `İlk kelime ${m.timing.first} sn · `}Toplam {m.timing.total} sn
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

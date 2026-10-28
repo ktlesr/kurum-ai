@@ -15,6 +15,10 @@ export interface Message {
   error?: boolean;
   meta?: ChatMeta;
   status?: string;
+  /** Live answer only: when the question was sent (ms), for the waiting counter. */
+  startedAt?: number;
+  /** Seconds until the first word and until the answer was complete. */
+  timing?: { first?: number; total: number };
 }
 
 export interface StoredChat {
@@ -63,6 +67,13 @@ const isMessage = (m: unknown): m is Message => {
 const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, 200) : []);
 
 /** Rebuilt from known fields only; anything malformed is dropped (the answer stays, its notes go). */
+const secs = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
+function cleanTiming(t: unknown): Message["timing"] {
+  if (typeof t !== "object" || t === null) return undefined;
+  const { first, total } = t as Record<string, unknown>;
+  return secs(total) ? { total, ...(secs(first) ? { first } : {}) } : undefined;
+}
+
 function cleanMeta(m: unknown): ChatMeta | undefined {
   const x = m as Partial<ChatMeta> | null;
   if (!x || typeof x !== "object" || !["full", "rag", "scan", "truncated"].includes(x.mode as string)) return undefined;
@@ -103,9 +114,10 @@ export function parseBackup(text: string): StoredChat[] | string {
       model: typeof c.model === "string" ? c.model : undefined,
       docIds: Array.isArray(c.docIds) ? c.docIds.filter((d): d is string => typeof d === "string") : [],
       // Drop transient fields (status) and keep meta only as stored.
-      messages: c.messages.map(({ role, content, error, meta }) => {
+      messages: c.messages.map(({ role, content, error, meta, timing }) => {
         const m = cleanMeta(meta);
-        return { role, content, ...(error ? { error: true } : {}), ...(m ? { meta: m } : {}) };
+        const t = cleanTiming(timing);
+        return { role, content, ...(error ? { error: true } : {}), ...(m ? { meta: m } : {}), ...(t ? { timing: t } : {}) };
       }),
     });
   }
