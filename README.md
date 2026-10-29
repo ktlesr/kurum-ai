@@ -164,3 +164,14 @@ Sohbet ve tablo okuma aynı stack'teki `vllm` servisinden gelir (NGC `nvcr.io/nv
 | `VLLM_MODEL_NAME` | `gemma4-26b` | Arayüzde görünen ad |
 | `VLLM_GPU_MEMORY_UTILIZATION` | `0.5` | Birleşik belleğin vLLM'e ayrılan payı (Docling, Ollama ve sistem için yer kalır) |
 | `NUM_CTX` | `131072` | Bağlam uzunluğu; vLLM `--max-model-len` ile aynı |
+| `VLLM_DRAFT_MODEL` | — | Hızlandırma (speculative decoding) için küçük taslak model; `models` servisi bunu da indirir |
+| `VLLM_SPECULATIVE_CONFIG` | — (kapalı) | vLLM `--speculative-config` JSON'u. Boş: hızlandırma yok |
+
+**Hızlandırma (MTP, deneysel).** Küçük bir taslak model birkaç sonraki kelimeyi tahmin eder, ana model hepsini tek adımda doğrular; kalite kaybı hedeflenmez. Bir kullanıcının DGX Spark'ta (NVIDIA forumu, nvidia NVFP4 + bu taslak model, 4 token) ölçtüğü hız artışı ~1,9–2,3 kat; bu kurulumda ölçülmedi ve Google'a göre 26B-A4B'de bazı koşullarda kazanç olmayabilir. Açmak için Environment'a:
+
+```
+VLLM_DRAFT_MODEL=google/gemma-4-26B-A4B-it-assistant
+VLLM_SPECULATIVE_CONFIG='{"method":"mtp","model":"/models/llm/google/gemma-4-26B-A4B-it-assistant","num_speculative_tokens":4}'
+```
+
+Deploy'da taslak model (~0,9 GB) bir kez indirilir. vLLM açılmazsa (logda `Engine core initialization failed` ya da `same reduction dim`), iki satırı silip yeniden deploy edin: önceki hâline döner. Taslak model vLLM'in mevcut bellek payından yer alır (`VLLM_GPU_MEMORY_UTILIZATION` değişmez).

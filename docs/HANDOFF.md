@@ -48,9 +48,25 @@ Claude Code'a ilk mesaj olarak: "docs/HANDOFF.md'yi oku, kaldığımız yerden d
 - İzlenen bağlantı siteden çıkamaz: yönlendirme adımları dahil kontrol edilir, DOM okunduktan sonra tekrar kontrol edilir.
 - Yerelde ve kopya stack'te doğrulandı: TCMB kurları ve hmb.gov.tr 3–8 saniyede okundu, saldırı sayfasından iç adreslere sıfır erişim. Codex: APPROVED WITH NOTES (4 tur).
 
+## ŞU AN KALDIĞIMIZ YER (güncel)
+
+- **vLLM GPU sorunu çözüldü.** `docker run --gpus all … nvidia-smi` GB10'u gösteriyor. vLLM konteyneri `healthy`, sohbet vLLM'den cevaplıyor; yönetici sayfasında "Varsayılana dön" yapıldı.
+- **Sıradaki adım: vLLM hızlandırma (MTP) denemesi.** Kod hazır ve Codex onaylı; varsayılanda kapalı olduğu için deploy hiçbir şeyi değiştirmez (`deploy/compose.yml`, README → vLLM → "Hızlandırma").
+  1. Kullanıcı Dokploy Environment'a iki satırı ekler (`VLLM_DRAFT_MODEL`, `VLLM_SPECULATIVE_CONFIG`; tam metin README'de) ve deploy eder.
+  2. Kontrol: `docker logs --tail 50 $(docker ps -qf name=vllm)`. Logda speculative/MTP satırları ve kabul oranı (acceptance) görünmeli; konteyner `healthy` olmalı.
+  3. Hızı önce/sonra karşılaştır: aynı soruyla yazma hızı (token/s, logdaki "Avg generation throughput").
+  4. Açılmazsa (`Engine core initialization failed`, `same reduction dim` — vLLM issue #48848): iki satırı silip yeniden deploy et, eski hâline döner. Olası çözümler: `VLLM_USE_V2_MODEL_RUNNER=1` ortam değişkeni (compose'a henüz eklenmedi; boş değer vLLM'i çökertir, ancak koşullu eklenmeli) ya da `nvidia/Gemma-4-26B-A4B-NVFP4` hedef modeli (forumda çalışan çift buydu).
+- **Araştırma notları (MTP):**
+  - NGC 26.09 = vLLM 0.29.0; Gemma 4 MTP desteği (PR #41745) içinde.
+  - Taslak model `google/gemma-4-26B-A4B-it-assistant` (~0,9 GB, Apache-2.0, kapılı değil).
+  - Forumda DGX Spark ölçümü: ~1,9–2,3 kat, kabul uzunluğu 3,68/4.
+  - Alternatif: `RedHatAI/gemma-4-26B-A4B-it-speculator.eagle3` (`"method":"eagle3"`, 3 token).
+- **Değerlendirildi, şimdilik geçildi:** `embeddinggemma-2`. Çok dilli metin puanı neredeyse aynı (61,15 → 61,36), boyutu 1,3 GB. Geçmek güvenli (model değişince vektörler kendiliğinden yeniden hesaplanır, `lib/rag.ts:86`), ama sorgu/belge önekleri (`lib/rag.ts:63`) yeni model için doğrulanmadı.
+- **Git:** bu bilgisayarın GitHub girişi süresi dolmuştu (`gh auth status`: token geçersiz), push takılıyordu. Push olmadıysa bu not başka yoldan taşınır.
+
 ## Açık işler
 
-### 1. vLLM GPU hatası (öncelikli, sunucu terminali gerekir)
+### 1. vLLM GPU hatası — ÇÖZÜLDÜ (aşağısı kayıt için)
 
 Belirti: deploy'da vLLM konteyneri başlamıyor. NVIDIA Container Toolkit, sunucuda olmayan `libnvidia-egl-wayland.so.1.1.21` dosyasını arıyor. Model indirme başarılı (`models` servisi, `vllmmodels` volume'ü). Sohbet şu an geçici olarak Ollama'da (yönetici → Ayarlar).
 

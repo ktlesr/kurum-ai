@@ -60,22 +60,26 @@ services:
   # One-off: fetches the vLLM model unless a complete copy is there. .complete lists the model's files and is written
   # only after all of them (the repo's list, fetched first: no network means failure, not a false "done") are on
   # disk; each deploy checks that list offline, so a deleted file means a new download. An interrupted download
-  # resumes on the next deploy. Exits 0 and stays stopped.
+  # resumes on the next deploy. Exits 0 and stays stopped. VLLM_DRAFT_MODEL (speculative decoding, README) is
+  # fetched the same way.
   models:
     profiles: [vllm]
     image: python:3.12-slim
     restart: "no"
     environment:
       M: ${VLLM_MODEL:-RedHatAI/gemma-4-26B-A4B-it-NVFP4}
+      D: ${VLLM_DRAFT_MODEL:-}
       HF_TOKEN: ${HF_TOKEN:-} # only for gated models
     entrypoint: ["sh", "-c"]
     command:
       - >-
+        for M in $$M $$D; do export M;
         python -c "import os, sys; d = '/models/llm/' + os.environ['M']; f = os.path.join(d, '.complete'); names = open(f).read().split() if os.path.isfile(f) else []; sys.exit(0 if names and all(os.path.isfile(os.path.join(d, n)) for n in names) else 1)"
-        && echo "model hazır: $$M" && exit 0;
+        && echo "model hazır: $$M" && continue;
         pip install -q --no-cache-dir huggingface_hub==0.26.2 &&
         python -c "import os, sys, fnmatch; from huggingface_hub import list_repo_files, snapshot_download; m = os.environ['M']; t = os.environ.get('HF_TOKEN') or None; ig = ['original/*', '*.bin', '*.pth', '*.h5', '*.msgpack', '*.onnx', 'onnx/*']; want = [f for f in list_repo_files(m, token=t) if not any(fnmatch.fnmatch(f, p) for p in ig)]; d = '/models/llm/' + m; c = os.path.join(d, '.complete'); os.path.exists(c) and os.remove(c); snapshot_download(m, local_dir=d, ignore_patterns=ig, token=t); miss = [f for f in want if not os.path.isfile(os.path.join(d, f))]; miss and sys.exit('eksik dosyalar: ' + ', '.join(miss)); open(c, 'w').write('\n'.join(want))"
-        && echo "model indirildi: $$M"
+        && echo "model indirildi: $$M" || exit 1;
+        done
     volumes:
       - ${VLLM_MODELS_DIR:-vllmmodels}:/models/llm
 
@@ -103,6 +107,9 @@ services:
       - --enable-prefix-caching
       # Separates reasoning from the answer (the app shows "Düşünüyor…" and streams only the answer).
       - --reasoning-parser=gemma4
+      # Speculative decoding (README → vLLM): a small drafter proposes tokens the model checks in one step. Empty
+      # (default) means off: vLLM reads "" as no config.
+      - --speculative-config=${VLLM_SPECULATIVE_CONFIG:-}
     environment:
       # Not ":?": compose interpolates every service, profile or not, so a required key would break the GPU-less
       # deploy. Unset = no key on vLLM; it's still reachable only inside this stack. Set it (README).
