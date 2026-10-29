@@ -8,11 +8,12 @@ import Link from "next/link";
 import {
   AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight,
   AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, Copy, Download, FolderOpen, Image as ImageIcon,
-  ImagePlus, Layers, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
+  ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import { ThemeToggle } from "../theme-toggle";
 import Editor from "./editor";
 import type { Claim } from "@/lib/trace";
+import { recorderType, renderVideo, type Scene, type Transition } from "./video";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
   DEFAULT_BRAND, FORMATS, LIMITS, TEMPLATES, cleanEls, fromTemplate, hug, newId, svgOf, toSvg,
@@ -80,6 +81,22 @@ export default function Studio({ username }: { username: string }) {
   const [busy, setBusy] = useState<"" | "fill" | "export">("");
   const [note, setNote] = useState<{ kind: "error" | "ok"; text: string } | null>(null);
   const abort = useRef<AbortController | null>(null);
+  // Video (TASK-026): scenes are snapshots of designs in one format, recorded in the browser.
+  const [scenes, setScenes] = useState<(Scene & { format: FormatId; thumb: string })[]>([]);
+  const [transition, setTransition] = useState<Transition>("fade");
+  const [motion, setMotion] = useState(true);
+  const [music, setMusic] = useState<File | undefined>();
+  const [video, setVideo] = useState<{ progress: number; url?: string; ext?: string; error?: string } | null>(null);
+  const videoAbort = useRef<AbortController | null>(null);
+  const videoUrl = useRef<string | undefined>(undefined);
+  // Leaving the page stops a recording and frees the last video.
+  useEffect(
+    () => () => {
+      videoAbort.current?.abort();
+      if (videoUrl.current) URL.revokeObjectURL(videoUrl.current);
+    },
+    [],
+  );
   const gesture = useRef<Snap | null>(null); // the design when a drag or typing started (its undo point)
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is only readable after mount
@@ -367,6 +384,41 @@ export default function Studio({ username }: { username: string }) {
       setBusy("");
     }
   }
+  const sceneFormat = scenes[0]?.format;
+  const addScene = () => {
+    if (!font) return;
+    if (sceneFormat && sceneFormat !== format) return setNote({ kind: "error", text: `Sahneler ${FORMATS[sceneFormat].label} formatında; aynı formatta ekleyin ya da sahneleri temizleyin.` });
+    if (scenes.length >= 20) return setNote({ kind: "error", text: "En fazla 20 sahne eklenebilir." });
+    const thumb = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgOf(format, view, font.measure, font.css))}`;
+    setScenes((s) => [...s, { id: newId(), els: view, seconds: 4, format, thumb }]);
+    setNote({ kind: "ok", text: `Sahne ${scenes.length + 1} eklendi. Tasarımı değiştirip bir sonraki sahneyi ekleyebilirsiniz.` });
+  };
+  const moveScene = (i: number, d: -1 | 1) =>
+    setScenes((s) => {
+      const j = i + d;
+      if (j < 0 || j >= s.length) return s;
+      const n = [...s];
+      [n[i], n[j]] = [n[j], n[i]];
+      return n;
+    });
+  async function makeVideo() {
+    if (!font || !scenes.length) return;
+    videoAbort.current?.abort();
+    const ac = (videoAbort.current = new AbortController());
+    if (videoUrl.current) URL.revokeObjectURL(videoUrl.current);
+    videoUrl.current = undefined;
+    setVideo({ progress: 0 });
+    try {
+      const { blob, ext } = await renderVideo(scenes, { format: sceneFormat!, transition, motion, music }, font.measure, font.css, (p) => setVideo((v) => (v && !v.url ? { ...v, progress: p } : v)), ac.signal);
+      if (ac.signal.aborted) return; // cancelled or left at the very end: no URL nobody will free
+      videoUrl.current = URL.createObjectURL(blob);
+      setVideo({ progress: 1, url: videoUrl.current, ext });
+    } catch (e) {
+      setVideo(ac.signal.aborted ? null : { progress: 0, error: (e as Error).message || "Video oluşturulamadı." });
+    }
+  }
+  const videoSeconds = scenes.reduce((s, x) => s + x.seconds, 0);
+
   const saveProject = () => download(new Blob([JSON.stringify({ kind: "kurum-ai-gorsel", version: 1, template, format, els: view })], { type: "application/json" }), `kurum-gorsel-${template}-${format}.json`);
   const openProject = async (file: File | undefined) => {
     if (!file) return;
@@ -500,6 +552,73 @@ export default function Studio({ username }: { username: string }) {
                 )}
               </label>
             ))}
+          </section>
+
+          <section className={section} aria-labelledby="t-video">
+            <h2 id="t-video" className={heading}>Video (Reels)</h2>
+            <p className="text-xs text-muted">Her sahne bir tasarımdır: tasarlayın, sahne olarak ekleyin, sonrakini tasarlayın. Video bu tarayıcıda oluşturulur; hiçbir şey sunucuya gitmez.</p>
+            <button onClick={addScene} disabled={!font} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm font-medium hover:border-accent hover:text-accent disabled:opacity-40">
+              <Clapperboard size={15} /> Bu tasarımı sahne olarak ekle
+            </button>
+            {scenes.length > 0 && (
+              <>
+                <ol className="space-y-1.5">
+                  {scenes.map((s, i) => (
+                    <li key={s.id} className="flex items-center gap-2 rounded-lg border border-line p-1.5">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- local data: SVG of the scene */}
+                      <img src={s.thumb} alt={`Sahne ${i + 1}`} className="h-12 w-auto shrink-0 rounded border border-line" style={{ aspectRatio: `${FORMATS[s.format].w} / ${FORMATS[s.format].h}` }} />
+                      <span className="text-xs font-medium tabular-nums">{i + 1}.</span>
+                      <label className="flex items-center gap-1 text-xs text-muted">
+                        <select aria-label={`Sahne ${i + 1} süresi`} value={s.seconds} onChange={(e) => setScenes((x) => x.map((y) => (y.id === s.id ? { ...y, seconds: +e.target.value } : y)))} className="h-7 rounded-md border border-line bg-panel px-1 text-xs text-fg">
+                          {[2, 3, 4, 5, 6, 8, 10].map((n) => <option key={n} value={n}>{n} sn</option>)}
+                        </select>
+                      </label>
+                      <span className="ml-auto flex">
+                        <button className={iconBtn} onClick={() => moveScene(i, -1)} disabled={i === 0} aria-label={`Sahne ${i + 1} yukarı`}><ChevronUp size={14} /></button>
+                        <button className={iconBtn} onClick={() => moveScene(i, 1)} disabled={i === scenes.length - 1} aria-label={`Sahne ${i + 1} aşağı`}><ChevronDown size={14} /></button>
+                        <button className={`${iconBtn} hover:text-danger`} onClick={() => setScenes((x) => x.filter((y) => y.id !== s.id))} aria-label={`Sahne ${i + 1} sil`}><Trash2 size={14} /></button>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="mb-0.5 block text-[11px] text-muted">Geçiş</span>
+                    <select value={transition} onChange={(e) => setTransition(e.target.value as Transition)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-sm outline-none focus:border-accent">
+                      <option value="fade">Yumuşak geçiş</option>
+                      <option value="slide">Kaydırma</option>
+                      <option value="none">Kesme</option>
+                    </select>
+                  </label>
+                  <label className="flex items-end gap-1.5 pb-1.5 text-xs">
+                    <input type="checkbox" checked={motion} onChange={(e) => setMotion(e.target.checked)} /> Hareket (yakınlaşma, belirme)
+                  </label>
+                </div>
+                <Picker label={music ? music.name.slice(0, 28) : "Müzik ekle (isteğe bağlı)"} accept=".mp3,.wav,.ogg,.m4a,audio/*" onPick={(f) => f && setMusic(f)} onClear={music ? () => setMusic(undefined) : undefined} />
+                <p className="text-xs text-muted">{scenes.length} sahne · {videoSeconds} sn · {FORMATS[sceneFormat!].w}×{FORMATS[sceneFormat!].h} · {recorderType()?.ext.toUpperCase() ?? "desteklenmiyor"}. Kayıt gerçek sürede yapılır; bu sekme açık kalmalı.</p>
+                {video && !video.url && !video.error ? (
+                  <div className="space-y-1.5">
+                    <div className="h-2 overflow-hidden rounded-full bg-subtle" role="progressbar" aria-valuenow={Math.round(video.progress * 100)} aria-valuemin={0} aria-valuemax={100} aria-label="Video oluşturuluyor">
+                      <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round(video.progress * 100)}%` }} />
+                    </div>
+                    <button onClick={() => videoAbort.current?.abort()} className="w-full rounded-lg border border-line py-1.5 text-xs text-muted hover:text-fg">İptal</button>
+                  </div>
+                ) : (
+                  <button onClick={makeVideo} disabled={!recorderType()} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-40">
+                    <Film size={15} /> Videoyu oluştur
+                  </button>
+                )}
+                {video?.error && <p role="alert" className="text-xs text-danger">{video.error}</p>}
+                {video?.url && (
+                  <div className="space-y-1.5">
+                    <video src={video.url} controls className="w-full rounded-lg border border-line bg-black" style={{ aspectRatio: `${FORMATS[sceneFormat!].w} / ${FORMATS[sceneFormat!].h}`, maxHeight: 320 }} />
+                    <a href={video.url} download={`kurum-video.${video.ext}`} className="flex h-9 items-center justify-center gap-1.5 rounded-lg border border-line text-sm hover:border-accent hover:text-accent">
+                      <Download size={15} /> İndir ({video.ext?.toUpperCase()})
+                    </a>
+                  </div>
+                )}
+              </>
+            )}
           </section>
 
           <section className={section} aria-labelledby="t-brand">
