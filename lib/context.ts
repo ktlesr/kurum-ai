@@ -1,4 +1,5 @@
 // Shared by server (routing) and client (warning). Keep in sync = import from here.
+import type { Claim } from "./trace";
 
 // Until a model has been measured (see recordTokens in server.ts): conservative for Turkish.
 // Measured: gemma4 ≈ 2.9, gpt-oss ≈ 2.2 chars/token.
@@ -38,6 +39,8 @@ export interface ChatMeta {
   pages?: number[];
   /** Cited pages no selected document has (lib/checks checkPages). Optional: older saved chats lack it. */
   badPages?: string[];
+  /** Each factual sentence of the answer with the passage that supports it, or none (lib/trace). */
+  claims?: Claim[];
   note?: string;
 }
 

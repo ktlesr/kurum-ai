@@ -94,6 +94,20 @@ function cleanMeta(m: unknown): ChatMeta | undefined {
     uncertain: strings(x.uncertain),
     ...(typeof x.note === "string" ? { note: x.note } : {}),
     ...(Array.isArray(x.web) ? { web: x.web.filter((w) => webUrl(w?.url)).map((w) => ({ url: w.url, title: typeof w.title === "string" ? w.title : "" })) } : {}),
+    // The document of a single-document answer: a bare "Sayfa N" chip resolves against it, never another one.
+    ...(typeof x.doc === "string" ? { doc: x.doc.slice(0, 300) } : {}),
+    ...(Array.isArray(x.claims)
+      ? {
+          claims: x.claims
+            .slice(0, 60)
+            .filter((c) => c && typeof c.text === "string" && ["ok", "weak", "none"].includes(c.status))
+            .map((c) => ({
+              text: c.text.slice(0, 160), status: c.status,
+              ...(typeof c.source === "string" ? { source: c.source.slice(0, 300) } : {}),
+              ...(typeof c.quote === "string" ? { quote: c.quote.slice(0, 220) } : {}),
+            })),
+        }
+      : {}),
   };
 }
 

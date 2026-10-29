@@ -964,6 +964,51 @@ function MetaNotes({ meta, onSource }: { meta: ChatMeta; onSource: (chip: string
           <span>Belirsiz okunan sayılar: {meta.uncertain.join(", ")}. İki okuma uyuşmadı; orijinal sayfadan doğrulayın.</span>
         </p>
       )}
+      {meta.claims && meta.claims.length > 0 && <Claims claims={meta.claims} doc={meta.doc} onSource={onSource} />}
     </div>
+  );
+}
+
+const CLAIM = {
+  ok: { label: "Belgede eşleşen yer bulundu", cls: "text-ok", Icon: Check },
+  weak: { label: "Kısmen eşleşti", cls: "text-warn-fg", Icon: AlertTriangle },
+  none: { label: "Eşleşen yer bulunamadı", cls: "text-danger", Icon: AlertTriangle },
+} as const;
+
+/** Sentence by sentence: the page that says it (opens the source panel) and the quote, or that no page does. */
+function Claims({ claims, doc, onSource }: { claims: NonNullable<ChatMeta["claims"]>; doc?: string; onSource: (chip: string, doc?: string) => void }) {
+  const n = (st: keyof typeof CLAIM) => claims.filter((c) => c.status === st).length;
+  const none = n("none");
+  return (
+    <details className="group rounded-lg border border-line bg-panel" open={none > 0}>
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-muted hover:text-fg">
+        <ChevronDown size={13} className="shrink-0 transition-transform group-open:rotate-180" />
+        <span className="font-medium text-fg">Cümle kaynakları</span>
+        <span className="text-ok">{n("ok")} eşleşti</span>
+        {n("weak") > 0 && <span className="text-warn-fg">· {n("weak")} kısmen</span>}
+        {none > 0 && <span className="text-danger">· {none} eşleşmedi</span>}
+      </summary>
+      <ul className="space-y-1.5 border-t border-line px-2.5 py-2">
+        {claims.map((c, i) => {
+          const k = CLAIM[c.status];
+          return (
+            <li key={i} className="flex items-start gap-1.5">
+              <k.Icon size={13} className={`mt-0.5 shrink-0 ${k.cls}`} aria-label={k.label} />
+              <span className="min-w-0 flex-1">
+                <span className={c.status === "none" ? "text-danger" : "text-fg"}>{c.text}</span>
+                {c.source && (
+                  <button onClick={() => onSource(c.source!, doc)} className="ml-1.5 rounded border border-line px-1 py-px text-[11px] text-muted hover:border-accent hover:text-fg" title="Kaynak panelinde aç">
+                    {c.source}
+                  </button>
+                )}
+                {c.quote && <span className="mt-0.5 block border-l-2 border-line pl-2 italic text-muted">“{c.quote}”</span>}
+                {c.status === "none" && <span className="mt-0.5 block text-muted">Seçili belgelerde bu cümleyle eşleşen bir yer bulunamadı; genel bilgiden, hesaplamadan ya da yanlış okumadan gelmiş olabilir.</span>}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="border-t border-line px-2.5 py-1.5 text-muted">Eşleştirme kelime ve sayı benzerliğine göre kodla yapılır; anlamı doğrulamaz. Önemli bilgileri gösterilen sayfadan kontrol edin.</p>
+    </details>
   );
 }

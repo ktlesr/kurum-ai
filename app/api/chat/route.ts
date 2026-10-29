@@ -8,6 +8,7 @@ import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
 import { contextBudget, contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { checkColumns, checkPages, pageNumbers, verifyNumbers } from "@/lib/checks";
+import { traceClaims } from "@/lib/trace";
 import { retrieve, TOP_K, windows } from "@/lib/rag";
 import { getSetting } from "@/lib/db";
 import { findUrls, MAX_CHARS_TOTAL, onSite, parsePick, siteOf, WebError, webReason, type Page } from "@/lib/web";
@@ -321,6 +322,9 @@ export async function POST(req: Request) {
         if (badPages.length) meta.badPages = badPages;
         const misplaced = checkColumns(answer, selected);
         if (misplaced.length) meta.misplaced = misplaced;
+        // Sentence by sentence: which page says it, or that nothing does (plan §5.2).
+        const claims = traceClaims(answer, selected.map((d) => ({ name: d.name, text: d.text })));
+        if (claims.length) meta.claims = claims;
         send(META_SEP + JSON.stringify(meta));
       } catch (e) {
         if (!signal.aborted) {
