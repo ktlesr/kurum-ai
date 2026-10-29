@@ -48,7 +48,16 @@ Claude Code'a ilk mesaj olarak: "docs/HANDOFF.md'yi oku, kaldığımız yerden d
 - İzlenen bağlantı siteden çıkamaz: yönlendirme adımları dahil kontrol edilir, DOM okunduktan sonra tekrar kontrol edilir.
 - Yerelde ve kopya stack'te doğrulandı: TCMB kurları ve hmb.gov.tr 3–8 saniyede okundu, saldırı sayfasından iç adreslere sıfır erişim. Codex: APPROVED WITH NOTES (4 tur).
 
-## ŞU AN KALDIĞIMIZ YER (güncel)
+## ŞU AN KALDIĞIMIZ YER (güncel, 29.10.2026 öğleden sonra)
+
+- **FAZ 4'e geri dönüldü.** Kullanıcı §5'in atlandığını fark etti. FAZ 4'ün kalan iş paketleri planda: TASK-020…024 ve altın test seti (`KURUM_AI_MASTER_GELISTIRME_PLANI.md` → FAZ 4).
+  - **TASK-020 bitti** (`aa07804`, Codex 3 tur). Toplam, ara toplam ve pay kontrolleri; tarih eşleştirme; değeri hesaplanmamış Excel formülü uyarısı.
+  - **Sıradaki: TASK-021**, cümle → kaynak → sayfa → alıntı izlenebilirliği. Ardından TASK-022 (bölüm farkındalıklı parçalama ve yeniden sıralama), TASK-023 (OCR gereksinimi ve kalite işaretleri), TASK-024 (`DocumentArtifact` şeması, altın test setinden sonra).
+  - **Altın test seti için 20 izinli Türkçe belge kullanıcıdan bekleniyor.**
+- **Görsel Stüdyo v1 bitti** (`eb239b4`, TASK-019, Codex 3 tur): `/studio`. presenton ve HyCanvas incelendi, entegre edilmedi (plan §6.1). Belgeden afiş TASK-025, kısa video TASK-026, ikisi de FAZ 4'ten sonra.
+- **Deploy notu:** `main`'e her push Dokploy'da otomatik deploy tetikler. Compose değişmediyse yalnızca uygulama yeniden kurulur, vLLM yeniden başlamaz.
+
+## Önceki durum (sabah)
 
 - **vLLM GPU sorunu çözüldü.** `docker run --gpus all … nvidia-smi` GB10'u gösteriyor. vLLM konteyneri `healthy`, sohbet vLLM'den cevaplıyor; yönetici sayfasında "Varsayılana dön" yapıldı.
 - **MTP açık ve çalışıyor (2026-10-29):** 4 tahminde 62,2 token/s, kabul uzunluğu 2,79 (konum başına %74/%49/%32/%23; Türkçe İngilizceden düşük). Kullanıcı 3 tahmine geçti, ölçüm bekleniyor; hızlandırmasız taban hız henüz ölçülmedi. Karşılaştırma komutu: `docker logs $(docker ps -qf name=vllm-1) 2>&1 | grep -v AutoTuner | grep -E "generation throughput|SpecDecoding" | tail -6`.
