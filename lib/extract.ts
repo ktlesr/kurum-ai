@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { checkCriteria, checkMaxRows, compactTables, markUncertain } from "./checks";
+import { checkCriteria, checkMaxRows, checkTotals, compactTables, markUncertain } from "./checks";
 import { modelConfig, providerOf } from "./model-config";
 import type { ModelConfig } from "./models";
 import { logError } from "./log";
@@ -209,8 +209,8 @@ export async function extractWithDocling(
       }
       extra.push(`[İkinci okuma — görsel model, tablo ${k + 1}; (?) = ilk okumayla uyuşmayan sayı]\n${b.text}`);
     }
-    // Max-row checks only where every table on the page is either text-layer or cross-checked.
-    const maxNotes = marked === l.tables.length ? checkMaxRows(md) : [];
+    // Max-row and total checks only where every table on the page is either text-layer or cross-checked.
+    const maxNotes = marked === l.tables.length ? [...checkMaxRows(md), ...checkTotals(md)] : [];
     // Criteria rows from both readings (one reader often misses a result cell); same verdict once.
     const seen = new Set<string>();
     const criteria = [md, ...extra].flatMap(checkCriteria).filter((n) => {

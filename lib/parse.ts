@@ -15,6 +15,7 @@ export interface Parsed {
   verify?: Extracted["verify"];
 }
 
+import { checkTotals } from "./checks";
 import { UserError } from "./errors";
 export { UserError };
 
@@ -89,8 +90,11 @@ async function parsePdf(buf: Buffer): Promise<Parsed> {
 function parseSheet(wb: XLSX.WorkBook): Parsed {
   let totalRows = 0;
   const parts = wb.SheetNames.map((sheetName) => {
+    const ws = wb.Sheets[sheetName];
+    // A formula with no stored result (file written by a program, never opened in Excel) reads as an empty cell.
+    const noValue = Object.entries(ws).filter(([k, c]) => !k.startsWith("!") && (c as XLSX.CellObject).f && (c as XLSX.CellObject).v === undefined).length;
     const rows = XLSX.utils
-      .sheet_to_json<unknown[]>(wb.Sheets[sheetName], { header: 1, defval: "", blankrows: false, raw: false })
+      .sheet_to_json<unknown[]>(ws, { header: 1, defval: "", blankrows: false, raw: false })
       .map((r) => r.map((c) => String(c).replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim()));
     const [header = [], ...data] = rows;
     const cols = Math.max(0, ...rows.map((r) => r.length));
@@ -104,8 +108,11 @@ function parseSheet(wb: XLSX.WorkBook): Parsed {
       `## Sheet: ${sheetName}`,
       `Satır: ${data.length}, Sütun: ${cols}`,
       `Sütun başlıkları: ${header.filter(Boolean).join(", ") || "(yok)"}`,
+      ...(noValue ? [`> [Kod kontrolü] ${noValue} formül hücresinin dosyada hesaplanmış değeri yok; bu hücreler boş okundu. Dosyayı Excel'de açıp kaydederek yeniden yükleyin.`] : []),
       "",
       table,
+      // Totals and shares recomputed from the cells (plan §5.2); spreadsheet values are exact, nothing to cross-check.
+      ...(cols ? checkTotals(`${sheetName}\n${table}`).flatMap((n) => ["", n]) : []),
     ].join("\n");
   });
   return { kind: "sheet", text: parts.join("\n\n"), rows: totalRows, sheets: wb.SheetNames.length };

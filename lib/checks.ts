@@ -132,16 +132,190 @@ export function checkCriteria(md: string): string[] {
 }
 
 
+/**
+ * A table cell's number, or null if the cell isn't just a number: Turkish/English separators, "(1.234)" and "−5"
+ * negative, currency and % around it, a footnote mark after it ("1.234*", "1.234¹", "1.234 (2)"). "-" alone is 0.
+ */
+export function cellNumber(cell: string): number | null {
+  const c = cell.replace(/\(\?\)/g, "").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+  if (/^[-–—]$/.test(c)) return 0;
+  const m = /^(\()?\s*([-−–])?\s*(?:TL|TRY|USD|EUR|₺|\$|€|%)?\s*(\d+(?:[.,]\d+)*)\s*(?:TL|TRY|USD|EUR|₺|\$|€|%)?\s*(\))?\s*(?:[*¹²³⁴⁵⁶⁷⁸⁹⁰]+|\(\d\))?$/i.exec(c);
+  if (!m || !!m[1] !== !!m[4]) return null;
+  const v = toFloat(m[3]);
+  return m[1] || m[2] ? -v : v;
+}
+
+/** Digits after the decimal separator as normNum reads them ("1.234,5" → 1, "1.234" → 0). */
+const decimals = (cell: string) => {
+  const m = cell.match(/\d+(?:[.,]\d+)*/);
+  const n = m ? normNum(m[0]) : "";
+  return n.includes(".") ? n.length - n.indexOf(".") - 1 : 0;
+};
+const fmtTr = (v: number, d: number) => v.toLocaleString("tr-TR", { minimumFractionDigits: d, maximumFractionDigits: d });
+
+/** "Toplam", "Ara toplam", "Genel toplam", "Toplam tutar (TL)"… but not "Toplam kalite yönetimi". */
+const TOTAL_LABEL = /^(genel\s+|ara\s+)?toplam(\s+(tutar|bütçe|maliyet|gider|harcama|değer|miktar|proje\s+bütçesi))?(\s*\(.*\))?$|^total$/;
+/** Columns whose values aren't amounts that add up: rates, unit prices, percentages of something else. */
+const NOT_ADDITIVE = /oran|yüzde|%|birim\s*fiyat|fiyat|endeks|katsayı|puan|ortalama|artış|değişim/;
+const SHARE = /\bpay\b|payı|yüzde|%|dağılım|oran/; // a share only when its total is 100
+const isYear = (c: string) => /^(19|20)\d{2}$/.test(c.trim());
+
+/**
+ * "Toplam" / "Ara toplam" / "Genel toplam" rows recomputed from the rows above them, column by column; share columns
+ * checked as amount ÷ total. Plan §5.2: sums are done by code, not by the model. Ambiguity means no note, never a
+ * guess: a wrong "tutarlı" is worse than silence.
+ * - A total sums the item rows since the previous total row. "Genel toplam" (or a "Toplam" after "Ara toplam"s) sums
+ *   the earlier totals plus the rows between the last of them and itself (KDV, indirim…).
+ * - "Tutarlı" only for the plain sum. A mismatch is reported only when no row equals the sum of the rows right under
+ *   it (then the table may list parents and their sub-items, and the structure can't be told from the numbers).
+ * - Only columns whose every cell is a number and none uncertain "(?)"; rates and prices are never summed; a row
+ *   without a text label is a header (years) or unknown, and an unknown one stops the check.
+ */
+export function checkTotals(md: string): string[] {
+  const notes: string[] = [];
+  for (const { title, rows } of tables(md)) {
+    const clean = (c: string) => c.replace(/\*\*/g, "").trim();
+    // The label: the first text cell (a "No" column before it is a number).
+    const labelAt = (r: Row) => r.findIndex((c) => clean(c) && cellNumber(c) === null);
+    const label = (r: Row) => clean(r[labelAt(r)] ?? "").replace(/\s*:\s*$/, "");
+    const kind = (r: Row) => {
+      const l = label(r).toLocaleLowerCase("tr").replace(/\s+/g, " ");
+      return TOTAL_LABEL.test(l) ? (l.startsWith("genel") ? "grand" : l.startsWith("ara") ? "sub" : "total") : null;
+    };
+    const head = (j: number) => clean(rows[0]?.[j] ?? "") || `${j + 1}. sütun`;
+    const name = `"${title || "Tablo"}"`;
+    const range = (a: number, b: number) => Array.from({ length: Math.max(0, b - a) }, (_, x) => a + x).filter((r) => !kind(rows[r]));
+    let start = 1; // row 0 is the header
+    let prev: number[] = []; // total rows a later grand total adds up
+    let prevHasSub = false;
+    for (let i = 1; i < rows.length; i++) {
+      const k = kind(rows[i]);
+      if (!k) continue;
+      const items = range(start, i);
+      const upper = k === "grand" || (k === "total" && prevHasSub);
+      const seg = upper && prev.length ? [...prev, ...items] : items;
+      // Totals pile up for the next grand total; a "Toplam" over "Ara toplam"s replaces them; a grand total ends all.
+      if (k === "grand") prev = [];
+      else if (k === "total" && prevHasSub) prev = [i];
+      else prev.push(i);
+      prevHasSub = k === "sub" || (prevHasSub && k !== "grand" && k !== "total");
+      start = i + 1;
+      // Year header rows (no label, only years) aren't items; any other unlabelled row makes the table unclear.
+      const body = seg.filter((r) => !(labelAt(rows[r]) < 0 && rows[r].every((c) => !clean(c) || isYear(c))));
+      if (body.length < 2 || body.some((r) => labelAt(rows[r]) < 0)) continue;
+      const bad: string[] = [];
+      const shareBad: string[] = [];
+      let checked = 0;
+      let shares = 0;
+      for (let j = labelAt(rows[i]) + 1; j < rows[i].length; j++) {
+        const h = head(j).toLocaleLowerCase("tr");
+        const cell = rows[i][j] ?? "";
+        const stated = cellNumber(cell);
+        const cells = body.map((r) => rows[r][j] ?? "");
+        if (stated === null || cell.includes("(?)") || cells.some((c) => c.includes("(?)") || cellNumber(c) === null)) continue;
+        const vals = cells.map((c) => cellNumber(c)!);
+        const d = cells.reduce((m, c) => Math.max(m, decimals(c)), decimals(cell));
+        const tol = (n: number) => (n + 1) * 0.5 * 10 ** -d + 1e-9;
+        const share = SHARE.test(h) && Math.abs(stated - 100) <= tol(vals.length);
+        if (NOT_ADDITIVE.test(h) && !share) continue; // a "%" column is summed only when its total is 100
+        const sum = vals.reduce((s, v) => s + v, 0);
+        if (Math.abs(sum - stated) <= tol(vals.length)) checked++;
+        else {
+          // Could a row be the sum of the next ones (parent and sub-items)? Then the numbers alone can't decide.
+          let nested = false;
+          for (let a = 0; a < (vals.length <= 400 ? vals.length : 0) && !nested; a++) {
+            let s = 0;
+            for (let b = a + 1; b < vals.length; b++) {
+              s += vals[b];
+              if (b - a >= 2 && Math.abs(s - vals[a]) <= tol(b - a)) {
+                nested = true;
+                break;
+              }
+            }
+          }
+          if (nested) continue;
+          checked++;
+          bad.push(`${head(j)}: tabloda ${clean(cell)}, satırların toplamı ${fmtTr(sum, d)}`);
+        }
+        // Share column: amounts in the column just before, total of shares 100 (so its meaning is established).
+        if (!share || j - 1 <= labelAt(rows[i])) continue;
+        const total = cellNumber(rows[i][j - 1] ?? "");
+        const amounts = body.map((r) => cellNumber(rows[r][j - 1] ?? ""));
+        const unsure = [rows[i][j - 1] ?? "", ...body.map((r) => rows[r][j - 1] ?? "")].some((c) => c.includes("(?)"));
+        if (!total || unsure || amounts.some((a) => a === null) || NOT_ADDITIVE.test(head(j - 1).toLocaleLowerCase("tr"))) continue;
+        const pd = cells.reduce((m, c) => Math.max(m, decimals(c)), 0);
+        shares++;
+        body.forEach((r, x) => {
+          const want = (amounts[x]! / total) * 100;
+          if (Math.abs(want - vals[x]) > 0.5 * 10 ** -pd + 0.05) shareBad.push(`${label(rows[r])}: tabloda %${fmtTr(vals[x], pd)}, hesaplanan %${fmtTr(want, Math.max(1, pd))}`);
+        });
+      }
+      if (!checked && !shares) continue;
+      const what = `"${label(rows[i])}" satırı`;
+      if (checked)
+        notes.push(
+          bad.length
+            ? `> [Kod kontrolü] ${name}: ${what} üstündeki satırların toplamıyla uyuşmuyor (${bad.join("; ")}). Raporda ya da okumada hata olabilir; orijinal sayfadan kontrol edin.`
+            : `> [Kod kontrolü] ${name}: ${what} üstündeki satırların toplamıyla tutarlı (${checked} sütun kodla toplandı).`,
+        );
+      if (shareBad.length) notes.push(`> [Kod kontrolü] ${name}: pay sütunu tutarlarla uyuşmuyor (${shareBad.slice(0, 5).join("; ")}${shareBad.length > 5 ? "; …" : ""}).`);
+      else if (shares) notes.push(`> [Kod kontrolü] ${name}: pay sütunu (tutar ÷ ${label(rows[i]).toLocaleLowerCase("tr")}) tutarlı.`);
+    }
+  }
+  return notes;
+}
+
+const MONTHS = ["ocak", "şubat", "mart", "nisan", "mayıs", "haziran", "temmuz", "ağustos", "eylül", "ekim", "kasım", "aralık"];
+const DATE = new RegExp(
+  `(?<![\\d.,/])(?:(\\d{1,2})[./](\\d{1,2})[./](\\d{4})|(\\d{4})-(\\d{2})-(\\d{2})|(\\d{1,2})\\s+(${MONTHS.join("|")})\\s+(\\d{4}))(?![\\d\\p{L}])`,
+  "gu",
+);
+
+/** Dates in a text (01.11.2026, 2026-11-01, 1 Kasım 2026) as "d.m.yyyy" keys with where they are. */
+export function findDates(text: string): { key: string; index: number; length: number }[] {
+  // Turkish lowercase keeps the length (İ→i, I→ı), so indexes stay valid for the original text.
+  const low = text.toLocaleLowerCase("tr");
+  const src = low.length === text.length ? low : text;
+  const out: { key: string; index: number; length: number }[] = [];
+  for (const m of src.matchAll(DATE)) {
+    const [d, mo, y] = m[1] ? [m[1], m[2], m[3]] : m[4] ? [m[6], m[5], m[4]] : [m[7], String(MONTHS.indexOf(m[8]) + 1), m[9]];
+    if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31) continue;
+    out.push({ key: `${+d}.${+mo}.${y}`, index: m.index!, length: m[0].length });
+  }
+  return out;
+}
+
 /** Numbers in an answer that don't appear in the sources. Single digits are skipped (list markers, "DD-2"). */
 export function verifyNumbers(answer: string, source: string): { unverified: string[]; uncertain: string[] } {
   const known = new Set<string>();
   const shaky = new Set<string>();
-  for (const m of source.matchAll(/-?\d+(?:[.,]\d+)*(\(\?\))?/g)) {
+  // Dates match by day, month and year whatever the format; their parts count as known numbers ("2026 yılında").
+  // A date the second reading didn't confirm ("(?)" right after it) stays uncertain, parts included, so its text
+  // is blanked before the plain number scan below.
+  const dates = new Set<string>();
+  const shakyDates = new Set<string>();
+  let plain = source;
+  for (const { key, index, length } of findDates(source)) {
+    const unsure = source.startsWith("(?)", index + length);
+    (unsure ? shakyDates : dates).add(key);
+    for (const p of key.split(".")) (unsure ? shaky : known).add(String(+p));
+    if (unsure) plain = plain.slice(0, index) + " ".repeat(length + 3) + plain.slice(index + length + 3);
+  }
+  for (const m of plain.matchAll(/-?\d+(?:[.,]\d+)*(\(\?\))?/g)) {
     const n = normNum(m[0].replace("(?)", ""));
     (m[1] ? shaky : known).add(n);
   }
   const unverified = new Set<string>();
   const uncertain = new Set<string>();
+  let rest = "";
+  let last = 0;
+  for (const d of findDates(answer)) {
+    const raw = answer.slice(d.index, d.index + d.length);
+    if (!dates.has(d.key)) (shakyDates.has(d.key) ? uncertain : unverified).add(raw);
+    rest += answer.slice(last, d.index) + " ";
+    last = d.index + d.length;
+  }
+  answer = rest + answer.slice(last);
   for (const [raw] of answer.matchAll(NUM)) {
     const n = normNum(raw).replace(/^-/, "");
     if (/^\d$/.test(n) || known.has(n) || known.has("-" + n)) continue;
