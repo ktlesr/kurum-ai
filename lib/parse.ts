@@ -16,6 +16,7 @@ export interface Parsed {
 }
 
 import { checkTotals } from "./checks";
+import { qualityNotes } from "./quality";
 import { htmlToText } from "./web";
 import { UserError } from "./errors";
 export { UserError };
@@ -23,6 +24,17 @@ export { UserError };
 const NO_DOCLING = "Docling kurulu değil: görsel olarak gömülü tablolar okunamaz (README → Docling kurulumu).";
 
 export async function parseFile(name: string, buf: Buffer, onProgress: (p: Progress) => void, signal: AbortSignal, cacheDir: string): Promise<Parsed> {
+  const r = await parseRaw(name, buf, onProgress, signal, cacheDir);
+  // Reading-quality notes (lib/quality) on everything but spreadsheets (cells are read exactly).
+  // Display-only: a failing check never fails the upload.
+  let notes: string[] = [];
+  try {
+    if (r.kind !== "sheet") notes = qualityNotes(r.text);
+  } catch {}
+  return notes.length ? { ...r, warning: [r.warning, ...notes].filter(Boolean).join(" ") } : r;
+}
+
+async function parseRaw(name: string, buf: Buffer, onProgress: (p: Progress) => void, signal: AbortSignal, cacheDir: string): Promise<Parsed> {
   const ext = name.toLowerCase().split(".").pop() ?? "";
   switch (ext) {
     case "pdf":
@@ -90,7 +102,7 @@ async function parsePdf(buf: Buffer): Promise<Parsed> {
     // ponytail: <20 visible chars/page ≈ image-only; no OCR on purpose
     warning:
       realChars < 20 * totalPages
-        ? "Metin çıkarılamadı — taranmış (görüntü) PDF olabilir. OCR desteği yok."
+        ? "Metin çıkarılamadı: taranmış (görüntü) PDF olabilir ve bu sunucuda OCR (Docling) kapalı. Yöneticinize bildirin ya da metin içeren bir PDF yükleyin."
         : undefined,
   };
 }
