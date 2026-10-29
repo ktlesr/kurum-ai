@@ -295,13 +295,14 @@ Tüm API'lerde sürümlü istek/yanıt şemaları, idempotency ve user context. 
 ### FAZ 4 — Belge zekâsı ve kalite
 
 - Hibrit RAG, kaynak doğrulama, sayısal kontrol, çok belge karşılaştırma, benchmarking.
-- Durum (29.10.2026): TASK-007, 013, 014, 015 ve 016 yapıldı. §5.2'de kalanlar:
-  - **TASK-020:** deterministik hesap kontrolleri (yüzde, toplam, eşik, tarih, para birimi, negatif, dipnot, Excel formülü).
-  - **TASK-021:** cümle → kaynak → sayfa → alıntı izlenebilirliği; kaynaksız iddianın etiketlenmesi.
-  - **TASK-022:** bölüm farkındalıklı parçalama ve ölçümle etkinleştirilen yeniden sıralama.
-  - **TASK-023:** OCR gereksinimi algılama ve kalite işaretleri.
-  - **TASK-024:** `DocumentArtifact` şeması. Altın test seti hazır olduktan sonra yapılır, çünkü ayrıştırıcı test koruması olmadan değiştirilmez (§5.1).
-  - **Altın test seti (§5.3):** 20 izinli Türkçe belge kullanıcıdan bekleniyor.
+- Durum (29.10.2026): TASK-007, 013, 014, 015 ve 016 yapıldı. Ardından §5.2'nin kalanı:
+  - ✅ **TASK-020:** deterministik hesap kontrolleri (toplam, ara ve genel toplam, pay, tarih, negatif, para birimi, dipnot, Excel formülü).
+  - ✅ **TASK-021:** cümle → kaynak → sayfa → alıntı izlenebilirliği; eşleşmeyen cümle etiketlenir.
+  - ✅ **TASK-022:** bölüm farkındalıklı parçalama. BM25 ölçümü nötr (78/81). Yeniden sıralama yapılmadı, çünkü model yok.
+  - ✅ **TASK-023:** OCR gereksinimi ve okuma kalitesi işaretleri.
+  - ✅ **Altın test seti (TASK-029):** 22 belge, 101 soru, değerlendirme betiği.
+  - ⏳ **Taban çizgisi ölçümü:** sunucuda bir değerlendirme kullanıcısıyla `scripts/eval-golden.mjs` çalıştırılmalı.
+  - ⏳ **TASK-024:** `DocumentArtifact` şeması. Taban çizgisi ölçümünden sonra yapılır; ayrıştırıcı test ve ölçüm koruması olmadan değiştirilmez (§5.1).
 - **Çıkış:** doğrulanmış golden test sonuçları; belgesiz tahmine karşı kontrol; sayfa/sheet işaretleri doğru.
 
 ### FAZ 5 — Görsel stüdyo ve şablonlu medya
@@ -309,14 +310,20 @@ Tüm API'lerde sürümlü istek/yanıt şemaları, idempotency ve user context. 
 - Kurumsal şablonlar, görsel üretimi/düzenleme, storyboard, Remotion/FFmpeg aday testi, basit Reels render.
 - İş paketleri (§6.1):
   - **TASK-019:** Görsel Stüdyo v1. Şablon katmanları, 1:1 / 4:5 / 9:16 / 16:9 formatları, marka kiti (renk ve logo, tarayıcıda), AI metin önerisi, PNG/JPEG/WebP/SVG dışa aktarma.
-  - **TASK-025:** belgeden afiş/görsel (seçili belgeden kaynaklı metin önerisi).
-  - **TASK-026:** şablonlu kısa video (aynı katman modelinden sahne; Remotion/FFmpeg aday testi).
-  - FAZ 4'ün kalan iş paketleri (TASK-020…024) bunlardan önce yapılır.
+  - ✅ **TASK-028:** Görsel Stüdyo v2, tuval üzerinde düzenleme.
+  - ✅ **TASK-025:** belgeden afiş/görsel; her alanın sayfası gösterilir.
+  - ✅ **TASK-026:** şablonlu kısa video. Tarayıcıda MediaRecorder ile kaydedilir. Remotion lisans nedeniyle kullanılmadı; sunucuda FFmpeg yok.
+  - ✅ **TASK-031:** Çalışmalarım (tasarımlar tarayıcıda).
+  - ⏳ **ARM64 üretim duman testi:** deploy sonrası kullanıcı kabulüyle.
 - **Çıkış:** 9:16/16:9/1:1 örnekler; ARM64 production smoke; kullanıcı onay akışı.
 
 ### FAZ 6 — Ses, altyazı ve basit video editörü
 
 - Yerel ASR/TTS, zaman damgası, SRT/VTT, kısa storyboard düzenleyici, müzik ve ses, render kuyruğu.
+- Durum (29.10.2026):
+  - ✅ SRT/VTT, videoya basılmış altyazı (TASK-030).
+  - ✅ Storyboard (sahneler, süre, sıra) ve müzik (TASK-026).
+  - ⏳ **Yerel ASR/TTS:** model servisi kararı bekliyor. Adaylar faster-whisper / whisper.cpp (MIT) ve Piper (MIT; Türkçe seslerin lisansı ayrıca kontrol edilmeli). Kurulum compose'da isteğe bağlı bir profille yapılır, GB10'da vLLM bellek payıyla birlikte ölçülür (TASK-030).
 - **Çıkış:** Türkçe ses/alttazı testleri, iptal/yeniden deneme ve yerel kaydetme.
 
 ### FAZ 7 — Üretken kısa video ve optimizasyon

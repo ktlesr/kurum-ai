@@ -48,16 +48,35 @@ Claude Code'a ilk mesaj olarak: "docs/HANDOFF.md'yi oku, kaldığımız yerden d
 - İzlenen bağlantı siteden çıkamaz: yönlendirme adımları dahil kontrol edilir, DOM okunduktan sonra tekrar kontrol edilir.
 - Yerelde ve kopya stack'te doğrulandı: TCMB kurları ve hmb.gov.tr 3–8 saniyede okundu, saldırı sayfasından iç adreslere sıfır erişim. Codex: APPROVED WITH NOTES (4 tur).
 
-## ŞU AN KALDIĞIMIZ YER (güncel, 29.10.2026 öğleden sonra)
+## ŞU AN KALDIĞIMIZ YER (29.10.2026 akşam, kullanıcı ekran başında değildi)
 
-- **FAZ 4'e geri dönüldü.** Kullanıcı §5'in atlandığını fark etti. FAZ 4'ün kalan iş paketleri planda: TASK-020…024 ve altın test seti (`KURUM_AI_MASTER_GELISTIRME_PLANI.md` → FAZ 4).
-  - **TASK-020 bitti** (`aa07804`, Codex 3 tur). Toplam, ara toplam ve pay kontrolleri; tarih eşleştirme; değeri hesaplanmamış Excel formülü uyarısı.
-  - **Sıradaki: TASK-021**, cümle → kaynak → sayfa → alıntı izlenebilirliği. Ardından TASK-022 (bölüm farkındalıklı parçalama ve yeniden sıralama), TASK-023 (OCR gereksinimi ve kalite işaretleri), TASK-024 (`DocumentArtifact` şeması, altın test setinden sonra).
-  - **Altın test seti için 20 izinli Türkçe belge kullanıcıdan bekleniyor.**
-- **Görsel Stüdyo v2 bitti** (`3a4ce6e`, TASK-028, Codex 3 tur): tuval üzerinde seçme, taşıma, boyutlandırma; özellik paneli; katmanlar; geri alma; proje JSON'u.
-- **Bağlantı engeli** (`998dfce`, TASK-027): güvenlik duvarı ret sayfaları tanınıyor, model nedeni uydurmuyor, HTML yükleme var. Bot engeli bilinçli olarak aşılmıyor (gerekçe TASK-027'de).
-- **Görsel Stüdyo v1 bitti** (`eb239b4`, TASK-019, Codex 3 tur): `/studio`. presenton ve HyCanvas incelendi, entegre edilmedi (plan §6.1). Belgeden afiş TASK-025, kısa video TASK-026, ikisi de FAZ 4'ten sonra.
-- **Deploy notu:** `main`'e her push Dokploy'da otomatik deploy tetikler. Compose değişmediyse yalnızca uygulama yeniden kurulur, vLLM yeniden başlamaz.
+**Bitenler** (hepsi Codex onaylı, `main`'de, otomatik deploy ile yayında):
+
+| Paket | Commit | Ne |
+| --- | --- | --- |
+| TASK-019/028 | `eb239b4`, `3a4ce6e` | Görsel Stüdyo: şablonlar, tuvalde düzenleme, katmanlar, geri alma, proje JSON'u |
+| TASK-020 | `aa07804`, `78a60a0` | Toplam, pay, tarih ve Excel formülü kontrolleri |
+| TASK-021 | `7c38b46` | Cümle → sayfa → alıntı izi, eşleşmeyen cümle etiketi |
+| TASK-022 | `7278fbf` | Bölüm farkındalıklı parçalama (ölçüm nötr) |
+| TASK-023 | `324ce5b`, `71aee24` | Okuma kalitesi işaretleri |
+| TASK-025 | `152e34e` | Belgeden afiş, her alanın sayfası |
+| TASK-026 | `039d65c` | Tarayıcıda kısa video (MP4 ya da WebM), geçişler, müzik |
+| TASK-027 | `998dfce` | Güvenlik duvarı ret sayfaları; HTML yükleme |
+| TASK-029 | `df27c81` | Altın test seti (22 belge, 101 soru, `D:\20pdf` git dışında) ve değerlendirme betiği |
+| TASK-030 | `9ec731b` | Altyazı, SRT/VTT, CSP `media-src blob:` (video önizlemesi) |
+| TASK-031 | `caa05e0` | Çalışmalarım (tasarımlar tarayıcıda) |
+
+**Kullanıcı ya da sunucu kararı bekleyenler:**
+1. **Altın set taban çizgisi:**
+   - Yönetici sayfasından "degerlendirme" kullanıcısı açılır.
+   - Sonra şu komut çalıştırılır: `KAI_URL=https://ai.ekutlu.com KAI_USER=degerlendirme KAI_PASS=… node scripts/eval-golden.mjs D:/20pdf`
+   - Rapor `D:\20pdf\_golden\report-*.md` dosyasına yazılır.
+2. **TASK-024 (`DocumentArtifact`):** 1. maddedeki ölçümden sonra.
+3. **Yerel ASR/TTS:** model servisi (Whisper, Piper) için onay, GB10 bellek ölçümü.
+4. **FAZ 7 (üretken görsel ve video):** model, lisans ve GB10 kıyas ölçümü.
+5. **Engelli siteler (sanayi.gov.tr):** kurum adresine izin talebi. Bot engeli bilinçli olarak aşılmıyor.
+
+**Yerel test ortamı:** `localhost:3210` geliştirme sunucusu; yerel veritabanında "studiotest" yöneticisi (parolası scratchpad'de). İşin sonunda kaldırılmalı.
 
 ## Önceki durum (sabah)
 
