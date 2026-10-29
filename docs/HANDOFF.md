@@ -54,6 +54,8 @@ Claude Code'a ilk mesaj olarak: "docs/HANDOFF.md'yi oku, kaldığımız yerden d
   - **TASK-020 bitti** (`aa07804`, Codex 3 tur). Toplam, ara toplam ve pay kontrolleri; tarih eşleştirme; değeri hesaplanmamış Excel formülü uyarısı.
   - **Sıradaki: TASK-021**, cümle → kaynak → sayfa → alıntı izlenebilirliği. Ardından TASK-022 (bölüm farkındalıklı parçalama ve yeniden sıralama), TASK-023 (OCR gereksinimi ve kalite işaretleri), TASK-024 (`DocumentArtifact` şeması, altın test setinden sonra).
   - **Altın test seti için 20 izinli Türkçe belge kullanıcıdan bekleniyor.**
+- **Görsel Stüdyo v2 bitti** (`3a4ce6e`, TASK-028, Codex 3 tur): tuval üzerinde seçme, taşıma, boyutlandırma; özellik paneli; katmanlar; geri alma; proje JSON'u.
+- **Bağlantı engeli** (`998dfce`, TASK-027): güvenlik duvarı ret sayfaları tanınıyor, model nedeni uydurmuyor, HTML yükleme var. Bot engeli bilinçli olarak aşılmıyor (gerekçe TASK-027'de).
 - **Görsel Stüdyo v1 bitti** (`eb239b4`, TASK-019, Codex 3 tur): `/studio`. presenton ve HyCanvas incelendi, entegre edilmedi (plan §6.1). Belgeden afiş TASK-025, kısa video TASK-026, ikisi de FAZ 4'ten sonra.
 - **Deploy notu:** `main`'e her push Dokploy'da otomatik deploy tetikler. Compose değişmediyse yalnızca uygulama yeniden kurulur, vLLM yeniden başlamaz.
 
