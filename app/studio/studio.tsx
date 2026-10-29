@@ -14,6 +14,7 @@ import { ThemeToggle } from "../theme-toggle";
 import Editor from "./editor";
 import type { Claim } from "@/lib/trace";
 import { recorderType, renderVideo, type Scene, type Transition } from "./video";
+import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
   DEFAULT_BRAND, FORMATS, LIMITS, TEMPLATES, cleanEls, fromTemplate, hug, newId, svgOf, toSvg,
@@ -86,6 +87,7 @@ export default function Studio({ username }: { username: string }) {
   const [transition, setTransition] = useState<Transition>("fade");
   const [motion, setMotion] = useState(true);
   const [music, setMusic] = useState<File | undefined>();
+  const [burnCaptions, setBurnCaptions] = useState(true);
   const [video, setVideo] = useState<{ progress: number; url?: string; ext?: string; error?: string } | null>(null);
   const videoAbort = useRef<AbortController | null>(null);
   const videoUrl = useRef<string | undefined>(undefined);
@@ -409,7 +411,7 @@ export default function Studio({ username }: { username: string }) {
     videoUrl.current = undefined;
     setVideo({ progress: 0 });
     try {
-      const { blob, ext } = await renderVideo(scenes, { format: sceneFormat!, transition, motion, music }, font.measure, font.css, (p) => setVideo((v) => (v && !v.url ? { ...v, progress: p } : v)), ac.signal);
+      const { blob, ext } = await renderVideo(scenes, { format: sceneFormat!, transition, motion, music, captions: burnCaptions }, font.measure, font.css, (p) => setVideo((v) => (v && !v.url ? { ...v, progress: p } : v)), ac.signal);
       if (ac.signal.aborted) return; // cancelled or left at the very end: no URL nobody will free
       videoUrl.current = URL.createObjectURL(blob);
       setVideo({ progress: 1, url: videoUrl.current, ext });
@@ -418,6 +420,14 @@ export default function Studio({ username }: { username: string }) {
     }
   }
   const videoSeconds = scenes.reduce((s, x) => s + x.seconds, 0);
+  /** A scene's caption from its own texts: the title, then the description. */
+  const captionFrom = (els: El[]) => {
+    const t = (r: string) => (els.find((e) => e.kind === "text" && e.role === r) as TextEl | undefined)?.text.trim() ?? "";
+    return [t("title"), t("subtitle")].filter(Boolean).join(" — ").slice(0, 240);
+  };
+  const setCaption = (id: string, caption: string) => setScenes((x) => x.map((y) => (y.id === id ? { ...y, caption } : y)));
+  const cues = cuesOf(scenes);
+  const saveSubs = (kind: "srt" | "vtt") => download(new Blob([kind === "srt" ? toSrt(cues) : toVtt(cues)], { type: kind === "srt" ? "application/x-subrip" : "text/vtt" }), `kurum-video.${kind}`);
 
   const saveProject = () => download(new Blob([JSON.stringify({ kind: "kurum-ai-gorsel", version: 1, template, format, els: view })], { type: "application/json" }), `kurum-gorsel-${template}-${format}.json`);
   const openProject = async (file: File | undefined) => {
@@ -564,7 +574,7 @@ export default function Studio({ username }: { username: string }) {
               <>
                 <ol className="space-y-1.5">
                   {scenes.map((s, i) => (
-                    <li key={s.id} className="flex items-center gap-2 rounded-lg border border-line p-1.5">
+                    <li key={s.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-1.5">
                       {/* eslint-disable-next-line @next/next/no-img-element -- local data: SVG of the scene */}
                       <img src={s.thumb} alt={`Sahne ${i + 1}`} className="h-12 w-auto shrink-0 rounded border border-line" style={{ aspectRatio: `${FORMATS[s.format].w} / ${FORMATS[s.format].h}` }} />
                       <span className="text-xs font-medium tabular-nums">{i + 1}.</span>
@@ -578,6 +588,7 @@ export default function Studio({ username }: { username: string }) {
                         <button className={iconBtn} onClick={() => moveScene(i, 1)} disabled={i === scenes.length - 1} aria-label={`Sahne ${i + 1} aşağı`}><ChevronDown size={14} /></button>
                         <button className={`${iconBtn} hover:text-danger`} onClick={() => setScenes((x) => x.filter((y) => y.id !== s.id))} aria-label={`Sahne ${i + 1} sil`}><Trash2 size={14} /></button>
                       </span>
+                      <input value={s.caption ?? ""} onChange={(e) => setCaption(s.id, e.target.value)} maxLength={240} placeholder="Altyazı (isteğe bağlı)" aria-label={`Sahne ${i + 1} altyazısı`} className="h-7 w-full rounded-md border border-line bg-panel px-2 text-xs outline-none focus:border-accent" />
                     </li>
                   ))}
                 </ol>
@@ -593,6 +604,18 @@ export default function Studio({ username }: { username: string }) {
                   <label className="flex items-end gap-1.5 pb-1.5 text-xs">
                     <input type="checkbox" checked={motion} onChange={(e) => setMotion(e.target.checked)} /> Hareket (yakınlaşma, belirme)
                   </label>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+                  <button onClick={() => setScenes((x) => x.map((y) => ({ ...y, caption: captionFrom(y.els) })))} className="text-accent hover:underline">Altyazıları sahne metinlerinden doldur</button>
+                  <label className="flex items-center gap-1.5">
+                    <input type="checkbox" checked={burnCaptions} onChange={(e) => setBurnCaptions(e.target.checked)} /> Altyazıyı videoya yaz
+                  </label>
+                  {cues.length > 0 && (
+                    <span className="flex gap-2">
+                      <button onClick={() => saveSubs("srt")} className="text-accent hover:underline">SRT indir</button>
+                      <button onClick={() => saveSubs("vtt")} className="text-accent hover:underline">VTT indir</button>
+                    </span>
+                  )}
                 </div>
                 <Picker label={music ? music.name.slice(0, 28) : "Müzik ekle (isteğe bağlı)"} accept=".mp3,.wav,.ogg,.m4a,audio/*" onPick={(f) => f && setMusic(f)} onClear={music ? () => setMusic(undefined) : undefined} />
                 <p className="text-xs text-muted">{scenes.length} sahne · {videoSeconds} sn · {FORMATS[sceneFormat!].w}×{FORMATS[sceneFormat!].h} · {recorderType()?.ext.toUpperCase() ?? "desteklenmiyor"}. Kayıt gerçek sürede yapılır; bu sekme açık kalmalı.</p>

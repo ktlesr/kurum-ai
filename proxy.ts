@@ -14,6 +14,8 @@ export function proxy(request: NextRequest) {
     "style-src-attr 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self'",
+    // The studio previews the video it just recorded in this page (a blob: URL it made itself); no remote media.
+    "media-src 'self' blob:",
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",

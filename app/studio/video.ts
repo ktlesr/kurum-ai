@@ -6,12 +6,13 @@
 // — and the browser's own MediaRecorder records it (MP4 where supported, else WebM), with optional music. Nothing
 // leaves the browser; no server job, no new dependency. Plan §7.1 lists Remotion as a candidate: its license needs a
 // paid company license for organisations over three people, so it isn't used.
-import { FORMATS, svgOf, type El, type FormatId, type Measure } from "@/lib/studio";
+import { FONT_FAMILY, FORMATS, svgOf, type El, type FormatId, type Measure } from "@/lib/studio";
+import { captionLines } from "@/lib/subtitles";
 import { imageOf } from "./media";
 
-export interface Scene { id: string; els: El[]; seconds: number }
+export interface Scene { id: string; els: El[]; seconds: number; caption?: string }
 export type Transition = "fade" | "slide" | "none";
-export interface VideoOpts { format: FormatId; transition: Transition; motion: boolean; music?: File; fps?: number }
+export interface VideoOpts { format: FormatId; transition: Transition; motion: boolean; music?: File; fps?: number; captions?: boolean }
 
 const isFore = (e: El) => e.kind === "text" || (e.kind === "image" && !!e.logo);
 const TRANSITION_S = 0.6;
@@ -155,6 +156,26 @@ export async function renderVideo(scenes: Scene[], opts: VideoOpts, measure: Mea
       ctx.drawImage(l.fg, dx, (1 - e) * h * 0.04, w, h);
       ctx.globalAlpha = 1;
     };
+    // Burnt-in caption of the scene on screen: a dark rounded box near the bottom, white text, at most 2 lines.
+    const capSize = Math.round(Math.min(w, h) * (h > w ? 0.046 : 0.04));
+    const drawCaption = (text: string) => {
+      ctx.font = `600 ${capSize}px ${FONT_FAMILY}, Arial, sans-serif`;
+      const lines = captionLines(text, w * 0.82, (s) => ctx.measureText(s).width);
+      if (!lines.length) return;
+      const lh = capSize * 1.3;
+      const bw = Math.min(w * 0.9, Math.max(...lines.map((l) => ctx.measureText(l).width)) + capSize * 1.4);
+      const bh = lines.length * lh + capSize * 0.8;
+      const bx = (w - bw) / 2;
+      const by = h - h * 0.08 - bh;
+      ctx.fillStyle = "rgba(10, 18, 30, 0.68)";
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, capSize * 0.4);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      lines.forEach((l, k) => ctx.fillText(l, w / 2, by + capSize * 0.4 + lh * (k + 0.5)));
+    };
     let shown = -1;
     const frame = (t: number) => {
       let i = starts.findLastIndex((s) => s <= t);
@@ -176,6 +197,8 @@ export async function renderVideo(scenes: Scene[], opts: VideoOpts, measure: Mea
         if (opts.transition === "fade") drawScene(next, i + 1, localOf(i + 1, t), p, 0);
         else drawScene(next, i + 1, localOf(i + 1, t), 1, (1 - p) * w);
       }
+      const cap = scenes[i].caption?.trim();
+      if (opts.captions && cap) drawCaption(cap);
     };
 
     frame(0);
