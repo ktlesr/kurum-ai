@@ -14,14 +14,24 @@ const TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 3;
 const MAX_LINKS = 150;
 
+// Bare addresses ("tcmb.gov.tr de dolar kuru") count only with a known ending, so a file name like "rapor.pdf" or
+// "veri.xlsx" isn't read as a site. Not after "@" (e-mail) or another name part; a whole http(s) address is matched
+// first, so the hosts inside its path or query never come up on their own.
+const TLDS = "tr|com|net|org|gov|edu|int|info|biz|io|ai|co|eu|de|uk|us|fr|nl|it|es|ch|at|be|ru|az|kz|dev|app";
+const URL_RE = new RegExp(
+  `https?:\\/\\/[^\\s<>"'\`]+|(?<![\\p{L}\\p{N}@._-])(?:[\\p{L}\\p{N}](?:[\\p{L}\\p{N}-]*[\\p{L}\\p{N}])?\\.)+(?:${TLDS})(?!\\.?[\\p{L}\\p{N}-])(?::\\d{1,5})?(?:[/?#][^\\s<>"'\`]*)?`,
+  "giu",
+);
+
 /**
- * http(s) addresses in a message, in order, at most MAX_URLS: trailing punctuation isn't part of the address
- * (a "]" only when it doesn't close an IPv6 host), and what URL can't parse is left out.
+ * Web addresses in a message, in order, at most MAX_URLS: http(s) ones as written, bare ones ("www.x.gov.tr/y")
+ * as https. Trailing punctuation isn't part of the address (a "]" only when it doesn't close an IPv6 host), and
+ * what URL can't parse is left out.
  */
 export function findUrls(text: string): string[] {
   const out: string[] = [];
-  for (const [m] of text.matchAll(/https?:\/\/[^\s<>"'`]+/gi)) {
-    let u = m.replace(/[),.;:!?]+$/, "");
+  for (const [m] of text.matchAll(URL_RE)) {
+    let u = (/^https?:\/\//i.test(m) ? m : `https://${m}`).replace(/[),.;:!?]+$/, "");
     while (u.endsWith("]") && !/^https?:\/\/\[[^\]/]*\]$/i.test(u)) u = u.slice(0, -1).replace(/[),.;:!?]+$/, "");
     try {
       new URL(u);

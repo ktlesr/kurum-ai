@@ -11,6 +11,13 @@ test("findUrls: http(s) only, trailing punctuation dropped, deduped, at most 3",
   assert.deepEqual(findUrls("(http://[::1]) ve [https://a.tr/x] ve https://%"), ["http://[::1]", "https://a.tr/x"]);
 });
 
+test("findUrls: bare addresses with a known ending read as https, file names and e-mails aren't", () => {
+  assert.deepEqual(findUrls("tcmb.gov.tr de dolar kurunu alır mısın"), ["https://tcmb.gov.tr"]);
+  assert.deepEqual(findUrls("Bkz. www.hmb.gov.tr/duyurular?y=2026, ve (Örnek.com.tr'de)."), ["https://www.hmb.gov.tr/duyurular?y=2026", "https://Örnek.com.tr"]);
+  assert.deepEqual(findUrls("rapor.pdf, veri.xlsx, a.b.c, 3.14, ad@kurum.gov.tr, dosya.com.pdf"), []);
+  assert.deepEqual(findUrls("https://a.tr/?u=b.com ve c.org"), ["https://a.tr/?u=b.com", "https://c.org"]);
+});
+
 test("isPrivate: internal ranges refused, public allowed", () => {
   for (const ip of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "172.31.9.9", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1"]) {
     assert.ok(isPrivate(ip), ip);
