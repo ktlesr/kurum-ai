@@ -51,7 +51,9 @@ Claude Code'a ilk mesaj olarak: "docs/HANDOFF.md'yi oku, kaldığımız yerden d
 ## ŞU AN KALDIĞIMIZ YER (güncel)
 
 - **vLLM GPU sorunu çözüldü.** `docker run --gpus all … nvidia-smi` GB10'u gösteriyor. vLLM konteyneri `healthy`, sohbet vLLM'den cevaplıyor; yönetici sayfasında "Varsayılana dön" yapıldı.
-- **Sıradaki adım: vLLM hızlandırma (MTP) denemesi.** Kod hazır ve Codex onaylı; varsayılanda kapalı olduğu için deploy hiçbir şeyi değiştirmez (`deploy/compose.yml`, README → vLLM → "Hızlandırma").
+- **MTP açık ve çalışıyor (2026-10-29):** 4 tahminde 62,2 token/s, kabul uzunluğu 2,79 (konum başına %74/%49/%32/%23; Türkçe İngilizceden düşük). Kullanıcı 3 tahmine geçti, ölçüm bekleniyor; hızlandırmasız taban hız henüz ölçülmedi. Karşılaştırma komutu: `docker logs $(docker ps -qf name=vllm-1) 2>&1 | grep -v AutoTuner | grep -E "generation throughput|SpecDecoding" | tail -6`.
+- **Açılış önbelleği eklendi:** `vllmcache` volume'ü (`/root/.cache/vllm`), her deploy'daki ~2–3 dk derleme/autotune tekrarını önler. Deploy sırasında vLLM 4–5 dk "ulaşılamıyor" görünür; bu normal.
+- (Önceki adım, tamamlandı) **vLLM hızlandırma (MTP) denemesi.** Kod hazır ve Codex onaylı; varsayılanda kapalı olduğu için deploy hiçbir şeyi değiştirmez (`deploy/compose.yml`, README → vLLM → "Hızlandırma").
   1. Kullanıcı Dokploy Environment'a iki satırı ekler (`VLLM_DRAFT_MODEL`, `VLLM_SPECULATIVE_CONFIG`; tam metin README'de) ve deploy eder.
   2. Kontrol: `docker logs --tail 50 $(docker ps -qf name=vllm)`. Logda speculative/MTP satırları ve kabul oranı (acceptance) görünmeli; konteyner `healthy` olmalı.
   3. Hızı önce/sonra karşılaştır: aynı soruyla yazma hızı (token/s, logdaki "Avg generation throughput").

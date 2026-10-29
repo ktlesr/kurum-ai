@@ -120,6 +120,9 @@ services:
       DO_NOT_TRACK: "1"
     volumes:
       - ${VLLM_MODELS_DIR:-vllmmodels}:/models/llm:ro
+      # torch.compile and FlashInfer autotune results (keyed by model and settings): a redeploy reuses them instead
+      # of recomputing for minutes.
+      - vllmcache:/root/.cache/vllm
     ipc: host
     ulimits:
       memlock: -1
@@ -176,3 +179,4 @@ volumes:
   appdata:
   dbdata:
   vllmmodels:
+  vllmcache:

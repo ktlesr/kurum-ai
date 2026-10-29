@@ -175,3 +175,5 @@ VLLM_SPECULATIVE_CONFIG='{"method":"mtp","model":"/models/llm/google/gemma-4-26B
 ```
 
 Deploy'da taslak model (~0,9 GB) bir kez indirilir. vLLM açılmazsa (logda `Engine core initialization failed` ya da `same reduction dim`), iki satırı silip yeniden deploy edin: önceki hâline döner. Taslak model vLLM'in mevcut bellek payından yer alır (`VLLM_GPU_MEMORY_UTILIZATION` değişmez).
+
+**Açılış önbelleği.** vLLM'in derleme ve ayar (autotune) sonuçları `vllmcache` volume'ünde tutulur; ilk deploy bunları üretir (~2–3 dk), sonraki aynı ayarlı deploy'lar yeniden kullanır. Ayar ya da model değişince vLLM yeni sonuç üretir. vLLM imajı güncellendikten sonra açılışta tuhaf bir hata olursa yalnızca bu volume'ü silin (`docker volume rm <proje>_vllmcache`, vLLM durmuşken); modeller ayrı volume'de kalır.
