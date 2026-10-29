@@ -54,7 +54,7 @@ function has(answer, token) {
   const c = canon(answer);
   const t = canon(token).trim();
   // Not preceded by a sign or a decimal part either: "5 milyon" isn't inside "0.5 milyon" or "-5 milyon".
-  return new RegExp(`(^|[^\\p{L}\\p{N}.\\-])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\p{L}\\p{N}])`, "u").test(c);
+  return new RegExp(`(^|[^\\p{L}\\p{N}.\\-])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|(?!\\.\\d)[^\\p{L}\\p{N}])`, "u").test(c);
 }
 /** "Not in the document" said up front (first two sentences), not as an aside after giving figures. */
 const REFUSAL = /(bulunmuyor|bulunmamaktadır|yer almıyor|yer almamaktadır|belirtilmemiş|belirtilmiyor|bilgi yok|bilgisi yok|geçmiyor|içermiyor|bulunamadı|yer verilmemiş|rastlanmadı|mevcut değil|bilgi bulunmamaktadır)/;
@@ -80,6 +80,17 @@ try {
 }
 const api = ctx.request;
 const headers = { Origin: base };
+// The app allows 20 questions and 20 uploads a minute per user (lib/admission): on 429, wait as told and try again.
+const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+async function post(url, opts) {
+  for (let i = 0; ; i++) {
+    const r = await api.post(url, opts);
+    if (r.status() !== 429 || i >= 5) return r;
+    const wait = Number(r.headers()["retry-after"]) || 60;
+    process.stdout.write(`(çok istek, ${wait} sn bekleniyor) `);
+    await sleep(wait * 1000);
+  }
+}
 const get = async (p) => (await api.get(`${base}${p}`, { maxRedirects: 0 })).json();
 const models = await get("/api/models");
 const model = models.defaultModel;
@@ -91,37 +102,51 @@ const nfc = (s) => s.normalize("NFC");
 // Reused only when name and size match (an edited PDF with the same name is uploaded again).
 const have = new Map(((await get("/api/upload")) ?? []).map((d) => [`${nfc(d.name)}|${d.size}`, d.id]));
 const key = (name) => `${nfc(name)}|${fs.statSync(path.join(dir, name)).size}`;
-const need = [...new Set(items.flatMap((q) => q.files))];
-for (const name of need) {
-  if (have.has(key(name))) continue;
-  process.stdout.write(`yükleniyor: ${name} … `);
-  const t0 = Date.now();
-  const r = await api.post(`${base}/api/upload`, { maxRedirects: 0, headers, multipart: { file: { name, mimeType: "application/pdf", buffer: fs.readFileSync(path.join(dir, name)) } }, timeout: 30 * 60_000 });
-  const lines = (await r.text()).trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
-  const done = lines.find((l) => l.type === "done");
-  if (!done) {
-    console.log(`HATA ${r.status()} ${lines.find((l) => l.type === "error")?.error ?? (await r.text()).slice(0, 200)}`);
-    continue;
+const goldenKeys = new Set(items.flatMap((q) => q.files).filter((f) => fs.existsSync(path.join(dir, f))).map(key));
+/** Uploads a document unless the user already has it. At the app's file limit (409) it removes one golden-set
+ *  document that no remaining question needs (only those: the user's other files are left alone) and tries again. */
+async function upload(name, stillNeeded) {
+  if (have.has(key(name))) return;
+  for (;;) {
+    process.stdout.write(`yükleniyor: ${name} … `);
+    const t0 = Date.now();
+    const r = await post(`${base}/api/upload`, { maxRedirects: 0, headers, multipart: { file: { name, mimeType: "application/pdf", buffer: fs.readFileSync(path.join(dir, name)) } }, timeout: 30 * 60_000 });
+    const text = await r.text();
+    const lines = text.trim().split("\n").filter(Boolean).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } });
+    const done = lines.find((l) => l.type === "done");
+    if (done) {
+      have.set(key(name), done.doc.id);
+      return console.log(`${Math.round((Date.now() - t0) / 1000)} sn${done.doc.warning ? ` (uyarı: ${done.doc.warning})` : ""}`);
+    }
+    const spare = r.status() === 409 && [...have].find(([k]) => goldenKeys.has(k) && !stillNeeded.has(k));
+    if (!spare) return console.log(`HATA ${r.status()} ${lines.find((l) => l.type === "error")?.error ?? text.slice(0, 200)}`);
+    console.log(`dosya sınırı: işi biten ${spare[0].split("|")[0]} kaldırılıyor`);
+    const d = await api.delete(`${base}/api/upload?id=${encodeURIComponent(spare[1])}`, { maxRedirects: 0, headers });
+    if (!d.ok() && d.status() !== 404) return console.log(`HATA kaldırılamadı (${d.status()})`); // 404: already gone
+    have.delete(spare[0]);
   }
-  have.set(key(name), done.doc.id);
-  console.log(`${Math.round((Date.now() - t0) / 1000)} sn${done.doc.warning ? ` (uyarı: ${done.doc.warning})` : ""}`);
 }
 
 // ---- ask ------------------------------------------------------------------------------------------------------------
 const results = [];
-for (const q of items) {
+// The same fields as a scored row, without the item's own `answer` (that is the expected one, not the app's).
+const row = ({ answer, pages, ...q }, x) => ({ ...q, expected: answer, expectedPages: pages, ...x });
+for (const [i, q] of items.entries()) {
+  const later = new Set(items.slice(i).flatMap((x) => x.files).filter((f) => fs.existsSync(path.join(dir, f))).map(key));
+  for (const f of q.files) if (fs.existsSync(path.join(dir, f))) await upload(f, later);
   const ids = q.files.map((f) => (fs.existsSync(path.join(dir, f)) ? have.get(key(f)) : undefined));
   if (ids.some((id) => !id)) {
-    results.push({ ...q, status: "atlandı", why: "belge yüklenemedi" });
+    results.push(row(q, { status: "atlandı", why: "belge yüklenemedi" }));
     continue;
   }
   const t0 = Date.now();
   const body = { model, fileIds: ids, messages: [{ role: "user", content: q.question }], ...(arg("--profile") === "deep" ? { scope: "all", think: true } : {}) };
-  const r = await api.post(`${base}/api/chat`, { maxRedirects: 0, headers: { ...headers, "Content-Type": "application/json" }, data: body, timeout: 30 * 60_000 });
+  const r = await post(`${base}/api/chat`, { maxRedirects: 0, headers: { ...headers, "Content-Type": "application/json" }, data: body, timeout: 30 * 60_000 });
   const raw = await r.text();
   const secs = Math.round((Date.now() - t0) / 100) / 10;
   if (!r.ok()) {
-    results.push({ ...q, status: "hata", why: `${r.status()} ${raw.slice(0, 200)}`, secs });
+    results.push(row(q, { status: "hata", error: `${r.status()} ${raw.slice(0, 200)}`, secs }));
+    console.log(`${q.id.padEnd(10)} hata    ${r.status()}`);
     continue;
   }
   const noStatus = raw.replace(/\u001d[^\u001d]*\u001d/g, "");
