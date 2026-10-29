@@ -76,7 +76,7 @@ Claude Code'a ilk mesaj olarak: "docs/HANDOFF.md'yi oku, kaldığımız yerden d
 4. **FAZ 7 (üretken görsel ve video):** model, lisans ve GB10 kıyas ölçümü.
 5. **Engelli siteler (sanayi.gov.tr):** kurum adresine izin talebi. Bot engeli bilinçli olarak aşılmıyor.
 
-**Yerel test ortamı:** `localhost:3210` geliştirme sunucusu; yerel veritabanında "studiotest" yöneticisi (parolası scratchpad'de). İşin sonunda kaldırılmalı.
+**Yerel test ortamı:** temizlendi (test kullanıcısı ve belgesi silindi, geliştirme sunucusu durduruldu). Yeniden test için `scripts/create-admin.ts` ile geçici bir kullanıcı açılıp işin sonunda silinmeli.
 
 ## Önceki durum (sabah)
 
