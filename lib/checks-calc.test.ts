@@ -123,3 +123,15 @@ test("verifyNumbers (review 2): parts of an uncertain date aren't known numbers"
   assert.deepEqual(verifyNumbers("15 gün sürer", "15 Kasım 2026(?)"), { unverified: [], uncertain: ["15"] });
   assert.deepEqual(verifyNumbers("2026 yılında", "2026-11-15(?) ve 2026 bütçesi"), { unverified: [], uncertain: [] });
 });
+
+test("checkTotals / verifyNumbers (security review): hostile sizes stay fast", () => {
+  // many 400-row tables whose totals never match and whose rows never nest: the shared budget caps the search
+  const one = ["| Kalem | Tutar |", "| --- | --- |", ...Array.from({ length: 400 }, (_, i) => `| K${i} | ${2 ** (i % 30)} |`), "| Toplam | 1 |"].join("\n");
+  let t0 = Date.now();
+  const notes = checkTotals(Array.from({ length: 200 }, () => one).join("\n\nTablo\n\n"));
+  assert.ok(!notes.some((n) => /tutarlı/.test(n)), "an exhausted search never certifies");
+  assert.ok(Date.now() - t0 < 5000, `checkTotals ${Date.now() - t0} ms`);
+  t0 = Date.now();
+  assert.deepEqual(verifyNumbers("2026 ve 15", "01.11.2026(?)15.11.2026(?) ".repeat(100_000)), { unverified: [], uncertain: ["2026", "15"] });
+  assert.ok(Date.now() - t0 < 5000, `verifyNumbers ${Date.now() - t0} ms`);
+});

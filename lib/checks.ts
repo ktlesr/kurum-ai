@@ -173,6 +173,7 @@ const isYear = (c: string) => /^(19|20)\d{2}$/.test(c.trim());
  */
 export function checkTotals(md: string): string[] {
   const notes: string[] = [];
+  let budget = 2_000_000; // parent-row search steps across all tables (a hostile file can't make it quadratic)
   for (const { title, rows } of tables(md)) {
     const clean = (c: string) => c.replace(/\*\*/g, "").trim();
     // The label: the first text cell (a "No" column before it is a number).
@@ -222,10 +223,15 @@ export function checkTotals(md: string): string[] {
         if (Math.abs(sum - stated) <= tol(vals.length)) checked++;
         else {
           // Could a row be the sum of the next ones (parent and sub-items)? Then the numbers alone can't decide.
-          let nested = false;
+          // One work budget for the whole document: once spent, every further mismatch is left unreported (unsure).
+          let nested = budget <= 0;
           for (let a = 0; a < (vals.length <= 400 ? vals.length : 0) && !nested; a++) {
             let s = 0;
             for (let b = a + 1; b < vals.length; b++) {
+              if (--budget <= 0) {
+                nested = true;
+                break;
+              }
               s += vals[b];
               if (b - a >= 2 && Math.abs(s - vals[a]) <= tol(b - a)) {
                 nested = true;
@@ -294,13 +300,18 @@ export function verifyNumbers(answer: string, source: string): { unverified: str
   // is blanked before the plain number scan below.
   const dates = new Set<string>();
   const shakyDates = new Set<string>();
-  let plain = source;
+  const pieces: string[] = []; // the source with uncertain dates blanked, built in one pass
+  let at = 0;
   for (const { key, index, length } of findDates(source)) {
     const unsure = source.startsWith("(?)", index + length);
     (unsure ? shakyDates : dates).add(key);
     for (const p of key.split(".")) (unsure ? shaky : known).add(String(+p));
-    if (unsure) plain = plain.slice(0, index) + " ".repeat(length + 3) + plain.slice(index + length + 3);
+    if (unsure) {
+      pieces.push(source.slice(at, index), " ");
+      at = index + length + 3;
+    }
   }
+  const plain = pieces.join("") + source.slice(at);
   for (const m of plain.matchAll(/-?\d+(?:[.,]\d+)*(\(\?\))?/g)) {
     const n = normNum(m[0].replace("(?)", ""));
     (m[1] ? shaky : known).add(n);
