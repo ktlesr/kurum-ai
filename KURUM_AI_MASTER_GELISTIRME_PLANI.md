@@ -166,6 +166,7 @@ Dosya seçildi → yerel kalıcı kopya doğrulandı → kullanıcı görevi ba�
 - Logo ve fotoğraflar `<image>` olarak gömülür. En-boy oranı korunur, logo kırpılmaz ve renklendirilmez. Görsel bağlamında script çalışmaz.
 - Model (vLLM) yalnızca başlık, alt metin ve kısa metinleri JSON olarak önerir. Uzunluklar sunucuda sınırlanır ve kullanıcı her alanı düzenleyebilir.
 - Kullanıcının görselleri ve marka kiti tarayıcıda kalır, sunucuya yalnızca metin isteği gider.
+- **v2 (TASK-028):** tuval üzerinde doğrudan düzenleme. Seçme, taşıma, boyutlandırma, hizalama kılavuzları; yazı boyutu, kalınlık, renk, hizalama ve aralıklar; logo yalnızca oranı korunarak büyür; katmanlar, kilit, geri alma, proje JSON'u. Tuval ve dışa aktarma aynı çizimden üretilir. Editör kitaplığı eklenmedi (gerekçe TASK-028'de).
 - **Görüntü üretim modeli (diffusion) v1'de yoktur.** Gemma 4 görsel okur ama üretemez. Arka plan kullanıcı fotoğrafı ya da marka renkleri/degradesidir. Metinden görsel üretimi (ComfyUI benzeri ayrı servis) FAZ 7 değerlendirmesine bağlıdır.
 
 ## 7. VIDEO / REELS STÜDYOSU
