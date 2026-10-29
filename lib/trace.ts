@@ -112,10 +112,15 @@ function quoteOf(p: Passage, words: string[], nums: Set<string>): string {
  * up — the UI says which sentences these are).
  */
 export function traceClaims(answer: string, docs: { name: string; text: string }[]): Claim[] {
+  return traceTexts(claimsOf(answer), docs);
+}
+
+/** The same matching for given texts (e.g. a poster's title and date), whatever their length. */
+export function traceTexts(texts: string[], docs: { name: string; text: string }[]): Claim[] {
   if (!docs.length) return [];
   const ps = passages(docs);
   const single = docs.length === 1;
-  return claimsOf(answer).map((text): Claim => {
+  return texts.map((text): Claim => {
     const words = [...new Set(tokens(text).filter((w) => !/^\d/.test(w)))];
     const nums = numbersOf(text);
     let best: Passage | null = null;

@@ -1,7 +1,7 @@
 // Run: pnpm test. Sentence → source tracing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { claimsOf, traceClaims } from "./trace.ts";
+import { claimsOf, traceClaims, traceTexts } from "./trace.ts";
 
 const rapor = [
   "--- Sayfa 1 ---",
@@ -94,4 +94,13 @@ test("traceClaims (review 2): the page marker's number is no evidence", () => {
   assert.notEqual(c.status, "ok");
   const [d] = traceClaims("Proje süresi 9 ay olarak uygulanır ve bu süre uzatılmaz.", [{ name: "a.pdf", text: "--- Sayfa 3 ---\nProje süresi 9 ay olarak uygulanır ve bu süre uzatılmaz." }]);
   assert.equal(d.source, "Sayfa 3");
+});
+
+test("traceTexts: short poster fields (title, date) are matched too", () => {
+  const [title, date, made] = traceTexts(["Dijital Dönüşüm Desteği", "15.11.2026", "Ücretsiz konser"], [{ name: "rapor.pdf", text: rapor }]);
+  assert.equal(title.status, "ok");
+  assert.equal(title.source, "Sayfa 1");
+  assert.equal(date.status, "ok");
+  assert.equal(date.source, "Sayfa 3");
+  assert.equal(made.status, "none");
 });

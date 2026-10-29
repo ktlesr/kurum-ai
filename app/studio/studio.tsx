@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "../theme-toggle";
 import Editor from "./editor";
+import type { Claim } from "@/lib/trace";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
   DEFAULT_BRAND, FORMATS, LIMITS, TEMPLATES, cleanEls, fromTemplate, hug, newId, svgOf, toSvg,
@@ -70,6 +71,12 @@ export default function Studio({ username }: { username: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [brief, setBrief] = useState("");
+  // The user's own uploaded documents (TASK-025): a poster can be written from one; each field shows its page.
+  const [docs, setDocs] = useState<{ id: string; name: string }[]>([]);
+  const [docId, setDocId] = useState("");
+  // Each field's source with the exact text it was found for: shown only while the field still says that, so a
+  // canvas edit, an undo or a new template never keeps a page that belongs to other words.
+  const [sources, setSources] = useState<Partial<Record<Field, { claim: Claim; text: string }>>>({});
   const [busy, setBusy] = useState<"" | "fill" | "export">("");
   const [note, setNote] = useState<{ kind: "error" | "ok"; text: string } | null>(null);
   const abort = useRef<AbortController | null>(null);
@@ -77,6 +84,16 @@ export default function Studio({ username }: { username: string }) {
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is only readable after mount
   useEffect(() => setBrand(loadBrand(username)), [username]);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/upload")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: { id?: unknown; name?: unknown }[]) => live && Array.isArray(list) && setDocs(list.filter((d) => typeof d.id === "string" && typeof d.name === "string") as { id: string; name: string }[]))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
   useEffect(() => {
     let live = true;
     Promise.all([photo && thumbOf(photo), brand.logo && thumbOf(brand.logo)])
@@ -189,12 +206,19 @@ export default function Studio({ username }: { username: string }) {
     setBusy("fill");
     setNote(null);
     try {
-      const r = await fetch("/api/studio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ template, brief }), signal: ac.signal });
-      const j = (await r.json().catch(() => ({}))) as { content?: Content; error?: string };
+      const r = await fetch("/api/studio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ template, brief, ...(docId ? { docId } : {}) }), signal: ac.signal });
+      const j = (await r.json().catch(() => ({}))) as { content?: Content; error?: string; sources?: Partial<Record<Field, Claim>> };
       if (ac.signal.aborted) return; // edited or switched meanwhile: keep the user's version
       if (!r.ok || !j.content) throw new Error(j.error ?? "Öneri alınamadı.");
       applyContent(j.content);
-      setNote({ kind: "ok", text: "Metinler yazıldı. Tuvalde çift tıklayarak ya da soldan düzenleyebilirsiniz." });
+      const got = j.sources ?? {};
+      setSources(Object.fromEntries((Object.keys(got) as Field[]).filter((k) => got[k]).map((k) => [k, { claim: got[k]!, text: j.content![k].trim() }])));
+      const missing = Object.values(got).filter((c) => c?.status === "none").length;
+      setNote(
+        missing
+          ? { kind: "error", text: `Metinler yazıldı; ${missing} alan belgede eşleşmedi (kırmızı). Kontrol edin.` }
+          : { kind: "ok", text: docId ? "Metinler belgeden yazıldı; her alanın sayfası yanında. Tuvalde ya da soldan düzenleyebilirsiniz." : "Metinler yazıldı. Tuvalde çift tıklayarak ya da soldan düzenleyebilirsiniz." },
+      );
     } catch (e) {
       if (!ac.signal.aborted) setNote({ kind: "error", text: (e as Error).message });
     } finally {
@@ -361,6 +385,8 @@ export default function Studio({ username }: { username: string }) {
     }
   };
 
+  /** What the field says now: its element on an edited canvas, else the text fields. */
+  const fieldText = (k: Field) => (els ? ((view.find((e) => e.kind === "text" && e.role === k) as TextEl | undefined)?.text ?? "") : content[k]).trim();
   const fields: [Field, string][] =
     template === "alinti" ? [["title", "Söz"], ["subtitle", "Söyleyen"], ["detail", "Unvan / kurum"]] : [["tag", "Etiket"], ["title", "Başlık"], ["subtitle", "Açıklama"], ["detail", "Tarih, yer ya da adres"]];
 
@@ -421,9 +447,18 @@ export default function Studio({ username }: { username: string }) {
 
           <section className={section} aria-labelledby="t-ai">
             <h2 id="t-ai" className={heading}>Yapay zekâ ile yaz</h2>
+            {docs.length > 0 && (
+              <label className="block space-y-1">
+                <span className="text-xs font-medium">Belgeden yaz <span className="font-normal text-muted">(isteğe bağlı)</span></span>
+                <select value={docId} onChange={(e) => setDocId(e.target.value)} className={field}>
+                  <option value="">Belge kullanma</option>
+                  {docs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </label>
+            )}
             <textarea aria-labelledby="t-ai" value={brief} onChange={(e) => setBrief(e.target.value)} maxLength={2000} rows={3} placeholder="Konuyu anlatın: ör. 12 Kasım'da kongre salonunda yatırımcı buluşması, saat 10.00" className={`${field} resize-none`} />
             <div className="flex items-center gap-2">
-              <button onClick={suggest} disabled={!brief.trim() || busy === "fill"} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40">
+              <button onClick={suggest} disabled={(!brief.trim() && !docId) || busy === "fill"} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40">
                 {busy === "fill" ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                 {busy === "fill" ? "Yazılıyor…" : "Metinleri öner"}
               </button>
@@ -433,16 +468,30 @@ export default function Studio({ username }: { username: string }) {
                 </button>
               )}
             </div>
-            <p className="text-xs text-muted">Yalnızca bu açıklama kurum sunucusundaki modele gider; görselleriniz tarayıcınızda kalır.</p>
+            <p className="text-xs text-muted">{docId ? "Metinler yalnızca seçilen belgedeki bilgilerle yazılır; belge zaten kurum sunucusunda. " : "Yalnızca bu açıklama kurum sunucusundaki modele gider. "}Görselleriniz tarayıcınızda kalır.</p>
           </section>
 
           <section className={section} aria-labelledby="t-text">
             <h2 id="t-text" className={heading}>Metinler</h2>
             {fields.map(([k, label]) => (
               <label key={k} className="block space-y-1">
-                <span className="flex justify-between text-xs font-medium">
-                  {label}
-                  <span className="font-normal tabular-nums text-muted">{content[k].length}/{LIMITS[k]}</span>
+                <span className="flex justify-between gap-2 text-xs font-medium">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {label}
+                    {(() => {
+                      const s = sources[k];
+                      if (!s || s.text !== fieldText(k)) return null;
+                      return (
+                        <span
+                          className={`truncate font-normal ${s.claim.status === "ok" ? "text-ok" : s.claim.status === "weak" ? "text-warn-fg" : "text-danger"}`}
+                          title={s.claim.quote ? `“${s.claim.quote}”` : "Belgede eşleşen yer bulunamadı"}
+                        >
+                          · {s.claim.source ?? "belgede eşleşmedi"}
+                        </span>
+                      );
+                    })()}
+                  </span>
+                  <span className="shrink-0 font-normal tabular-nums text-muted">{content[k].length}/{LIMITS[k]}</span>
                 </span>
                 {k === "subtitle" || (k === "title" && template === "alinti") ? (
                   <textarea value={content[k]} onChange={(e) => editField(k, e.target.value)} onBlur={() => els && change(els)} maxLength={LIMITS[k]} rows={2} className={`${field} resize-none`} />
