@@ -253,7 +253,12 @@ export async function readPage(raw: string, signal: AbortSignal, opts: { allowPr
       url = new URL(r.location, url);
       continue;
     }
-    if (r.status < 200 || r.status >= 300) throw new WebError(`http_${r.status}`);
+    if (r.status < 200 || r.status >= 300) {
+      // A refusal page with an error status is still a refusal, not a broken server.
+      const page = [401, 403, 405, 406, 429, 503].includes(r.status) ? htmlToText(r.body.toString("utf8").slice(0, 200_000)) : null;
+      const refused = !!page && isBlockPage(page.title, page.text);
+      throw new WebError(refused ? "blocked" : `http_${r.status}`);
+    }
     const charset = /charset=([\w-]+)/i.exec(r.type)?.[1]?.toLowerCase();
     let body: string;
     try {
@@ -263,13 +268,35 @@ export async function readPage(raw: string, signal: AbortSignal, opts: { allowPr
     }
     if (/text\/html|application\/xhtml/i.test(r.type) || /^\s*<(!doctype|html)/i.test(body)) {
       const { title, text, links } = htmlToText(body, url);
+      if (isBlockPage(title, text)) throw new WebError("blocked");
       return { url: url.href, title: title.slice(0, 200), text: text.slice(0, MAX_CHARS), links, html: true };
     }
     // Data files read as they are (the model reads XML/JSON fine); indentation is only spent tokens.
     if (/^application\/([\w.-]+\+)?(xml|json)\b/i.test(r.type)) return { url: url.href, title: "", text: body.replace(/\n\s+/g, "\n").slice(0, MAX_CHARS), links: [] };
-    if (/^text\//i.test(r.type) || !r.type) return { url: url.href, title: "", text: body.slice(0, MAX_CHARS), links: [] };
+    if (/^text\//i.test(r.type) || !r.type) {
+      if (isBlockPage("", body)) throw new WebError("blocked");
+      return { url: url.href, title: "", text: body.slice(0, MAX_CHARS), links: [] };
+    }
     throw new WebError("type");
   }
+}
+
+/**
+ * A firewall's refusal or bot challenge served as a page (often with status 200): F5 "Request Rejected", Akamai
+ * "Access Denied", Cloudflare "Just a moment…", Imperva, captcha walls. Only short pages: an article that mentions
+ * these words is still an article.
+ */
+export function isBlockPage(title: string, text: string): boolean {
+  if (text.length > 3000) return false;
+  const t = `${title}\n${text}`;
+  return (
+    (/request rejected/i.test(t) && /support id/i.test(t)) ||
+    /the requested url was rejected/i.test(t) ||
+    (/access denied/i.test(t) && /reference\s*#|permission to access/i.test(t)) ||
+    /attention required!?\s*\|\s*cloudflare|just a moment\.\.\.|checking (if the site connection is secure|your browser)|enable javascript and cookies to continue/i.test(t) ||
+    /incapsula incident id|request unsuccessful\. incapsula/i.test(t) ||
+    (t.length < 800 && /captcha/i.test(t) && /(robot|insan|human|doğrula|verify)/i.test(t)) // a challenge, not an article
+  );
 }
 
 /** Turkish reason for the answer's note. */
@@ -278,6 +305,7 @@ export const webReason = (e: unknown) => {
   const t: Record<string, string> = {
     invalid: "adres geçersiz", scheme: "yalnızca http/https", credentials: "adreste kullanıcı adı/parola var", port: "yalnızca 80/443 portları",
     private: "iç ağ adresi", offsite: "başka siteye yönlendirdi", redirects: "çok fazla yönlendirme", too_large: "sayfa çok büyük", type: "HTML, metin ya da veri dosyası değil", timeout: "zaman aşımı",
+    blocked: "site otomatik erişimi engelliyor (güvenlik duvarı)",
   };
   return t[m] ?? (m.startsWith("http_") ? `sunucu ${m.slice(5)} döndürdü` : "bağlanılamadı");
 };

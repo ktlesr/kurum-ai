@@ -8,7 +8,7 @@
 import { tmpdir } from "node:os";
 import http from "node:http";
 import net from "node:net";
-import { guardedLookup, htmlToText, isPrivate, onSite, readPage, WebError, type Page } from "./web.ts";
+import { guardedLookup, htmlToText, isBlockPage, isPrivate, onSite, readPage, WebError, type Page } from "./web.ts";
 import { logError } from "./log.ts";
 
 const RENDER_TIMEOUT_MS = 20_000;
@@ -254,6 +254,7 @@ export async function render(raw: string, signal: AbortSignal, opts: { site?: st
     // Again after reading: a navigation can commit while the DOM was being read.
     if (strayed || page.url() !== url.href) throw new WebError(strayed ? "offsite" : "navigated");
     const { title, text, links } = htmlToText(html, url);
+    if (isBlockPage(title, text)) throw new WebError("blocked");
     return { url: url.href, title: title.slice(0, 200), text: text.slice(0, MAX_CHARS), links, html: true };
   } catch (e) {
     if (signal.aborted) throw signal.reason ?? e;
@@ -270,7 +271,20 @@ export async function render(raw: string, signal: AbortSignal, opts: { site?: st
  * it's HTML and a browser is available, rendered with its scripts. Rendering failing keeps the direct read.
  */
 export async function readWeb(raw: string, signal: AbortSignal, opts: { site?: string } = {}): Promise<Page> {
-  const p = await readPage(raw, signal, opts);
+  let p: Page;
+  try {
+    p = await readPage(raw, signal, opts);
+  } catch (e) {
+    // Some firewalls refuse plain HTTP clients but serve browsers: one try in the browser, as it is (no disguise).
+    // The address checks already passed (blocked comes after them); the browser goes through the same guard proxy.
+    if (!(e instanceof WebError && e.message === "blocked")) throw e;
+    const r = await render(raw, signal, opts).catch((err) => {
+      if (signal.aborted) throw err;
+      throw e;
+    });
+    if (!r.text) throw e;
+    return r;
+  }
   if (!p.html) return p;
   try {
     const r = await render(p.url, signal, opts);

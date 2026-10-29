@@ -16,6 +16,7 @@ export interface Parsed {
 }
 
 import { checkTotals } from "./checks";
+import { htmlToText } from "./web";
 import { UserError } from "./errors";
 export { UserError };
 
@@ -51,13 +52,20 @@ export async function parseFile(name: string, buf: Buffer, onProgress: (p: Progr
       const text = await readImage(buf, signal);
       return { kind: "text", text, rows: text.split("\n").length, ...(text ? {} : { warning: "Görselde okunacak içerik bulunamadı." }) };
     }
+    case "html":
+    case "htm": {
+      // A page the user saved from their own browser (Ctrl+S): read like a fetched one, scripts never run.
+      const { title, text } = htmlToText(decodeText(buf));
+      const body = title ? `${title}\n\n${text}` : text;
+      return { kind: "text", text: body, rows: body.split("\n").length, ...(text.trim() ? {} : { warning: "Sayfada okunacak metin bulunamadı. Sayfayı PDF olarak yazdırıp yükleyin." }) };
+    }
     case "txt":
     case "md": {
       const text = decodeText(buf);
       return { kind: "text", text, rows: text.split("\n").length };
     }
     default:
-      throw new UserError(`"${ext || name}" türü desteklenmiyor. PDF, DOCX, XLSX, XLS, CSV, TXT, MD ya da PNG/JPG görsel yükleyin.`);
+      throw new UserError(`"${ext || name}" türü desteklenmiyor. PDF, DOCX, XLSX, XLS, CSV, TXT, MD, HTML ya da PNG/JPG görsel yükleyin.`);
   }
 }
 

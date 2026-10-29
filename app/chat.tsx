@@ -38,7 +38,7 @@ const PROFILES: { id: Profile; label: string; hint: string }[] = [
   { id: "deep", label: "Derin analiz", hint: "Önce düşünür, belgenin tamamını kullanır; daha yavaş, daha kapsamlı." },
 ];
 
-const ACCEPT = ".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg,.webp";
+const ACCEPT = ".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.html,.htm,.png,.jpg,.jpeg,.webp";
 const MAX_BYTES = 25 * 1024 * 1024;
 const ICONS = { pdf: FileText, docx: FileType, sheet: FileSpreadsheet, text: FileIcon, image: ImageIcon } as const;
 // A screenshot or photo is stored as text (what the vision model read), but its card still shows it's an image.

@@ -36,6 +36,8 @@ export async function contentProblem(ext: string, buf: Uint8Array): Promise<stri
     case "csv":
     case "txt":
     case "md":
+    case "html":
+    case "htm":
       // Text: no NUL bytes in the first 64 KB (binary disguised as text).
       return buf.subarray(0, 65536).includes(0) ? bad : null;
     default:
