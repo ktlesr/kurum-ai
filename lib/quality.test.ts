@@ -39,7 +39,6 @@ test("qualityNotes: tables of contents and number tables aren't noise", () => {
 test("qualityNotes (review): a huge run of dots neither throws nor takes long", () => {
   const t0 = Date.now();
   qualityNotes([page(1, prose), page(2, ".".repeat(4_000_000)), page(3, prose)].join("\n"));
-  qualityNotes([page(1, prose), page(2, ".".repeat(25 * 1024 * 1024))].join("
-"));
+  qualityNotes([page(1, prose), page(2, ".".repeat(25 * 1024 * 1024))].join("\n"));
   assert.ok(Date.now() - t0 < 5000);
 });
