@@ -8,12 +8,13 @@ import Link from "next/link";
 import {
   AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight,
   AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, Copy, Download, FolderOpen, Image as ImageIcon,
-  ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
+  ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Library, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import { ThemeToggle } from "../theme-toggle";
 import Editor from "./editor";
 import type { Claim } from "@/lib/trace";
 import { recorderType, renderVideo, type Scene, type Transition } from "./video";
+import { listWorks, removeWork, saveWork, thumbnail, type Work } from "./works";
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
@@ -88,6 +89,13 @@ export default function Studio({ username }: { username: string }) {
   const [motion, setMotion] = useState(true);
   const [music, setMusic] = useState<File | undefined>();
   const [burnCaptions, setBurnCaptions] = useState(true);
+  // "Çalışmalarım": designs kept in this browser (works.ts); workId is the one being edited, so saving updates it.
+  const [library, setLibrary] = useState<Work[] | null>(null); // null: panel closed
+  const [workId, setWorkId] = useState<string | null>(null);
+  const [workName, setWorkName] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [libError, setLibError] = useState("");
+  const libOpener = useRef<HTMLElement | null>(null); // focus goes back here when the dialog closes
   const [video, setVideo] = useState<{ progress: number; url?: string; ext?: string; error?: string } | null>(null);
   const videoAbort = useRef<AbortController | null>(null);
   const videoUrl = useRef<string | undefined>(undefined);
@@ -321,6 +329,7 @@ export default function Studio({ username }: { username: string }) {
   // Keyboard: arrows nudge (Shift: 10 px), Delete, Ctrl+Z / Ctrl+Y, Ctrl+D, Escape.
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   function onKey(e: KeyboardEvent) {
+    if (library) return; // the dialog has the keyboard; the canvas behind it doesn't change
     const t = e.target as HTMLElement;
     if (t.closest("input, textarea, select, [contenteditable]")) return;
     const mod = e.ctrlKey || e.metaKey;
@@ -429,6 +438,61 @@ export default function Studio({ username }: { username: string }) {
   const cues = cuesOf(scenes);
   const saveSubs = (kind: "srt" | "vtt") => download(new Blob([kind === "srt" ? toSrt(cues) : toVtt(cues)], { type: kind === "srt" ? "application/x-subrip" : "text/vtt" }), `kurum-video.${kind}`);
 
+  const closeLibrary = () => {
+    setLibrary(null);
+    // After the closing render: until then the opener is still inside the inert header and can't take focus.
+    requestAnimationFrame(() => libOpener.current?.focus());
+  };
+  const openLibrary = async () => {
+    libOpener.current = document.activeElement as HTMLElement | null;
+    setConfirmDelete(null);
+    setLibError("");
+    const title = (view.find((e) => e.kind === "text" && e.role === "title") as TextEl | undefined)?.text.trim();
+    setWorkName((n) => n || title?.slice(0, 80) || TEMPLATES[template].label);
+    try {
+      setLibrary(await listWorks(username));
+    } catch {
+      setLibrary([]);
+      setNote({ kind: "error", text: "Çalışmalarım açılamadı (tarayıcı depolaması kullanılamıyor)." });
+    }
+  };
+  const saveToLibrary = async () => {
+    if (!font) return;
+    try {
+      const id = workId ?? newId();
+      const thumb = await thumbnail(svgOf(format, view, font.measure, font.css), W, H);
+      await saveWork(username, { id, name: workName.trim().slice(0, 80) || "Adsız tasarım", format, template, els: view, thumb, updatedAt: Date.now() });
+      setWorkId(id);
+      setLibrary(await listWorks(username));
+      setNote({ kind: "ok", text: "Çalışmalarım'a kaydedildi (yalnızca bu tarayıcıda)." });
+    } catch (e) {
+      setNote({ kind: "error", text: (e as Error).message || "Kaydedilemedi." });
+    }
+  };
+  const openWork = (w: Work) => {
+    cancelSuggest(); // a suggestion still on its way must not land on the opened work
+    setTemplate(w.template);
+    setFormat(w.format);
+    change(w.els);
+    setWorkId(w.id);
+    setWorkName(w.name);
+    setSelected(null);
+    closeLibrary();
+  };
+  const deleteWork = async (id: string) => {
+    if (confirmDelete !== id) return setConfirmDelete(id);
+    try {
+      await removeWork(username, id);
+    } catch {
+      setLibError("Silinemedi (tarayıcı depolaması). Tekrar deneyin.");
+      return;
+    }
+    if (workId === id) setWorkId(null);
+    setConfirmDelete(null);
+    setLibError("");
+    setLibrary(await listWorks(username).catch(() => []));
+  };
+
   const saveProject = () => download(new Blob([JSON.stringify({ kind: "kurum-ai-gorsel", version: 1, template, format, els: view })], { type: "application/json" }), `kurum-gorsel-${template}-${format}.json`);
   const openProject = async (file: File | undefined) => {
     if (!file) return;
@@ -454,7 +518,7 @@ export default function Studio({ username }: { username: string }) {
 
   return (
     <div className="flex h-dvh flex-col bg-bg">
-      <header className="flex h-14 shrink-0 items-center gap-1.5 border-b border-line bg-panel/80 px-3 backdrop-blur md:px-4">
+      <header inert={!!library} className="flex h-14 shrink-0 items-center gap-1.5 border-b border-line bg-panel/80 px-3 backdrop-blur md:px-4">
         <Link href="/" className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted hover:bg-subtle hover:text-fg">
           <ArrowLeft size={16} /> Asistan
         </Link>
@@ -467,6 +531,9 @@ export default function Studio({ username }: { username: string }) {
           <Redo2 size={16} />
         </button>
         <span className="mx-1 h-5 w-px bg-line" aria-hidden />
+        <button className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg" onClick={openLibrary} aria-haspopup="dialog">
+          <Library size={16} /> <span className="hidden sm:inline">Çalışmalarım</span>
+        </button>
         <button className={iconBtn} onClick={saveProject} aria-label="Projeyi kaydet" title="Projeyi dosya olarak kaydet (düzenlemeye sonra devam etmek için)">
           <Save size={16} />
         </button>
@@ -478,7 +545,7 @@ export default function Studio({ username }: { username: string }) {
         <ThemeToggle />
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      <div inert={!!library} className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Left: start from a template, texts, brand */}
         <aside className="order-2 min-h-0 overflow-y-auto border-line bg-panel lg:order-1 lg:w-[320px] lg:shrink-0 lg:border-r">
           <section className={section} aria-labelledby="t-template">
@@ -738,6 +805,64 @@ export default function Studio({ username }: { username: string }) {
           </section>
         </aside>
       </div>
+
+      {library && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onPointerDown={closeLibrary}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="t-library"
+            className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-2xl"
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === "Escape" && closeLibrary()}
+          >
+            <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+              <h2 id="t-library" className="flex-1 text-sm font-semibold">Çalışmalarım</h2>
+              <button className={iconBtn} onClick={closeLibrary} aria-label="Kapat" autoFocus><X size={16} /></button>
+            </div>
+            <div className="flex flex-wrap items-end gap-2 border-b border-line px-4 py-3">
+              <label className="min-w-0 flex-1">
+                <span className="mb-0.5 block text-[11px] text-muted">{workId ? "Bu çalışmanın adı" : "Yeni çalışmanın adı"}</span>
+                <input value={workName} onChange={(e) => setWorkName(e.target.value)} maxLength={80} className={field} />
+              </label>
+              <button onClick={saveToLibrary} className="flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-sm font-medium text-accent-fg hover:opacity-90">
+                <Save size={15} /> {workId ? "Güncelle" : "Kaydet"}
+              </button>
+              {workId && (
+                <button onClick={() => { setWorkId(null); setWorkName((n) => `${n} (kopya)`.slice(0, 80)); }} className="h-9 rounded-lg border border-line px-3 text-sm hover:border-accent hover:text-accent">
+                  Yeni çalışma olarak
+                </button>
+              )}
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {libError && <p role="alert" className="mb-3 text-sm text-danger">{libError}</p>}
+              {library.length === 0 ? (
+                <p className="text-sm text-muted">Henüz kayıtlı çalışma yok. Tasarımlar yalnızca bu tarayıcıda saklanır; başka bir bilgisayara taşımak için üst çubuktaki “Projeyi kaydet” ile dosya olarak indirin.</p>
+              ) : (
+                <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                  {library.map((w) => (
+                    <li key={w.id} className={`overflow-hidden rounded-xl border ${w.id === workId ? "border-accent ring-2 ring-accent/30" : "border-line"}`}>
+                      <button onClick={() => openWork(w)} className="block w-full bg-subtle" title="Aç">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- local thumbnail */}
+                        {w.thumb ? <img src={w.thumb} alt="" className="mx-auto max-h-40 object-contain" /> : <span className="block h-32" />}
+                      </button>
+                      <div className="flex items-center gap-1 px-2 py-1.5">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-medium" title={w.name}>{w.name}</span>
+                          <span className="block text-[11px] text-muted">{FORMATS[w.format].label} · {new Date(w.updatedAt).toLocaleDateString("tr-TR")}</span>
+                        </span>
+                        <button onClick={() => deleteWork(w.id)} className={`rounded-md px-1.5 py-1 text-[11px] ${confirmDelete === w.id ? "bg-danger text-white" : "text-muted hover:text-danger"}`} aria-label={confirmDelete === w.id ? `${w.name}: silmeyi onayla` : `${w.name} sil`}>
+                          {confirmDelete === w.id ? "Sil?" : <Trash2 size={13} />}
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
