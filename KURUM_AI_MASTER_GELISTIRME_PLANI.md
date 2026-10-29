@@ -294,6 +294,13 @@ Tüm API'lerde sürümlü istek/yanıt şemaları, idempotency ve user context. 
 ### FAZ 4 — Belge zekâsı ve kalite
 
 - Hibrit RAG, kaynak doğrulama, sayısal kontrol, çok belge karşılaştırma, benchmarking.
+- Durum (29.10.2026): TASK-007, 013, 014, 015 ve 016 yapıldı. §5.2'de kalanlar:
+  - **TASK-020:** deterministik hesap kontrolleri (yüzde, toplam, eşik, tarih, para birimi, negatif, dipnot, Excel formülü).
+  - **TASK-021:** cümle → kaynak → sayfa → alıntı izlenebilirliği; kaynaksız iddianın etiketlenmesi.
+  - **TASK-022:** bölüm farkındalıklı parçalama ve ölçümle etkinleştirilen yeniden sıralama.
+  - **TASK-023:** OCR gereksinimi algılama ve kalite işaretleri.
+  - **TASK-024:** `DocumentArtifact` şeması. Altın test seti hazır olduktan sonra yapılır, çünkü ayrıştırıcı test koruması olmadan değiştirilmez (§5.1).
+  - **Altın test seti (§5.3):** 20 izinli Türkçe belge kullanıcıdan bekleniyor.
 - **Çıkış:** doğrulanmış golden test sonuçları; belgesiz tahmine karşı kontrol; sayfa/sheet işaretleri doğru.
 
 ### FAZ 5 — Görsel stüdyo ve şablonlu medya
@@ -301,8 +308,9 @@ Tüm API'lerde sürümlü istek/yanıt şemaları, idempotency ve user context. 
 - Kurumsal şablonlar, görsel üretimi/düzenleme, storyboard, Remotion/FFmpeg aday testi, basit Reels render.
 - İş paketleri (§6.1):
   - **TASK-019:** Görsel Stüdyo v1. Şablon katmanları, 1:1 / 4:5 / 9:16 / 16:9 formatları, marka kiti (renk ve logo, tarayıcıda), AI metin önerisi, PNG/JPEG/WebP/SVG dışa aktarma.
-  - **TASK-020:** belgeden afiş/görsel (seçili belgeden kaynaklı metin önerisi).
-  - **TASK-021:** şablonlu kısa video (aynı katman modelinden sahne; Remotion/FFmpeg aday testi).
+  - **TASK-025:** belgeden afiş/görsel (seçili belgeden kaynaklı metin önerisi).
+  - **TASK-026:** şablonlu kısa video (aynı katman modelinden sahne; Remotion/FFmpeg aday testi).
+  - FAZ 4'ün kalan iş paketleri (TASK-020…024) bunlardan önce yapılır.
 - **Çıkış:** 9:16/16:9/1:1 örnekler; ARM64 production smoke; kullanıcı onay akışı.
 
 ### FAZ 6 — Ses, altyazı ve basit video editörü

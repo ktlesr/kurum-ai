@@ -48,7 +48,7 @@ Türkçe başlıklar doğru çıksın (plan §6). presenton ve HyCanvas incelend
 **Sınır:**
 - Görüntü üreten model yok (FAZ 7). Arka plan kullanıcının fotoğrafı ya da marka renkleri.
 - ₺ işareti yazı tipinde yok; "TL" yazılmalı.
-- Belgeden görsel üretimi TASK-020'de.
+- Belgeden görsel üretimi TASK-025'te (FAZ 4'ün kalan işlerinden sonra).
 
 **Codex:**
 - Tur 1 CHANGES REQUIRED: sınırsız istek gövdesi; metnin tuvalden taşması; fotoğrafın açılırken bellek
