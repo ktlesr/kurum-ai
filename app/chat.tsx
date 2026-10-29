@@ -5,7 +5,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   AlertTriangle, ArrowUp, BookOpen, Check, ChevronDown, Copy, Download, File as FileIcon, FileSpreadsheet, FileText,
-  FileType, HardDrive, Image as ImageIcon, LogOut, Menu, Paperclip, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Upload, Users, X,
+  FileType, HardDrive, Image as ImageIcon, LogOut, Menu, Palette, Paperclip, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Upload, Users, X,
 } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
@@ -426,6 +426,9 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         <button onClick={newChat} disabled={streaming} className="flex h-9 items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40">
           <Plus size={16} /> Yeni sohbet
         </button>
+        <a href="/studio" className="flex h-9 items-center justify-center gap-1.5 rounded-lg border border-line bg-panel text-sm font-medium transition-colors hover:border-accent hover:text-accent">
+          <Palette size={16} /> Görsel Stüdyo
+        </a>
         <label className="flex h-9 items-center gap-2 rounded-lg border border-line bg-panel px-2.5 text-sm focus-within:border-accent">
           <Search size={14} className="shrink-0 text-muted" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Sohbetlerde ara" aria-label="Sohbetlerde ara" className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted" />

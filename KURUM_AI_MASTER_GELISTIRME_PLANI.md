@@ -151,6 +151,23 @@ Dosya seçildi → yerel kalıcı kopya doğrulandı → kullanıcı görevi ba�
 
 Üretken modelin metin yazma zayıflığını önlemek için posterlerde başlık ve logo **ayrı tasarım katmanları** olarak render edilsin. Kullanıcının yüklediği logo değiştirilmesin; ayrı varlık olarak korunmalı. Lisans ve ticari kullanım kısıtları kayıt altına alınmalı.
 
+### 6.1 Mimari karar (29.10.2026, açık kaynak inceleme sonrası)
+
+İncelenen projeler: [presenton](https://github.com/presenton/presenton) (Apache-2.0, AI sunum üretici) ve [HyCanvas](https://github.com/hyscaler/HyCanvas) (AGPL-3.0, açık kaynak Canva alternatifi). **İkisi de entegre edilmez, kodları kopyalanmaz.**
+
+- **HyCanvas:** kodu AGPL-3.0; herhangi bir parçasını kopyalamak Kurum AI'ı AGPL yapar. Değiştirilmeden ayrı servis olarak çalıştırılabilir. Ancak bu ikinci bir kullanıcı/oturum sistemi ve ikinci bir veritabanı getirir, OIDC sağlayıcımız yok, yazı tipleri dış CDN'den (fonts.bunny.net) yüklenir, yerel `http://vllm` adresi reddedilir, WebP çıktısı yoktur. Proje 1.0 öncesi ve iki kişilik. İleride tam tasarım editörü gerekirse yalnızca değiştirilmemiş ayrı servis olarak yeniden değerlendirilir.
+- **presenton:** analitik (Mixpanel) ve topluluk çağrıları varsayılan açık. Webhook ve URL indirmede SSRF yüzeyi var. PPTX/PDF dışa aktarma motoru kapalı kaynak (`@presenton/export-core`). Arayüz yalnızca İngilizce ve sadece 16:9 sunum üretir.
+- **Ödünç alınan fikir (kendi kodumuzla):** presenton'un yaklaşımı. Şablon, mutlak konumlu katmanlardan oluşan bir JSON'dur. Model yalnızca şemaya uygun metin içeriğini doldurur. Çizim deterministik koddur ve modele bırakılmaz. HyCanvas'tan da yalnızca fikir alınır: marka kilidi (logo ve renklerin değiştirilmesini engelleme) ve sunucusuz dışa aktarma.
+
+**Görsel Stüdyo v1 tasarımı:**
+
+- Şablon JSON'u → SVG (tek çizim kaynağı) → tarayıcıda canvas üzerinden PNG/JPEG/WebP; SVG doğrudan indirilir.
+- Yazı tipi kurum içinden sunulur (Geist, OFL; Türkçe harflerin tamamı mevcut, ₺ yok → "TL") ve SVG'ye gömülür.
+- Logo ve fotoğraflar `<image>` olarak gömülür. En-boy oranı korunur, logo kırpılmaz ve renklendirilmez. Görsel bağlamında script çalışmaz.
+- Model (vLLM) yalnızca başlık, alt metin ve kısa metinleri JSON olarak önerir. Uzunluklar sunucuda sınırlanır ve kullanıcı her alanı düzenleyebilir.
+- Kullanıcının görselleri ve marka kiti tarayıcıda kalır, sunucuya yalnızca metin isteği gider.
+- **Görüntü üretim modeli (diffusion) v1'de yoktur.** Gemma 4 görsel okur ama üretemez. Arka plan kullanıcı fotoğrafı ya da marka renkleri/degradesidir. Metinden görsel üretimi (ComfyUI benzeri ayrı servis) FAZ 7 değerlendirmesine bağlıdır.
+
 ## 7. VIDEO / REELS STÜDYOSU
 
 ### 7.1 Birinci yöntem — deterministik şablonlu video (öncelik)
@@ -282,6 +299,10 @@ Tüm API'lerde sürümlü istek/yanıt şemaları, idempotency ve user context. 
 ### FAZ 5 — Görsel stüdyo ve şablonlu medya
 
 - Kurumsal şablonlar, görsel üretimi/düzenleme, storyboard, Remotion/FFmpeg aday testi, basit Reels render.
+- İş paketleri (§6.1):
+  - **TASK-019:** Görsel Stüdyo v1. Şablon katmanları, 1:1 / 4:5 / 9:16 / 16:9 formatları, marka kiti (renk ve logo, tarayıcıda), AI metin önerisi, PNG/JPEG/WebP/SVG dışa aktarma.
+  - **TASK-020:** belgeden afiş/görsel (seçili belgeden kaynaklı metin önerisi).
+  - **TASK-021:** şablonlu kısa video (aynı katman modelinden sahne; Remotion/FFmpeg aday testi).
 - **Çıkış:** 9:16/16:9/1:1 örnekler; ARM64 production smoke; kullanıcı onay akışı.
 
 ### FAZ 6 — Ses, altyazı ve basit video editörü
