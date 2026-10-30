@@ -3,6 +3,7 @@
 // fills its named slots, drawing stays deterministic. Pure: runs in the browser, the API route and node --test.
 import { cleanEls, newId, type El } from "./studio.ts";
 
+export const MAX_SLIDES = 100;
 export interface LayoutSlot { key: string; max: number }
 /** As stored: elements with `slot`, `grp` (one item of a repeating list), `accentMark`, `pic.placeholder`. */
 export interface Layout { id: string; desc: string; els: Record<string, unknown>[]; slots: LayoutSlot[] }
@@ -17,14 +18,23 @@ export const isPlaceholder = (src: string) => src === PLACEHOLDER_PIC.src;
 const label = (key: string) => (/(title|head|name)/i.test(key) ? "Başlık yazın" : "Metin yazın");
 
 /**
- * A layout as a slide. `values` (the model's answer): slots it left empty disappear, and with them a list item whose
- * slots are all empty, background included. Without values: prompts to type over.
+ * A layout as a slide. `values` (the model's answer): slots it left empty disappear, and with them a list item (nested
+ * ones included) whose slots are all empty, background included; an item with no slots at all, a picture, stays.
+ * Without values: prompts to type over.
  */
 export function slideFrom(layout: Layout, values?: Record<string, string>, accent = "#2e5e8c"): El[] {
-  const groupsWithText = new Set<string>();
-  if (values) for (const e of layout.els) if (typeof e.slot === "string" && values[e.slot]?.trim() && typeof e.grp === "string") groupsWithText.add(e.grp);
+  const groupsOf = (g: string) => g.split(".").map((_, i, a) => a.slice(0, i + 1).join("."));
+  const withSlot = new Set<string>();
+  const withText = new Set<string>();
+  if (values)
+    for (const e of layout.els)
+      if (typeof e.slot === "string" && typeof e.grp === "string")
+        for (const g of groupsOf(e.grp)) {
+          withSlot.add(g);
+          if (values[e.slot]?.trim()) withText.add(g);
+        }
   const kept = layout.els.flatMap((e) => {
-    if (values && typeof e.grp === "string" && !groupsWithText.has(e.grp)) return [];
+    if (values && typeof e.grp === "string" && groupsOf(e.grp).some((g) => withSlot.has(g) && !withText.has(g))) return [];
     const { slot, accentMark, ...rest } = e; // `grp` and other extras stop at cleanEls
     const o: Record<string, unknown> = { ...rest, id: newId() };
     if (typeof slot === "string") {

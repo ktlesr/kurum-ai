@@ -71,3 +71,11 @@ test("rethemeSlides: the main hue and the others change, greys and pale tints st
   const again = rethemeSlides(out, { ...t, primary: "#aa0000", accent: "#00aa00" }, ["#111111", "#222222"]);
   assert.deepEqual(again[0].map(col), ["#aa0000", "#aa0000", "#00aa00", "#ffffff", "#808080", "#eef2ff"]);
 });
+
+test("slideFrom keeps pictures and the parents of filled nested items, drops empty items whole", () => {
+  const box = { x: 0, y: 0, w: 10, h: 10 };
+  const shape = (id: string, grp: string) => ({ id, kind: "shape", name: id, grp, ...box, fill: { kind: "solid", color: "#000000" } });
+  const text = (id: string, grp: string) => ({ id, kind: "text", name: id, grp, slot: id, ...box, text: "S", size: 20 });
+  const l = { id: "x", desc: "", slots: [], els: [shape("parent", "a.0"), text("inner", "a.0.b.0"), shape("pic", "c.0"), shape("gone", "d.0"), text("empty", "d.0")] };
+  assert.deepEqual(slideFrom(l, { inner: "dolu" }).map((e) => e.name).sort(), ["Metin", "parent", "pic"]);
+});

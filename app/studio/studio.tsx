@@ -17,7 +17,7 @@ import ContextMenu, { type MenuItem } from "./context-menu";
 import ArtPicker from "./art-picker";
 import { DeckPanel, LayoutPicker, SlideStrip, loadTemplate } from "./deck-panel";
 import { downloadPptx } from "./pptx";
-import { rethemeSlides, slideFrom, type DeckTemplate, type Layout, type TemplateInfo } from "@/lib/deck";
+import { MAX_SLIDES, rethemeSlides, slideFrom, type DeckTemplate, type Layout, type TemplateInfo } from "@/lib/deck";
 import FontPicker from "./font-picker";
 import { THEMES, type Theme } from "@/lib/themes";
 import { OPEN_COLOR } from "@/lib/studio-assets";
@@ -706,9 +706,9 @@ export default function Studio({ username }: { username: string }) {
     setEditing(null);
   };
   const slidesNow = () => (deck ? deck.slides.map((s, i) => (i === deck.at ? view : s)) : []);
-  const startDeck = (template: DeckTemplate, primary: string, slides: El[][]) => {
+  const startDeck = (template: DeckTemplate, primary: string, slides: El[][], theme?: Theme) => {
     cancelSuggest();
-    setDeck({ template, slides, at: 0, primary });
+    setDeck({ template, slides, at: 0, primary, theme });
     setFormat("yatay");
     setEls(slides[0]);
     clearEditing();
@@ -719,7 +719,7 @@ export default function Studio({ username }: { username: string }) {
   };
   const openDeck = async (d: SavedDeck) => {
     const t = await loadTemplate(d.template);
-    startDeck(t, d.primary, d.slides);
+    startDeck(t, d.primary, d.slides, THEMES.find((x) => x.name === d.theme));
   };
   const goSlide = (i: number) => {
     if (!deck || i === deck.at) return;
@@ -735,10 +735,15 @@ export default function Studio({ username }: { username: string }) {
     setEls(slides[at]);
     clearEditing();
   };
+  const slideRoom = () => {
+    if (slidesNow().length < MAX_SLIDES) return true;
+    setNote({ kind: "error", text: `Bir sunumda en fazla ${MAX_SLIDES} slayt olabilir.` });
+    return false;
+  };
   const addSlide = (l: Layout) => {
     setLayoutsOpen(false);
     const s = slidesNow();
-    if (!deck) return;
+    if (!deck || !slideRoom()) return;
     // A new slide wears the theme the deck has.
     const fresh = slideFrom(l, undefined, deck.primary);
     const slide = deck.theme ? rethemeSlides([fresh], deck.theme)[0] : fresh;
@@ -746,7 +751,7 @@ export default function Studio({ username }: { username: string }) {
   };
   const duplicateSlide = () => {
     const s = slidesNow();
-    if (deck) setSlides([...s.slice(0, deck.at + 1), s[deck.at].map((e) => ({ ...e, id: newId() }) as El), ...s.slice(deck.at + 1)], deck.at + 1);
+    if (deck && slideRoom()) setSlides([...s.slice(0, deck.at + 1), s[deck.at].map((e) => ({ ...e, id: newId() }) as El), ...s.slice(deck.at + 1)], deck.at + 1);
   };
   const deleteSlide = () => {
     const s = slidesNow();
@@ -778,7 +783,7 @@ export default function Studio({ username }: { username: string }) {
       setBusy("");
     }
   };
-  const savedDeck = (): SavedDeck | undefined => (deck ? { template: deck.template.id, primary: deck.primary, slides: slidesNow() } : undefined);
+  const savedDeck = (): SavedDeck | undefined => (deck ? { template: deck.template.id, primary: deck.primary, slides: slidesNow(), ...(deck.theme ? { theme: deck.theme.name } : {}) } : undefined);
 
   /** A font chosen for these (arrives after loading: applied to the design as it is then). */
   const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => (e.kind === "text" && ids.includes(e.id) && !e.locked ? (font ? fitPill({ ...e, font: f }, font.measure) : { ...e, font: f }) : e)));

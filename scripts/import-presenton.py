@@ -86,6 +86,9 @@ class Conv:
         if font.get("underline"): el["underline"] = True
         if e.get("rotation"): el["rotation"] = round(float(e["rotation"]) % 360, 1)
         if slot:
+            # Cards outside a list repeat a name: each needs its own field, or they would all show one text.
+            seen = sum(1 for s in self.slots if s["key"] == slot or s["key"].startswith(slot + "."))
+            if seen: slot = f"{slot}.{seen + 1}"
             el["slot"] = slot
             self.slots.append({"key": slot, "max": int(e.get("max_length") or 80)})
         self.els.append(el)

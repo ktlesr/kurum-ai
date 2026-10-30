@@ -3,10 +3,12 @@
 // "Çalışmalarım" for the studio (plan §2, module 6): designs saved in this browser's IndexedDB, one database per
 // user (a shared browser profile never mixes accounts), separate from the chats' database so their schemas evolve
 // apart. What comes back is validated like a project file (cleanEls): storage is the user's, but not trusted code.
+import { MAX_SLIDES } from "@/lib/deck";
+import { THEMES } from "@/lib/themes";
 import { FORMATS, cleanEls, safeColor, type El, type FormatId, type TemplateId, TEMPLATES } from "@/lib/studio";
 
 /** A presentation: its slides (`els` is the first one, for the list) and the layouts' template. */
-export interface SavedDeck { template: string; primary: string; slides: El[][] }
+export interface SavedDeck { template: string; primary: string; slides: El[][]; theme?: string }
 export interface Work { id: string; name: string; format: FormatId; template: TemplateId; els: El[]; thumb: string; updatedAt: number; deck?: SavedDeck }
 const STORE = "works";
 const MAX_WORKS = 200;
@@ -34,8 +36,8 @@ async function db(user: string) {
 export function cleanDeck(raw: unknown): SavedDeck | undefined {
   const d = raw as Partial<SavedDeck> | null | undefined;
   if (!d || typeof d.template !== "string" || !/^[\w-]{1,40}$/.test(d.template) || !Array.isArray(d.slides)) return undefined;
-  const slides = d.slides.slice(0, 100).map((s) => cleanEls(s));
-  return slides.length ? { template: d.template, primary: safeColor(d.primary, "#14263d"), slides } : undefined;
+  const slides = d.slides.slice(0, MAX_SLIDES).map((s) => cleanEls(s));
+  return slides.length ? { template: d.template, primary: safeColor(d.primary, "#14263d"), slides, ...(THEMES.some((t) => t.name === d.theme) ? { theme: d.theme } : {}) } : undefined;
 }
 
 /** A stored record → Work, or null if it isn't one (another version, a hand-edited database). */
