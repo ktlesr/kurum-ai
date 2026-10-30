@@ -391,7 +391,9 @@ export default function Studio({ username }: { username: string }) {
       x: r.right - 220, y: r.bottom + 4, view,
       items: [
         ...(deck ? [{ label: "PowerPoint (PPTX)", icon: <Presentation size={14} />, run: exportDeck } as MenuItem, "-" as const] : []),
-        ...(mode === "video" ? [{ label: "Video oluştur", icon: <Film size={14} />, run: () => setTool("scenes") } as MenuItem, "-" as const] : []),
+        ...(mode === "video"
+          ? [{ label: "Video oluştur", icon: <Film size={14} />, run: () => setTool("scenes") } as MenuItem, "-" as const]
+          : [{ label: deck ? "Bu slaydı video sahnesi yap" : "Video sahnesi olarak ekle", icon: <Clapperboard size={14} />, run: addScene } as MenuItem, "-" as const]),
         ...EXPORTS.map((e): MenuItem => ({ label: deck ? `${e.label} (bu slayt)` : e.label, icon: <Download size={14} />, run: () => exportAs(e) })),
         "-",
         { label: "Proje dosyası olarak kaydet", icon: <Save size={14} />, run: saveProject },
@@ -840,7 +842,7 @@ export default function Studio({ username }: { username: string }) {
     const thumb = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgOf(format, ready, font.measure, font.css))}`;
     // Checked again here: another scene may have been added while the fonts loaded.
     setScenes((s) => (s.length >= 20 || (s[0] && s[0].format !== format) ? s : [...s, { id: newId(), els: ready, seconds: 4, format, thumb }]));
-    setNote({ kind: "ok", text: `Sahne ${scenes.length + 1} eklendi. Tasarımı değiştirip bir sonraki sahneyi ekleyebilirsiniz.` });
+    setNote({ kind: "ok", text: mode === "video" ? `Sahne ${scenes.length + 1} eklendi. Tasarımı değiştirip bir sonraki sahneyi ekleyebilirsiniz.` : `Sahne ${scenes.length + 1} eklendi. Görsel Stüdyo ana sayfasından Video / Reels ile devam edebilirsiniz.` });
   };
   const moveScene = (i: number, d: -1 | 1) =>
     setScenes((s) => {
@@ -906,31 +908,66 @@ export default function Studio({ username }: { username: string }) {
     await saveWork(username, { id, name: workName.trim().slice(0, 80) || designTitle(), format, template, els: ready, thumb, updatedAt: stamp(), ...(deck ? { deck: savedDeck() } : {}) });
   };
   // ponytail: saves the whole design each time; a diff store if very large pictures make this slow.
-  const autosave = useRef<() => Promise<void>>(async () => {});
-  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestStore = useRef(storeWork);
   useLayoutEffect(() => {
-    autosave.current = async () => {
-      pending.current = null;
-      setSaved("saving");
-      try {
-        await storeWork();
-        setSaved("saved");
-      } catch (e) {
-        setSaveError((e as Error).message || "Kaydedilemedi.");
-        setSaved("error");
-      }
-    };
+    latestStore.current = storeWork;
   });
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const running = useRef<Promise<void> | null>(null);
+  const again = useRef(false);
+  /** One save at a time, the last one with the design as it is by then: an older one can't land after a newer one. */
+  const queueSave = () => {
+    if (running.current) {
+      again.current = true;
+      return running.current;
+    }
+    const run = (async () => {
+      try {
+        do {
+          again.current = false;
+          await latestStore.current();
+        } while (again.current);
+      } finally {
+        running.current = null;
+      }
+    })();
+    running.current = run;
+    return run;
+  };
+  const autosave = async () => {
+    pending.current = null;
+    setSaved("saving");
+    try {
+      await queueSave();
+      setSaved("saved");
+    } catch (e) {
+      setSaveError((e as Error).message || "Kaydedilemedi.");
+      setSaved("error");
+    }
+  };
+  const latestAutosave = useRef(autosave);
+  useLayoutEffect(() => {
+    latestAutosave.current = autosave;
+  });
+  /** Before the design on screen is replaced: what's waiting to be saved is saved first, as itself. */
+  const flushSave = async () => {
+    if (pending.current) {
+      clearTimeout(pending.current);
+      await autosave();
+    } else if (running.current) {
+      await running.current.catch(() => {});
+    }
+  };
   // Only what the user made or opened: an untouched template isn't a work yet.
-  const hasDesign = !!mode && !!els && !!font;
+  const hasDesign = !!font && !!mode && (!!els || ownText || !!photo) && (mode !== "sunum" || !!deck);
   useEffect(() => {
     if (!hasDesign) return;
-    pending.current = setTimeout(() => autosave.current(), AUTOSAVE_MS);
+    pending.current = setTimeout(() => latestAutosave.current(), AUTOSAVE_MS);
     return () => {
       if (pending.current) clearTimeout(pending.current);
       pending.current = null;
     };
-  }, [hasDesign, els, deck, workName, format]);
+  }, [hasDesign, view, deck, workName, format]);
   // A success note leaves by itself; an error stays until it's read.
   useEffect(() => {
     if (note?.kind !== "ok") return;
@@ -940,13 +977,17 @@ export default function Studio({ username }: { username: string }) {
   const refreshRecent = () => listWorks(username).then(setRecent, () => {});
   useEffect(() => { listWorks(username).then(setRecent, () => {}); }, [username]);
   const goHome = async () => {
-    if (pending.current) {
-      clearTimeout(pending.current);
-      await autosave.current();
-    }
+    await flushSave();
+    cancelSuggest();
     setMode(null);
-    setPicked([]);
-    setEditing(null);
+    setDeck(null);
+    setEls(null); // nothing is open on the first screen: nothing can be saved over a work from there
+    clearEditing();
+    setWorkId(null);
+    setWorkName("");
+    setOwnText(false);
+    setPhoto(undefined);
+    setSaved("");
     refreshRecent();
   };
   /** A new design of this kind (the last one is already saved; a video's scenes wait for its next visit). */
@@ -960,6 +1001,7 @@ export default function Studio({ username }: { username: string }) {
     setWorkId(null);
     setWorkName("");
     setOwnText(false);
+    setPhoto(undefined);
     setContent(SAMPLE[template]);
     setSources({});
     setSaved("");
@@ -969,14 +1011,15 @@ export default function Studio({ username }: { username: string }) {
   const saveToLibrary = async () => {
     if (!font) return;
     try {
-      await storeWork();
+      await queueSave();
       setLibrary(await listWorks(username));
       setNote({ kind: "ok", text: "Çalışmalarım'a kaydedildi (yalnızca bu tarayıcıda)." });
     } catch (e) {
       setNote({ kind: "error", text: (e as Error).message || "Kaydedilemedi." });
     }
   };
-  const openWork = (w: Work) => {
+  const openWork = async (w: Work) => {
+    await flushSave();
     cancelSuggest(); // a suggestion still on its way must not land on the opened work
     setTemplate(w.template);
     setZoom(1);
@@ -991,6 +1034,7 @@ export default function Studio({ username }: { username: string }) {
       setDeck(null);
       setFormat(w.format);
       change(w.els);
+      setHist({ past: [], future: [] }); // undo must not bring another work back under this one's name
       setWorkId(w.id);
     }
     setWorkName(w.name);
@@ -1018,6 +1062,8 @@ export default function Studio({ username }: { username: string }) {
       if (file.size > 60 * 1024 * 1024) throw new Error("Proje dosyası çok büyük.");
       const j = JSON.parse(await file.text()) as { kind?: unknown; format?: unknown; els?: unknown; deck?: unknown };
       if (j.kind !== "kurum-ai-gorsel" || typeof j.format !== "string" || !Object.hasOwn(FORMATS, j.format)) throw new Error("Bu bir Görsel Stüdyo proje dosyası değil.");
+      await flushSave();
+      setWorkName(""); // a new work, not the one that was open
       const saved = cleanDeck(j.deck);
       if (saved) {
         await openDeck(saved);
@@ -1031,6 +1077,8 @@ export default function Studio({ username }: { username: string }) {
       setDeck(null);
       setFormat(j.format as FormatId);
       change(next);
+      setHist({ past: [], future: [] });
+      setWorkId(null);
       setSelected(null);
       setNote({ kind: "ok", text: "Proje açıldı." });
     } catch (e) {
