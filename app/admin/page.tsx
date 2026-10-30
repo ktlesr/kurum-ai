@@ -9,7 +9,7 @@ import { customAddresses, presets, serverOf } from "@/lib/models";
 import { ThemeToggle } from "../theme-toggle";
 import { ModelsForm } from "./models-form";
 
-export const metadata = { title: "Kullanıcılar · Kurum AI" };
+export const metadata = { title: "Kullanıcılar · Zafer AI" };
 
 const STATUS = { pending: "Onay bekliyor", active: "Etkin", disabled: "Devre dışı" } as const;
 

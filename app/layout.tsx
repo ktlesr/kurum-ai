@@ -5,8 +5,9 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Kurum AI",
+  title: "Zafer AI",
   description: "Dokümanlarınız hakkında soru sorun. İşleme kurum sunucusunda yapılır; harici AI servisine gönderilmez.",
+  icons: { icon: "/logo.svg", apple: "/apple-icon.png" },
 };
 
 // Runs before paint. Light by default (plan §3.1); "system" follows the OS; the stored choice wins.

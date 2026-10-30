@@ -14,6 +14,7 @@ import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, STATUS_SEP, 
 import { searchChats, titleFrom, type Message, type StoredChat } from "@/lib/local-store";
 import type { DocKind, DocMeta } from "@/lib/server";
 import { LibraryPanel, type LibItem } from "./library";
+import { BetaBadge, Logo } from "./logo";
 
 
 type Card = Partial<DocMeta> & {
@@ -486,9 +487,9 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const sidebar = (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
-        <span className="grid size-8 place-items-center rounded-lg bg-brand text-sm font-semibold text-bg" aria-hidden>K</span>
+        <Logo />
         <div className="min-w-0 flex-1">
-          <p className="text-[15px] font-semibold leading-tight tracking-tight">Kurum AI</p>
+          <p className="flex items-center gap-1.5 text-[15px] font-semibold leading-tight tracking-tight">Zafer AI <BetaBadge /></p>
           <p className="text-xs text-muted">Kurum asistanı</p>
         </div>
         <button className="rounded-md p-1.5 text-muted hover:bg-subtle md:hidden" onClick={() => setDrawer(false)} aria-label="Menüyü kapat">

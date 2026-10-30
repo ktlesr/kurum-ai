@@ -120,7 +120,7 @@ export function parseBackup(text: string): StoredChat[] | string {
   } catch {
     return "Dosya okunamadı (geçerli bir yedek değil).";
   }
-  if (j?.kind !== BACKUP_KIND || !Array.isArray(j.chats)) return "Bu dosya bir Kurum AI yedeği değil.";
+  if (j?.kind !== BACKUP_KIND || !Array.isArray(j.chats)) return "Bu dosya bir Zafer AI yedeği değil.";
   if (typeof j.schema !== "number" || j.schema > SCHEMA_VERSION) return "Yedek bu sürümden daha yeni bir sürümle alınmış.";
   if (j.chats.length > MAX_CHATS) return "Yedekte çok fazla sohbet var.";
   const out = new Map<string, StoredChat>();

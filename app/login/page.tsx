@@ -3,7 +3,7 @@ import { getUser } from "@/lib/auth";
 import { ThemeToggle } from "../theme-toggle";
 import { AuthForm } from "./form";
 
-export const metadata = { title: "Giriş · Kurum AI" };
+export const metadata = { title: "Giriş · Zafer AI" };
 
 export default async function LoginPage() {
   if (await getUser()) redirect("/");

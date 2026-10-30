@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { login, signup, type FormState } from "./actions";
+import { BetaBadge, Logo } from "../logo";
 
 const input = "h-10 w-full rounded-lg border border-line bg-panel px-3 text-sm outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
@@ -16,7 +17,8 @@ export function AuthForm() {
   return (
     <div className="w-full max-w-sm">
       <div className="mb-6 text-center">
-        <h1 className="text-xl font-semibold tracking-tight">Kurum AI</h1>
+        <div className="mb-3 flex justify-center"><Logo size={48} /></div>
+        <h1 className="flex items-center justify-center gap-2 text-xl font-semibold tracking-tight">Zafer AI <BetaBadge /></h1>
         <p className="mt-1 text-sm text-muted">{isLogin ? "Kurum hesabınızla oturum açın" : "Yeni hesap isteği"}</p>
       </div>
       <form action={isLogin ? loginAction : signupAction} className="flex flex-col gap-3 rounded-xl border border-line bg-panel p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">

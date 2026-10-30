@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { getUser } from "@/lib/auth";
 import Studio from "./studio";
 
-export const metadata: Metadata = { title: "Görsel Stüdyo · Kurum AI" };
+export const metadata: Metadata = { title: "Görsel Stüdyo · Zafer AI" };
 
 export default async function StudioPage() {
   const user = await getUser();

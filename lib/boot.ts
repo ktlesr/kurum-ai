@@ -35,7 +35,7 @@ export async function boot() {
     if (ok || Date.now() >= waitUntil) break;
     await new Promise((r) => setTimeout(r, 500));
   }
-  if (!ok) die("aynı veritabanında başka bir Kurum AI instance'ı çalışıyor; bu instance başlatılmadı");
+  if (!ok) die("aynı veritabanında başka bir Zafer AI instance'ı çalışıyor; bu instance başlatılmadı");
   g.__instanceLock = lock;
 
   // Belt and braces: confirm the lock is still held by this very session (catches a silent reconnect).
