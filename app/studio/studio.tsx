@@ -4,14 +4,16 @@
 // resized and restyled on the canvas. Photos, the logo and the brand kit stay in this browser; only the brief goes
 // to the server (POST /api/studio) for a text suggestion. The SVG from lib/studio is the canvas and every export.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import Link from "next/link";
 import {
   AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight,
-  AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, ClipboardPaste, Copy, Download, FolderOpen, Image as ImageIcon,
+  AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, Check, ClipboardPaste, Copy, Download, FolderOpen, Image as ImageIcon, LayoutTemplate, Minus, Plus, SlidersHorizontal,
   Presentation, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, BoxSelect, FlipHorizontal2, FlipVertical2, Palette, Italic, MoveDown, MoveUp, Paintbrush, Pencil, RotateCcw, Scissors, Underline,
   ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Library, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
 } from "lucide-react";
+import { Logo } from "../logo";
 import { ThemeToggle } from "../theme-toggle";
+import Home, { type Mode } from "./home";
+import Toolbar from "./toolbar";
 import Editor from "./editor";
 import ContextMenu, { type MenuItem } from "./context-menu";
 import ArtPicker from "./art-picker";
@@ -40,6 +42,25 @@ const WEIGHTS = [
   { v: 800, label: "Çok kalın" },
 ];
 const HISTORY = 100;
+const AUTOSAVE_MS = 1500;
+const TOOLS = {
+  deck: { label: "Sunum", Icon: Presentation },
+  scenes: { label: "Sahneler", Icon: Clapperboard },
+  templates: { label: "Şablon", Icon: LayoutTemplate },
+  ai: { label: "Yapay zekâ", Icon: Sparkles },
+  text: { label: "Metin", Icon: Type },
+  elements: { label: "Öğeler", Icon: Shapes },
+  images: { label: "Görsel", Icon: ImageIcon },
+  brand: { label: "Marka", Icon: Palette },
+  layers: { label: "Katmanlar", Icon: Layers },
+  edit: { label: "Ayarlar", Icon: SlidersHorizontal },
+};
+type Tool = keyof typeof TOOLS;
+const RAIL: Record<Mode, Tool[]> = {
+  gorsel: ["templates", "ai", "text", "elements", "images", "brand", "layers", "edit"],
+  sunum: ["deck", "text", "elements", "images", "brand", "layers", "edit"],
+  video: ["scenes", "templates", "ai", "text", "elements", "images", "brand", "layers", "edit"],
+};
 type Snap = { els: El[]; format: FormatId; primary: string; accent: string };
 type Field = Exclude<Role, "deco">;
 
@@ -81,6 +102,13 @@ function recolor(els: El[], a: Brand, b: Brand): El[] {
 
 export default function Studio({ username }: { username: string }) {
   const { font, error: fontError } = useStudioFont();
+  const [mode, setMode] = useState<Mode | null>(null); // null: the first screen
+  const [tool, setTool] = useState<Tool | null>(null); // the panel open beside the rail
+  const [zoom, setZoom] = useState(1); // 1: fits the canvas area
+  const [recent, setRecent] = useState<Work[]>([]);
+  const [saved, setSaved] = useState<"" | "saving" | "saved" | "error">("");
+  const [saveError, setSaveError] = useState("");
+  const projectInput = useRef<HTMLInputElement>(null);
   const [template, setTemplate] = useState<TemplateId>("duyuru");
   const [format, setFormat] = useState<FormatId>("kare");
   const [content, setContent] = useState<Content>(SAMPLE.duyuru);
@@ -353,13 +381,23 @@ export default function Studio({ username }: { username: string }) {
     change([...view, e]);
     setSelected(e.id);
   };
-  const addText = () =>
-    add({ id: newId(), kind: "text", name: "Metin", x: W * 0.1, y: H * 0.42, w: W * 0.8, h: 90 * u, text: "Yeni metin", size: 64 * u, weight: 700, color: brand.primary, align: "start", leading: 1.15, tracking: 0, auto: true } satisfies TextEl);
+  const addText = (size = 64, weight = 700, name = "Metin") =>
+    add({ id: newId(), kind: "text", name, x: W * 0.1, y: H * 0.42, w: W * 0.8, h: size * 1.4 * u, text: name === "Metin" ? "Yeni metin" : name, size: size * u, weight, color: brand.primary, align: "start", leading: 1.15, tracking: 0, auto: true } satisfies TextEl);
   const addShape = (id: ShapeId = "rounded") => add(shapeFrom(id, W / 2, H / 2, 360 * u, brand.accent));
-  /** The shape library as a menu under the toolbar button. */
-  const shapeMenu = (at: HTMLElement) => {
+  /** Every way out of the design, in one menu under the button. */
+  const downloadMenu = (at: HTMLElement) => {
     const r = at.getBoundingClientRect();
-    setMenu({ x: r.left, y: r.bottom + 4, view, items: (Object.keys(SHAPES) as ShapeId[]).map((id) => ({ label: SHAPES[id].label, icon: <ShapeIcon id={id} />, run: () => addShape(id) })) });
+    setMenu({
+      x: r.right - 220, y: r.bottom + 4, view,
+      items: [
+        ...(deck ? [{ label: "PowerPoint (PPTX)", icon: <Presentation size={14} />, run: exportDeck } as MenuItem, "-" as const] : []),
+        ...(mode === "video" ? [{ label: "Video oluştur", icon: <Film size={14} />, run: () => setTool("scenes") } as MenuItem, "-" as const] : []),
+        ...EXPORTS.map((e): MenuItem => ({ label: deck ? `${e.label} (bu slayt)` : e.label, icon: <Download size={14} />, run: () => exportAs(e) })),
+        "-",
+        { label: "Proje dosyası olarak kaydet", icon: <Save size={14} />, run: saveProject },
+        { label: "Proje dosyası aç…", icon: <FolderOpen size={14} />, run: () => projectInput.current?.click() },
+      ],
+    });
   };
   /** A gallery shape as a picture (a data: URL like every picture: the design stays one file). */
   const addArt = async (name: string) => {
@@ -559,7 +597,7 @@ export default function Studio({ username }: { username: string }) {
         { label: "Yapıştır", icon: <ClipboardPaste size={14} />, keys: "Ctrl+V", run: paste, disabled: !clip },
         { label: "Tümünü seç", icon: <BoxSelect size={14} />, keys: "Ctrl+A", run: () => setPicked(view.filter((x) => !x.locked).map((x) => x.id)) },
         "-",
-        { label: "Metin ekle", icon: <Type size={14} />, run: addText },
+        { label: "Metin ekle", icon: <Type size={14} />, run: () => addText() },
         { label: "Şekil ekle", icon: <Shapes size={14} />, run: () => addShape() },
         { label: "Logo ekle", icon: <Stamp size={14} />, run: addLogo, disabled: !brand.logo },
         "-",
@@ -626,7 +664,7 @@ export default function Studio({ username }: { username: string }) {
   // Shift+F10; with several chosen, they all move, copy and go together.
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   function onKey(e: KeyboardEvent) {
-    if (library || artOpen || layoutsOpen) return; // the dialog has the keyboard; the canvas behind it doesn't change
+    if (!mode || library || artOpen || layoutsOpen) return; // the dialog has the keyboard; the canvas behind it doesn't change
     const t = e.target as HTMLElement;
     if (t.closest("input, textarea, select, [contenteditable]")) return;
     const mod = e.ctrlKey || e.metaKey;
@@ -709,6 +747,7 @@ export default function Studio({ username }: { username: string }) {
   const startDeck = (template: DeckTemplate, primary: string, slides: El[][], theme?: Theme) => {
     cancelSuggest();
     setDeck({ template, slides, at: 0, primary, theme });
+    setMode("sunum");
     setFormat("yatay");
     setEls(slides[0]);
     clearEditing();
@@ -840,6 +879,7 @@ export default function Studio({ username }: { username: string }) {
 
   const closeLibrary = () => {
     setLibrary(null);
+    refreshRecent(); // something in it may have been deleted
     // After the closing render: until then the opener is still inside the inert header and can't take focus.
     requestAnimationFrame(() => libOpener.current?.focus());
   };
@@ -856,14 +896,80 @@ export default function Studio({ username }: { username: string }) {
       setNote({ kind: "error", text: "Çalışmalarım açılamadı (tarayıcı depolaması kullanılamıyor)." });
     }
   };
+  const designTitle = () => (view.find((e) => e.kind === "text" && e.role === "title") as TextEl | undefined)?.text.trim().slice(0, 80) || "Adsız tasarım";
+  const storeWork = async () => {
+    if (!font) return;
+    const id = workId ?? newId();
+    setWorkId(id); // now: a save coming right after this one updates the same work
+    const ready = await fontsReady(view);
+    const thumb = await thumbnail(svgOf(format, ready, font.measure, font.css), W, H);
+    await saveWork(username, { id, name: workName.trim().slice(0, 80) || designTitle(), format, template, els: ready, thumb, updatedAt: stamp(), ...(deck ? { deck: savedDeck() } : {}) });
+  };
+  // ponytail: saves the whole design each time; a diff store if very large pictures make this slow.
+  const autosave = useRef<() => Promise<void>>(async () => {});
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useLayoutEffect(() => {
+    autosave.current = async () => {
+      pending.current = null;
+      setSaved("saving");
+      try {
+        await storeWork();
+        setSaved("saved");
+      } catch (e) {
+        setSaveError((e as Error).message || "Kaydedilemedi.");
+        setSaved("error");
+      }
+    };
+  });
+  // Only what the user made or opened: an untouched template isn't a work yet.
+  const hasDesign = !!mode && !!els && !!font;
+  useEffect(() => {
+    if (!hasDesign) return;
+    pending.current = setTimeout(() => autosave.current(), AUTOSAVE_MS);
+    return () => {
+      if (pending.current) clearTimeout(pending.current);
+      pending.current = null;
+    };
+  }, [hasDesign, els, deck, workName, format]);
+  // A success note leaves by itself; an error stays until it's read.
+  useEffect(() => {
+    if (note?.kind !== "ok") return;
+    const t = setTimeout(() => setNote(null), 5000);
+    return () => clearTimeout(t);
+  }, [note]);
+  const refreshRecent = () => listWorks(username).then(setRecent, () => {});
+  useEffect(() => { listWorks(username).then(setRecent, () => {}); }, [username]);
+  const goHome = async () => {
+    if (pending.current) {
+      clearTimeout(pending.current);
+      await autosave.current();
+    }
+    setMode(null);
+    setPicked([]);
+    setEditing(null);
+    refreshRecent();
+  };
+  /** A new design of this kind (the last one is already saved; a video's scenes wait for its next visit). */
+  const begin = (m: Mode, f?: FormatId) => {
+    cancelSuggest();
+    setMode(m);
+    setTool(RAIL[m][0]);
+    setDeck(null);
+    setEls(null);
+    clearEditing();
+    setWorkId(null);
+    setWorkName("");
+    setOwnText(false);
+    setContent(SAMPLE[template]);
+    setSources({});
+    setSaved("");
+    setZoom(1);
+    setFormat(f ?? (m === "video" ? (sceneFormat ?? "hikaye") : "kare"));
+  };
   const saveToLibrary = async () => {
     if (!font) return;
     try {
-      const id = workId ?? newId();
-      const ready = await fontsReady(view);
-      const thumb = await thumbnail(svgOf(format, ready, font.measure, font.css), W, H);
-      await saveWork(username, { id, name: workName.trim().slice(0, 80) || "Adsız tasarım", format, template, els: ready, thumb, updatedAt: stamp(), ...(deck ? { deck: savedDeck() } : {}) });
-      setWorkId(id);
+      await storeWork();
       setLibrary(await listWorks(username));
       setNote({ kind: "ok", text: "Çalışmalarım'a kaydedildi (yalnızca bu tarayıcıda)." });
     } catch (e) {
@@ -873,9 +979,15 @@ export default function Studio({ username }: { username: string }) {
   const openWork = (w: Work) => {
     cancelSuggest(); // a suggestion still on its way must not land on the opened work
     setTemplate(w.template);
+    setZoom(1);
+    setSaved("");
     if (w.deck) {
+      setMode("sunum");
+      setTool("text");
       openDeck(w.deck).then(() => setWorkId(w.id), () => setNote({ kind: "error", text: "Sunumun şablonu yüklenemedi." }));
     } else {
+      setMode((m) => (m === "video" ? m : "gorsel"));
+      setTool((t) => t ?? "templates");
       setDeck(null);
       setFormat(w.format);
       change(w.els);
@@ -909,10 +1021,13 @@ export default function Studio({ username }: { username: string }) {
       const saved = cleanDeck(j.deck);
       if (saved) {
         await openDeck(saved);
+        setTool("text");
         return setNote({ kind: "ok", text: "Sunum açıldı." });
       }
       const next = cleanEls(j.els);
       if (!next.length) throw new Error("Proje dosyasında öğe yok.");
+      setMode((m) => (m === "video" ? m : "gorsel"));
+      setTool((t) => t ?? "templates");
       setDeck(null);
       setFormat(j.format as FormatId);
       change(next);
@@ -928,102 +1043,75 @@ export default function Studio({ username }: { username: string }) {
   const fields: [Field, string][] =
     template === "alinti" ? [["title", "Söz"], ["subtitle", "Söyleyen"], ["detail", "Unvan / kurum"]] : [["tag", "Etiket"], ["title", "Başlık"], ["subtitle", "Açıklama"], ["detail", "Tarih, yer ya da adres"]];
 
-  return (
-    <div className="flex h-dvh flex-col bg-bg">
-      <header inert={!!library || artOpen || layoutsOpen} className="flex h-14 shrink-0 items-center gap-1.5 border-b border-line bg-panel/80 px-3 backdrop-blur md:px-4">
-        <Link href="/" className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted hover:bg-subtle hover:text-fg">
-          <ArrowLeft size={16} /> Asistan
-        </Link>
-        <span className="h-5 w-px bg-line" aria-hidden />
-        <h1 className="min-w-0 flex-1 truncate pl-1 text-sm font-semibold">Görsel Stüdyo</h1>
-        <button className={iconBtn} onClick={undo} disabled={!hist.past.length} aria-label="Geri al" title="Geri al (Ctrl+Z)">
-          <Undo2 size={16} />
-        </button>
-        <button className={iconBtn} onClick={redo} disabled={!hist.future.length} aria-label="Yinele" title="Yinele (Ctrl+Y)">
-          <Redo2 size={16} />
-        </button>
-        <span className="mx-1 h-5 w-px bg-line" aria-hidden />
-        <button className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg" onClick={openLibrary} aria-haspopup="dialog">
-          <Library size={16} /> <span className="hidden sm:inline">Çalışmalarım</span>
-        </button>
-        <button className={iconBtn} onClick={saveProject} aria-label="Projeyi kaydet" title="Projeyi dosya olarak kaydet (düzenlemeye sonra devam etmek için)">
-          <Save size={16} />
-        </button>
-        <label className={`${iconBtn} cursor-pointer`} title="Proje dosyası aç">
-          <FolderOpen size={16} />
-          <span className="sr-only">Proje aç</span>
-          <input type="file" accept=".json,application/json" className="sr-only" onChange={(e) => { openProject(e.target.files?.[0]); e.target.value = ""; }} />
-        </label>
-        <ThemeToggle />
-      </header>
-
-      <div inert={!!library || artOpen || layoutsOpen} className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        {/* Left: start from a template, texts, brand */}
-        <aside className="order-2 min-h-0 overflow-y-auto border-line bg-panel lg:order-1 lg:w-[320px] lg:shrink-0 lg:border-r">
-          <section className={section} aria-labelledby="t-deck">
-            <h2 id="t-deck" className={`${heading} flex items-center gap-1.5`}><Presentation size={13} /> Sunum (PowerPoint)</h2>
-            {deck ? (
-              <p className="text-xs text-muted">{deck.template.name} şablonu, {deck.slides.length} slayt. Alttaki şeritten slaytlara geçin ve yeni düzen ekleyin; temalar tüm slaytlara uygulanır.</p>
-            ) : (
-              <DeckPanel docs={docs} onStart={(t: DeckTemplate, i: TemplateInfo, s: El[][]) => startDeck(t, i.primary, s)} onNote={(kind, text) => setNote({ kind, text })} />
-            )}
-          </section>
-
-          {!deck && (<>
-          <section className={section} aria-labelledby="t-template">
-            <h2 id="t-template" className={heading}>Şablon</h2>
-            <div className="grid grid-cols-2 gap-2">
-              {(Object.keys(TEMPLATES) as TemplateId[]).map((t) => (
-                <button key={t} onClick={() => chooseTemplate(t)} aria-pressed={template === t} className={`overflow-hidden rounded-xl border text-left transition-all ${template === t ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-accent/60"}`}>
-                  <span className="block aspect-square bg-subtle">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- local data: SVG thumbnail */}
-                    {thumbs[t] && <img src={thumbs[t]} alt="" className="size-full object-cover" />}
-                  </span>
-                  <span className="block px-2 py-1.5 text-xs font-medium">{TEMPLATES[t].label}</span>
-                </button>
-              ))}
-            </div>
-            <div role="group" aria-label="Format" className="grid grid-cols-4 gap-1 rounded-xl border border-line bg-subtle p-1">
-              {(Object.keys(FORMATS) as FormatId[]).map((f) => (
-                <button key={f} aria-pressed={format === f} title={`${FORMATS[f].hint} · ${FORMATS[f].w}×${FORMATS[f].h}`} onClick={() => chooseFormat(f)} className={`flex flex-col items-center gap-1 rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${format === f ? "bg-panel text-fg shadow-card" : "text-muted hover:text-fg"}`}>
-                  <span className="grid h-6 place-items-center" aria-hidden>
-                    <span className="block rounded-[3px] border-2 border-current" style={{ width: FORMATS[f].w > FORMATS[f].h ? 22 : (22 * FORMATS[f].w) / FORMATS[f].h, height: FORMATS[f].w > FORMATS[f].h ? (22 * FORMATS[f].h) / FORMATS[f].w : 22 }} />
-                  </span>
-                  {FORMATS[f].label}
-                </button>
-              ))}
-            </div>
-            {els && <p className="text-xs text-muted">Şablon değiştirmek düzenlemeleri sıfırlar (Ctrl+Z ile geri alınır); format değişince düzenlemeler yeni boyuta taşınır.</p>}
-          </section>
-
-          <section className={section} aria-labelledby="t-ai">
-            <h2 id="t-ai" className={heading}>Yapay zekâ ile yaz</h2>
-            {docs.length > 0 && (
-              <label className="block space-y-1">
-                <span className="text-xs font-medium">Belgeden yaz <span className="font-normal text-muted">(isteğe bağlı)</span></span>
-                <select value={docId} onChange={(e) => setDocId(e.target.value)} className={field}>
-                  <option value="">Belge kullanma</option>
-                  {docs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
-              </label>
-            )}
-            <textarea aria-labelledby="t-ai" value={brief} onChange={(e) => setBrief(e.target.value)} maxLength={2000} rows={3} placeholder="Konuyu anlatın: ör. 12 Kasım'da kongre salonunda yatırımcı buluşması, saat 10.00" className={`${field} resize-none`} />
-            <div className="flex items-center gap-2">
-              <button onClick={suggest} disabled={(!brief.trim() && !docId) || busy === "fill"} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40">
-                {busy === "fill" ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                {busy === "fill" ? "Yazılıyor…" : "Metinleri öner"}
-              </button>
-              {busy === "fill" && (
-                <button onClick={cancelSuggest} className="grid size-9 place-items-center rounded-lg border border-line text-muted hover:text-fg" aria-label="İptal">
-                  <X size={16} />
-                </button>
-              )}
-            </div>
-            <p className="text-xs text-muted">{docId ? "Metinler yalnızca seçilen belgedeki bilgilerle yazılır; belge zaten kurum sunucusunda. " : "Yalnızca bu açıklama kurum sunucusundaki modele gider. "}Görselleriniz tarayıcınızda kalır.</p>
-          </section>
-
+  const tools = RAIL[mode ?? "gorsel"].filter((t) => mode !== "sunum" || deck || t === "deck");
+  const open = tool && tools.includes(tool) ? tool : null;
+  const toolLabel = open ? TOOLS[open].label : "";
+  /** Everything the panels show, one at a time. */
+  const panel = () => {
+    if (open === "deck") return deck ? <p className="px-4 py-4 text-sm text-muted">{deck.template.name} şablonu, {deck.slides.length} slayt. Alttaki şeritten slaytlara geçin ve yeni düzen ekleyin. Renk ve yazı tipi temaları Marka panelinde; tüm slaytlara uygulanır.</p> : null;
+    if (open === "templates") return (
+      <section className={section}>
+        <div className="grid grid-cols-2 gap-2">
+          {(Object.keys(TEMPLATES) as TemplateId[]).map((t) => (
+            <button key={t} onClick={() => chooseTemplate(t)} aria-pressed={template === t} className={`overflow-hidden rounded-xl border text-left transition-all ${template === t ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-accent/60"}`}>
+              <span className="block aspect-square bg-subtle">
+                {/* eslint-disable-next-line @next/next/no-img-element -- local data: SVG thumbnail */}
+                {thumbs[t] && <img src={thumbs[t]} alt="" className="size-full object-cover" />}
+              </span>
+              <span className="block px-2 py-1.5 text-xs font-medium">{TEMPLATES[t].label}</span>
+            </button>
+          ))}
+        </div>
+        <h3 className={heading}>Boyut</h3>
+        <div role="group" aria-label="Format" className="grid grid-cols-4 gap-1 rounded-xl border border-line bg-subtle p-1">
+          {(Object.keys(FORMATS) as FormatId[]).map((f) => (
+            <button key={f} aria-pressed={format === f} title={`${FORMATS[f].hint} · ${FORMATS[f].w}×${FORMATS[f].h}`} onClick={() => chooseFormat(f)} className={`flex flex-col items-center gap-1 rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${format === f ? "bg-panel text-fg shadow-card" : "text-muted hover:text-fg"}`}>
+              <span className="grid h-6 place-items-center" aria-hidden>
+                <span className="block rounded-[3px] border-2 border-current" style={{ width: FORMATS[f].w > FORMATS[f].h ? 22 : (22 * FORMATS[f].w) / FORMATS[f].h, height: FORMATS[f].w > FORMATS[f].h ? (22 * FORMATS[f].h) / FORMATS[f].w : 22 }} />
+              </span>
+              {FORMATS[f].label}
+            </button>
+          ))}
+        </div>
+        {els && <p className="text-xs text-muted">Şablon değiştirmek düzenlemeleri sıfırlar (Ctrl+Z ile geri alınır); format değişince düzenlemeler yeni boyuta taşınır.</p>}
+      </section>
+    );
+    if (open === "ai") return (
+      <section className={section}>
+        {docs.length > 0 && (
+          <label className="block space-y-1">
+            <span className="text-xs font-medium">Belgeden yaz <span className="font-normal text-muted">(isteğe bağlı)</span></span>
+            <select value={docId} onChange={(e) => setDocId(e.target.value)} className={field}>
+              <option value="">Belge kullanma</option>
+              {docs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </label>
+        )}
+        <textarea aria-label="Konu" value={brief} onChange={(e) => setBrief(e.target.value)} maxLength={2000} rows={4} placeholder="Konuyu anlatın: ör. 12 Kasım'da kongre salonunda yatırımcı buluşması, saat 10.00" className={`${field} resize-none`} />
+        <div className="flex items-center gap-2">
+          <button onClick={suggest} disabled={(!brief.trim() && !docId) || busy === "fill"} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40">
+            {busy === "fill" ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            {busy === "fill" ? "Yazılıyor…" : "Metinleri öner"}
+          </button>
+          {busy === "fill" && (
+            <button onClick={cancelSuggest} className="grid size-9 place-items-center rounded-lg border border-line text-muted hover:text-fg" aria-label="İptal">
+              <X size={16} />
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-muted">{docId ? "Metinler yalnızca seçilen belgedeki bilgilerle yazılır; belge zaten kurum sunucusunda. " : "Yalnızca bu açıklama kurum sunucusundaki modele gider. "}Görselleriniz tarayıcınızda kalır.</p>
+      </section>
+    );
+    if (open === "text") return (
+      <>
+        <section className={section}>
+          <button onClick={() => addText(72, 800, "Başlık")} className="block h-16 w-full rounded-xl border border-line px-4 text-left text-xl font-bold hover:border-accent">Başlık ekle</button>
+          <button onClick={() => addText(44, 600, "Alt başlık")} className="block h-14 w-full rounded-xl border border-line px-4 text-left text-base font-semibold hover:border-accent">Alt başlık ekle</button>
+          <button onClick={() => addText(30, 400, "Metin")} className="block h-12 w-full rounded-xl border border-line px-4 text-left text-sm hover:border-accent">Gövde metni ekle</button>
+        </section>
+        {!deck && (
           <section className={section} aria-labelledby="t-text">
-            <h2 id="t-text" className={heading}>Metinler</h2>
+            <h3 id="t-text" className={heading}>Şablonun metinleri</h3>
             {fields.map(([k, label]) => (
               <label key={k} className="block space-y-1">
                 <span className="flex justify-between gap-2 text-xs font-medium">
@@ -1052,233 +1140,352 @@ export default function Studio({ username }: { username: string }) {
               </label>
             ))}
           </section>
-
-          </>)}
-
-          <section className={section} aria-labelledby="t-video">
-            <h2 id="t-video" className={heading}>Video (Reels)</h2>
-            <p className="text-xs text-muted">Her sahne bir tasarımdır: tasarlayın, sahne olarak ekleyin, sonrakini tasarlayın. Video bu tarayıcıda oluşturulur; hiçbir şey sunucuya gitmez.</p>
-            <button onClick={addScene} disabled={!font} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm font-medium hover:border-accent hover:text-accent disabled:opacity-40">
-              <Clapperboard size={15} /> Bu tasarımı sahne olarak ekle
+        )}
+      </>
+    );
+    if (open === "elements") return (
+      <section className={section}>
+        <h3 className={heading}>Şekiller</h3>
+        <div className="grid grid-cols-4 gap-1.5">
+          {(Object.keys(SHAPES) as ShapeId[]).map((id) => (
+            <button key={id} onClick={() => addShape(id)} aria-label={`${SHAPES[id].label} ekle`} title={SHAPES[id].label} className="grid aspect-square place-items-center rounded-lg border border-line text-muted hover:border-accent hover:text-accent [&_svg]:size-7">
+              <ShapeIcon id={id} />
             </button>
-            {scenes.length > 0 && (
-              <>
-                <ol className="space-y-1.5">
-                  {scenes.map((s, i) => (
-                    <li key={s.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-1.5">
-                      {/* eslint-disable-next-line @next/next/no-img-element -- local data: SVG of the scene */}
-                      <img src={s.thumb} alt={`Sahne ${i + 1}`} className="h-12 w-auto shrink-0 rounded border border-line" style={{ aspectRatio: `${FORMATS[s.format].w} / ${FORMATS[s.format].h}` }} />
-                      <span className="text-xs font-medium tabular-nums">{i + 1}.</span>
-                      <label className="flex items-center gap-1 text-xs text-muted">
-                        <select aria-label={`Sahne ${i + 1} süresi`} value={s.seconds} onChange={(e) => setScenes((x) => x.map((y) => (y.id === s.id ? { ...y, seconds: +e.target.value } : y)))} className="h-7 rounded-md border border-line bg-panel px-1 text-xs text-fg">
-                          {[2, 3, 4, 5, 6, 8, 10].map((n) => <option key={n} value={n}>{n} sn</option>)}
-                        </select>
-                      </label>
-                      <span className="ml-auto flex">
-                        <button className={iconBtn} onClick={() => moveScene(i, -1)} disabled={i === 0} aria-label={`Sahne ${i + 1} yukarı`}><ChevronUp size={14} /></button>
-                        <button className={iconBtn} onClick={() => moveScene(i, 1)} disabled={i === scenes.length - 1} aria-label={`Sahne ${i + 1} aşağı`}><ChevronDown size={14} /></button>
-                        <button className={`${iconBtn} hover:text-danger`} onClick={() => setScenes((x) => x.filter((y) => y.id !== s.id))} aria-label={`Sahne ${i + 1} sil`}><Trash2 size={14} /></button>
-                      </span>
-                      <input value={s.caption ?? ""} onChange={(e) => setCaption(s.id, e.target.value)} maxLength={240} placeholder="Altyazı (isteğe bağlı)" aria-label={`Sahne ${i + 1} altyazısı`} className="h-7 w-full rounded-md border border-line bg-panel px-2 text-xs outline-none focus:border-accent" />
-                    </li>
-                  ))}
-                </ol>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block">
-                    <span className="mb-0.5 block text-[11px] text-muted">Geçiş</span>
-                    <select value={transition} onChange={(e) => setTransition(e.target.value as Transition)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-sm outline-none focus:border-accent">
-                      <option value="fade">Yumuşak geçiş</option>
-                      <option value="slide">Kaydırma</option>
-                      <option value="none">Kesme</option>
+          ))}
+        </div>
+        <button onClick={() => setArtOpen(true)} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm font-medium hover:border-accent hover:text-accent">
+          <Sparkles size={15} /> Hazır şekil galerisi
+        </button>
+      </section>
+    );
+    if (open === "images") return (
+      <section className={section}>
+        <Picker label="Görsel yükle" accept=".png,.jpg,.jpeg,.webp" onPick={(f) => pick("image", f)} />
+        <button onClick={addLogo} disabled={!brand.logo} title={brand.logo ? undefined : "Önce Marka panelinden logo ekleyin"} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm hover:border-accent hover:text-accent disabled:opacity-40">
+          <Stamp size={15} /> Logoyu tasarıma ekle
+        </button>
+        {!deck && (
+          <>
+            <h3 className={heading}>Şablonun fotoğrafı</h3>
+            <Picker label={photo ? "Fotoğrafı değiştir" : "Fotoğraf seç"} accept=".png,.jpg,.jpeg,.webp" onPick={(f) => pick("photo", f)} preview={photo?.src} onClear={photo ? () => { setPhoto(undefined); if (!els) setSelected(null); } : undefined} />
+          </>
+        )}
+        <p className="text-xs text-muted">Görselleriniz yalnızca bu tarayıcıda kalır.</p>
+      </section>
+    );
+    if (open === "brand") return (
+      <section className={section}>
+        <h3 className={heading}>Temalar</h3>
+        <div className="grid grid-cols-6 gap-1.5" role="group" aria-label="Renk temaları">
+          {THEMES.map((t) => (
+            <button key={t.name} title={`${t.name} · ${t.mood}`} aria-label={`${t.name} teması`} aria-pressed={activeTheme === t.name} onClick={() => applyTheme(t)} className={`h-8 overflow-hidden rounded-md border-2 ${brand.primary === t.primary && brand.accent === t.accent ? "border-accent" : "border-transparent"}`}>
+              <span className="flex size-full">
+                <span className="flex-1" style={{ background: t.primary }} />
+                <span className="flex-1" style={{ background: t.accent }} />
+              </span>
+            </button>
+          ))}
+        </div>
+        <h3 className={heading}>Renkler</h3>
+        <div className="grid grid-cols-2 gap-2">
+          {([["primary", "Ana renk"], ["accent", "Vurgu"]] as const).map(([k, label]) => (
+            <label key={k} className="flex items-center gap-2 rounded-lg border border-line px-2 py-1.5">
+              <input type="color" value={brand[k]} onChange={(e) => setColors(k === "primary" ? e.target.value : brand.primary, k === "accent" ? e.target.value : brand.accent)} className="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0" />
+              <span className="min-w-0">
+                <span className="block text-xs font-medium">{label}</span>
+                <span className="block font-mono text-[11px] uppercase text-muted">{brand[k]}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <h3 className={heading}>Logo</h3>
+        <Picker label={brand.logo ? "Logoyu değiştir" : "Logo ekle"} accept=".png,.jpg,.jpeg,.webp,.svg" onPick={(f) => pick("logo", f)} preview={brand.logo?.src} contain onClear={brand.logo ? () => saveBrand({ ...brand, logo: undefined }) : undefined} />
+        <p className="text-xs text-muted">Logo olduğu gibi kullanılır: kırpılmaz, renklendirilmez, oranı korunur. Marka kiti yalnızca bu tarayıcıda saklanır.</p>
+      </section>
+    );
+    if (open === "layers") return (
+      <section className={section}>
+        <ul className="space-y-0.5">
+          {[...view].reverse().map((e) => (
+            <li key={e.id} className={`flex items-center gap-1 rounded-md pr-1 text-sm ${picked.includes(e.id) ? "bg-accent-soft text-fg" : "hover:bg-subtle"}`}>
+              <button
+                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+                aria-pressed={picked.includes(e.id)}
+                onClick={(ev) => (ev.shiftKey || ev.ctrlKey || ev.metaKey ? setPicked((p) => (p.includes(e.id) ? p.filter((x) => x !== e.id) : [...p, e.id])) : setSelected(e.id))}
+              >
+                {e.kind === "text" ? <Type size={14} className="shrink-0 text-muted" /> : e.kind === "image" ? <ImageIcon size={14} className="shrink-0 text-muted" /> : <Square size={14} className="shrink-0 text-muted" />}
+                <span className="truncate">{e.kind === "text" && e.text.trim() ? `${e.name}: ${e.text.trim().slice(0, 24)}` : e.name}</span>
+              </button>
+              <button className={iconBtn} onClick={() => patch(e.id, { locked: !e.locked })} aria-label={e.locked ? `${e.name} kilidini aç` : `${e.name} kilitle`} title={e.locked ? "Kilidi aç" : "Kilitle"}>
+                {e.locked ? <Lock size={13} /> : <LockOpen size={13} />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+    if (open === "edit") return picked.length > 1 ? (
+      <section className={section} aria-labelledby="t-multi">
+        <div className="flex items-center justify-between gap-2">
+          <h3 id="t-multi" className={heading}>{picked.length} öğe seçili</h3>
+          <div className="flex">
+            <button className={iconBtn} onClick={() => duplicate(picked)} aria-label="Hepsini çoğalt" title="Çoğalt (Ctrl+D)"><Copy size={15} /></button>
+            <button className={`${iconBtn} hover:text-danger`} onClick={() => remove(picked)} aria-label="Hepsini sil" title="Sil (Delete)"><Trash2 size={15} /></button>
+          </div>
+        </div>
+        <div role="group" aria-label="Hizalama referansı" className="flex rounded-lg border border-line bg-subtle p-0.5">
+          <button className={`flex-1 ${chip(!alignCanvas)}`} aria-pressed={!alignCanvas} onClick={() => setAlignCanvas(false)}>Birbirine göre</button>
+          <button className={`flex-1 ${chip(alignCanvas)}`} aria-pressed={alignCanvas} onClick={() => setAlignCanvas(true)}>Tuvale göre</button>
+        </div>
+        <div role="group" aria-label="Hizala" className="grid grid-cols-6 gap-0.5">
+          {ALIGNS.map(([how, label, icon]) => (
+            <button key={how} className={iconBtn} onClick={() => alignMany(picked, how, alignCanvas)} aria-label={label} title={label}>{icon}</button>
+          ))}
+        </div>
+        <div role="group" aria-label="Dağıt" className="grid grid-cols-2 gap-1.5">
+          <button className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-line text-xs hover:border-accent hover:text-accent disabled:opacity-40" disabled={picked.length < 3} onClick={() => distribute(picked, "x")} title="En az 3 öğe">
+            <AlignHorizontalSpaceAround size={14} /> Yatay eşit aralık
+          </button>
+          <button className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-line text-xs hover:border-accent hover:text-accent disabled:opacity-40" disabled={picked.length < 3} onClick={() => distribute(picked, "y")} title="En az 3 öğe">
+            <AlignVerticalSpaceAround size={14} /> Dikey eşit aralık
+          </button>
+          <button className="h-8 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => sameSize(picked, "w")}>Aynı genişlik</button>
+          <button className="h-8 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => sameSize(picked, "h")}>Aynı yükseklik</button>
+        </div>
+        <div role="group" aria-label="Katman sırası" className="flex gap-1.5">
+          <button className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => reorder(picked, "front")}><ArrowUpToLine size={13} /> En öne</button>
+          <button className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => reorder(picked, "back")}><ArrowDownToLine size={13} /> En arkaya</button>
+        </div>
+        {view.some((e) => e.kind === "text" && picked.includes(e.id)) && (
+          <FontPicker value={undefined} username={username} onPick={(f) => applyFont(picked, f)} />
+        )}
+        <p className="text-xs text-muted">Shift ya da Ctrl ile tıklayarak seçime ekleyip çıkarın; boş alanda sürükleyerek kutu içindekileri seçin. Aynı boyut ilk seçilene göre yapılır.</p>
+      </section>
+    ) : sel ? (
+      <Inspector key={sel.id} el={sel} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={(p, commit) => patch(sel.id, p, commit)} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onAlign={(how) => alignMany([sel.id], how, true)} />
+    ) : (
+      <section className={section}>
+        <p className="text-sm text-muted">Tuvalde bir öğeye tıklayın: konumunu, boyutunu, gölgesini ve diğer ayarlarını buradan değiştirebilirsiniz.</p>
+      </section>
+    );
+    if (open === "scenes") return (
+      <section className={section}>
+        <p className="text-xs text-muted">Her sahne bir tasarımdır: tasarlayın, sahne olarak ekleyin, sonrakini tasarlayın. Video bu tarayıcıda oluşturulur; hiçbir şey sunucuya gitmez.</p>
+        <button onClick={addScene} disabled={!font} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm font-medium hover:border-accent hover:text-accent disabled:opacity-40">
+          <Clapperboard size={15} /> Bu tasarımı sahne olarak ekle
+        </button>
+        {scenes.length > 0 && (
+          <>
+            <ol className="space-y-1.5">
+              {scenes.map((s, i) => (
+                <li key={s.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-1.5">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- local data: SVG of the scene */}
+                  <img src={s.thumb} alt={`Sahne ${i + 1}`} className="h-12 w-auto shrink-0 rounded border border-line" style={{ aspectRatio: `${FORMATS[s.format].w} / ${FORMATS[s.format].h}` }} />
+                  <span className="text-xs font-medium tabular-nums">{i + 1}.</span>
+                  <label className="flex items-center gap-1 text-xs text-muted">
+                    <select aria-label={`Sahne ${i + 1} süresi`} value={s.seconds} onChange={(e) => setScenes((x) => x.map((y) => (y.id === s.id ? { ...y, seconds: +e.target.value } : y)))} className="h-7 rounded-md border border-line bg-panel px-1 text-xs text-fg">
+                      {[2, 3, 4, 5, 6, 8, 10].map((n) => <option key={n} value={n}>{n} sn</option>)}
                     </select>
                   </label>
-                  <label className="flex items-end gap-1.5 pb-1.5 text-xs">
-                    <input type="checkbox" checked={motion} onChange={(e) => setMotion(e.target.checked)} /> Hareket (yakınlaşma, belirme)
-                  </label>
-                </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
-                  <button onClick={() => setScenes((x) => x.map((y) => ({ ...y, caption: captionFrom(y.els) })))} className="text-accent hover:underline">Altyazıları sahne metinlerinden doldur</button>
-                  <label className="flex items-center gap-1.5">
-                    <input type="checkbox" checked={burnCaptions} onChange={(e) => setBurnCaptions(e.target.checked)} /> Altyazıyı videoya yaz
-                  </label>
-                  {cues.length > 0 && (
-                    <span className="flex gap-2">
-                      <button onClick={() => saveSubs("srt")} className="text-accent hover:underline">SRT indir</button>
-                      <button onClick={() => saveSubs("vtt")} className="text-accent hover:underline">VTT indir</button>
-                    </span>
-                  )}
-                </div>
-                <Picker label={music ? music.name.slice(0, 28) : "Müzik ekle (isteğe bağlı)"} accept=".mp3,.wav,.ogg,.m4a,audio/*" onPick={(f) => f && setMusic(f)} onClear={music ? () => setMusic(undefined) : undefined} />
-                <p className="text-xs text-muted">{scenes.length} sahne · {videoSeconds} sn · {FORMATS[sceneFormat!].w}×{FORMATS[sceneFormat!].h} · {recorderType()?.ext.toUpperCase() ?? "desteklenmiyor"}. Kayıt gerçek sürede yapılır; bu sekme açık kalmalı.</p>
-                {video && !video.url && !video.error ? (
-                  <div className="space-y-1.5">
-                    <div className="h-2 overflow-hidden rounded-full bg-subtle" role="progressbar" aria-valuenow={Math.round(video.progress * 100)} aria-valuemin={0} aria-valuemax={100} aria-label="Video oluşturuluyor">
-                      <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round(video.progress * 100)}%` }} />
-                    </div>
-                    <button onClick={() => videoAbort.current?.abort()} className="w-full rounded-lg border border-line py-1.5 text-xs text-muted hover:text-fg">İptal</button>
-                  </div>
-                ) : (
-                  <button onClick={makeVideo} disabled={!recorderType()} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-40">
-                    <Film size={15} /> Videoyu oluştur
-                  </button>
-                )}
-                {video?.error && <p role="alert" className="text-xs text-danger">{video.error}</p>}
-                {video?.url && (
-                  <div className="space-y-1.5">
-                    <video src={video.url} controls className="w-full rounded-lg border border-line bg-black" style={{ aspectRatio: `${FORMATS[sceneFormat!].w} / ${FORMATS[sceneFormat!].h}`, maxHeight: 320 }} />
-                    <a href={video.url} download={`kurum-video.${video.ext}`} className="flex h-9 items-center justify-center gap-1.5 rounded-lg border border-line text-sm hover:border-accent hover:text-accent">
-                      <Download size={15} /> İndir ({video.ext?.toUpperCase()})
-                    </a>
-                  </div>
-                )}
-              </>
-            )}
-          </section>
-
-          <section className={section} aria-labelledby="t-brand">
-            <h2 id="t-brand" className={heading}>Marka kiti</h2>
-            <div className="grid grid-cols-6 gap-1.5" role="group" aria-label="Renk temaları">
-              {THEMES.map((t) => (
-                <button key={t.name} title={`${t.name} · ${t.mood}`} aria-label={`${t.name} teması`} aria-pressed={activeTheme === t.name} onClick={() => applyTheme(t)} className={`h-8 overflow-hidden rounded-md border-2 ${brand.primary === t.primary && brand.accent === t.accent ? "border-accent" : "border-transparent"}`}>
-                  <span className="flex size-full">
-                    <span className="flex-1" style={{ background: t.primary }} />
-                    <span className="flex-1" style={{ background: t.accent }} />
+                  <span className="ml-auto flex">
+                    <button className={iconBtn} onClick={() => moveScene(i, -1)} disabled={i === 0} aria-label={`Sahne ${i + 1} yukarı`}><ChevronUp size={14} /></button>
+                    <button className={iconBtn} onClick={() => moveScene(i, 1)} disabled={i === scenes.length - 1} aria-label={`Sahne ${i + 1} aşağı`}><ChevronDown size={14} /></button>
+                    <button className={`${iconBtn} hover:text-danger`} onClick={() => setScenes((x) => x.filter((y) => y.id !== s.id))} aria-label={`Sahne ${i + 1} sil`}><Trash2 size={14} /></button>
                   </span>
-                </button>
-              ))}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {([["primary", "Ana renk"], ["accent", "Vurgu"]] as const).map(([k, label]) => (
-                <label key={k} className="flex items-center gap-2 rounded-lg border border-line px-2 py-1.5">
-                  <input type="color" value={brand[k]} onChange={(e) => setColors(k === "primary" ? e.target.value : brand.primary, k === "accent" ? e.target.value : brand.accent)} className="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0" />
-                  <span className="min-w-0">
-                    <span className="block text-xs font-medium">{label}</span>
-                    <span className="block font-mono text-[11px] uppercase text-muted">{brand[k]}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-            <Picker label={brand.logo ? "Logoyu değiştir" : "Logo ekle"} accept=".png,.jpg,.jpeg,.webp,.svg" onPick={(f) => pick("logo", f)} preview={brand.logo?.src} contain onClear={brand.logo ? () => saveBrand({ ...brand, logo: undefined }) : undefined} />
-            <Picker label={photo ? "Fotoğrafı değiştir" : "Şablon fotoğrafı"} accept=".png,.jpg,.jpeg,.webp" onPick={(f) => pick("photo", f)} preview={photo?.src} onClear={photo ? () => { setPhoto(undefined); if (!els) setSelected(null); } : undefined} />
-            <p className="text-xs text-muted">Logo olduğu gibi kullanılır: kırpılmaz, renklendirilmez, oranı korunur. Marka kiti yalnızca bu tarayıcıda saklanır.</p>
-          </section>
-        </aside>
-
-        {/* Centre: toolbar, canvas, export */}
-        <main className="order-1 flex min-h-[60vh] min-w-0 flex-1 flex-col lg:order-2">
-          <div className="flex flex-wrap items-center gap-1 border-b border-line bg-panel px-3 py-1.5">
-            <span className="mr-1 text-xs text-muted">Ekle:</span>
-            <ToolBtn onClick={addText} icon={<Type size={15} />} label="Metin" />
-            <label className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg focus-within:ring-2 focus-within:ring-accent/40">
-              <ImageIcon size={15} /> Görsel
-              <input type="file" accept=".png,.jpg,.jpeg,.webp" className="sr-only" onChange={(e) => { pick("image", e.target.files?.[0]); e.target.value = ""; }} />
-            </label>
-            <button className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg" onClick={(e) => shapeMenu(e.currentTarget)} aria-haspopup="menu">
-              <Shapes size={15} /> Şekil <ChevronDown size={13} />
-            </button>
-            <ToolBtn onClick={() => setArtOpen(true)} icon={<Sparkles size={15} />} label="Hazır şekil" />
-            <ToolBtn onClick={addLogo} icon={<Stamp size={15} />} label="Logo" />
-            <span className="ml-auto hidden text-xs text-muted xl:block">Çift tıkla: metni düzenle · Shift: oranı koru · Alt: hizalamasız taşı</span>
-          </div>
-          <div className="flex min-h-0 flex-1 items-center justify-center p-4 md:p-8" style={{ backgroundImage: "radial-gradient(var(--line) 1px, transparent 1px)", backgroundSize: "18px 18px" }} onPointerDown={() => { setSelected(null); setEditing(null); }}>
-            {font ? (
-              <div className="flex max-h-full max-w-full" style={{ aspectRatio: `${W} / ${H}`, height: "100%" }} onPointerDown={(e) => e.stopPropagation()}>
-                <Editor format={format} els={view} measure={font.measure} selected={picked} onSelect={setPicked} onChange={change} editing={editing} onEditing={setEditing} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
-              </div>
-            ) : (
-              <p className="flex items-center gap-2 text-sm text-muted">{fontError || <><Loader2 size={16} className="animate-spin" /> Hazırlanıyor…</>}</p>
-            )}
-          </div>
-          {deck && font && <SlideStrip slides={slidesNow()} at={deck.at} measure={font.measure} onGo={goSlide} onAdd={() => setLayoutsOpen(true)} onDuplicate={duplicateSlide} onDelete={deleteSlide} onMove={moveSlide} onClose={leaveDeck} />}
-          <div className="flex flex-wrap items-center gap-2 border-t border-line bg-panel px-4 py-2.5">
-            <span className="mr-auto text-xs text-muted">{W}×{H} · {FORMATS[format].label}</span>
-            {note && (
-              <p role={note.kind === "error" ? "alert" : "status"} className={`order-first w-full text-sm sm:order-none sm:w-auto ${note.kind === "error" ? "text-danger" : "text-ok"}`}>
-                {note.text}
-              </p>
-            )}
-            {deck && (
-              <button onClick={exportDeck} disabled={!font || busy === "export"} className="flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-40">
-                {busy === "export" ? <Loader2 size={15} className="animate-spin" /> : <Presentation size={15} />} PowerPoint (PPTX)
-              </button>
-            )}
-            {EXPORTS.map((e) => (
-              <button key={e.ext} onClick={() => exportAs(e)} disabled={!font || busy === "export"} className={`flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors disabled:opacity-40 ${e.ext === "png" ? "bg-accent text-accent-fg hover:opacity-90" : "border border-line bg-panel hover:border-accent hover:text-accent"}`}>
-                <Download size={15} /> {e.label}
-              </button>
-            ))}
-          </div>
-        </main>
-
-        {/* Right: the selected element, then all layers */}
-        <aside className="order-3 min-h-0 overflow-y-auto border-line bg-panel lg:w-[290px] lg:shrink-0 lg:border-l">
-          {picked.length > 1 ? (
-            <section className={section} aria-labelledby="t-multi">
-              <div className="flex items-center justify-between gap-2">
-                <h2 id="t-multi" className={heading}>{picked.length} öğe seçili</h2>
-                <div className="flex">
-                  <button className={iconBtn} onClick={() => duplicate(picked)} aria-label="Hepsini çoğalt" title="Çoğalt (Ctrl+D)"><Copy size={15} /></button>
-                  <button className={`${iconBtn} hover:text-danger`} onClick={() => remove(picked)} aria-label="Hepsini sil" title="Sil (Delete)"><Trash2 size={15} /></button>
-                </div>
-              </div>
-              <div role="group" aria-label="Hizalama referansı" className="flex rounded-lg border border-line bg-subtle p-0.5">
-                <button className={`flex-1 ${chip(!alignCanvas)}`} aria-pressed={!alignCanvas} onClick={() => setAlignCanvas(false)}>Birbirine göre</button>
-                <button className={`flex-1 ${chip(alignCanvas)}`} aria-pressed={alignCanvas} onClick={() => setAlignCanvas(true)}>Tuvale göre</button>
-              </div>
-              <div role="group" aria-label="Hizala" className="grid grid-cols-6 gap-0.5">
-                {ALIGNS.map(([how, label, icon]) => (
-                  <button key={how} className={iconBtn} onClick={() => alignMany(picked, how, alignCanvas)} aria-label={label} title={label}>{icon}</button>
-                ))}
-              </div>
-              <div role="group" aria-label="Dağıt" className="grid grid-cols-2 gap-1.5">
-                <button className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-line text-xs hover:border-accent hover:text-accent disabled:opacity-40" disabled={picked.length < 3} onClick={() => distribute(picked, "x")} title="En az 3 öğe">
-                  <AlignHorizontalSpaceAround size={14} /> Yatay eşit aralık
-                </button>
-                <button className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-line text-xs hover:border-accent hover:text-accent disabled:opacity-40" disabled={picked.length < 3} onClick={() => distribute(picked, "y")} title="En az 3 öğe">
-                  <AlignVerticalSpaceAround size={14} /> Dikey eşit aralık
-                </button>
-                <button className="h-8 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => sameSize(picked, "w")}>Aynı genişlik</button>
-                <button className="h-8 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => sameSize(picked, "h")}>Aynı yükseklik</button>
-              </div>
-              <div role="group" aria-label="Katman sırası" className="flex gap-1.5">
-                <button className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => reorder(picked, "front")}><ArrowUpToLine size={13} /> En öne</button>
-                <button className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => reorder(picked, "back")}><ArrowDownToLine size={13} /> En arkaya</button>
-              </div>
-              {view.some((e) => e.kind === "text" && picked.includes(e.id)) && (
-                <FontPicker value={undefined} username={username} onPick={(f) => applyFont(picked, f)} />
-              )}
-              <p className="text-xs text-muted">Shift ya da Ctrl ile tıklayarak seçime ekleyip çıkarın; boş alanda sürükleyerek kutu içindekileri seçin. Aynı boyut ilk seçilene göre yapılır.</p>
-            </section>
-          ) : sel ? (
-            <Inspector key={sel.id} el={sel} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={(p, commit) => patch(sel.id, p, commit)} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onAlign={(how) => alignMany([sel.id], how, true)} />
-          ) : (
-            <section className={section}>
-              <h2 className={heading}>Özellikler</h2>
-              <p className="text-sm text-muted">Tuvalde bir öğeye tıklayın: konumunu, boyutunu, yazı boyutunu ve rengini buradan değiştirebilirsiniz. Logo ve görseller oranını koruyarak büyür.</p>
-            </section>
-          )}
-          <section className={section} aria-labelledby="t-layers">
-            <h2 id="t-layers" className={`${heading} flex items-center gap-1.5`}><Layers size={13} /> Katmanlar</h2>
-            <ul className="space-y-0.5">
-              {[...view].reverse().map((e) => (
-                <li key={e.id} className={`flex items-center gap-1 rounded-md pr-1 text-sm ${picked.includes(e.id) ? "bg-accent-soft text-fg" : "hover:bg-subtle"}`}>
-                  <button
-                    className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
-                    aria-pressed={picked.includes(e.id)}
-                    onClick={(ev) => (ev.shiftKey || ev.ctrlKey || ev.metaKey ? setPicked((p) => (p.includes(e.id) ? p.filter((x) => x !== e.id) : [...p, e.id])) : setSelected(e.id))}
-                  >
-                    {e.kind === "text" ? <Type size={14} className="shrink-0 text-muted" /> : e.kind === "image" ? <ImageIcon size={14} className="shrink-0 text-muted" /> : <Square size={14} className="shrink-0 text-muted" />}
-                    <span className="truncate">{e.kind === "text" && e.text.trim() ? `${e.name}: ${e.text.trim().slice(0, 24)}` : e.name}</span>
-                  </button>
-                  <button className={iconBtn} onClick={() => patch(e.id, { locked: !e.locked })} aria-label={e.locked ? `${e.name} kilidini aç` : `${e.name} kilitle`} title={e.locked ? "Kilidi aç" : "Kilitle"}>
-                    {e.locked ? <Lock size={13} /> : <LockOpen size={13} />}
-                  </button>
+                  <input value={s.caption ?? ""} onChange={(e) => setCaption(s.id, e.target.value)} maxLength={240} placeholder="Altyazı (isteğe bağlı)" aria-label={`Sahne ${i + 1} altyazısı`} className="h-7 w-full rounded-md border border-line bg-panel px-2 text-xs outline-none focus:border-accent" />
                 </li>
               ))}
-            </ul>
-          </section>
+            </ol>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="mb-0.5 block text-[11px] text-muted">Geçiş</span>
+                <select value={transition} onChange={(e) => setTransition(e.target.value as Transition)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-sm outline-none focus:border-accent">
+                  <option value="fade">Yumuşak geçiş</option>
+                  <option value="slide">Kaydırma</option>
+                  <option value="none">Kesme</option>
+                </select>
+              </label>
+              <label className="flex items-end gap-1.5 pb-1.5 text-xs">
+                <input type="checkbox" checked={motion} onChange={(e) => setMotion(e.target.checked)} /> Hareket (yakınlaşma, belirme)
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+              <button onClick={() => setScenes((x) => x.map((y) => ({ ...y, caption: captionFrom(y.els) })))} className="text-accent hover:underline">Altyazıları sahne metinlerinden doldur</button>
+              <label className="flex items-center gap-1.5">
+                <input type="checkbox" checked={burnCaptions} onChange={(e) => setBurnCaptions(e.target.checked)} /> Altyazıyı videoya yaz
+              </label>
+              {cues.length > 0 && (
+                <span className="flex gap-2">
+                  <button onClick={() => saveSubs("srt")} className="text-accent hover:underline">SRT indir</button>
+                  <button onClick={() => saveSubs("vtt")} className="text-accent hover:underline">VTT indir</button>
+                </span>
+              )}
+            </div>
+            <Picker label={music ? music.name.slice(0, 28) : "Müzik ekle (isteğe bağlı)"} accept=".mp3,.wav,.ogg,.m4a,audio/*" onPick={(f) => f && setMusic(f)} onClear={music ? () => setMusic(undefined) : undefined} />
+            <p className="text-xs text-muted">{scenes.length} sahne · {videoSeconds} sn · {FORMATS[sceneFormat!].w}×{FORMATS[sceneFormat!].h} · {recorderType()?.ext.toUpperCase() ?? "desteklenmiyor"}. Kayıt gerçek sürede yapılır; bu sekme açık kalmalı.</p>
+            {video && !video.url && !video.error ? (
+              <div className="space-y-1.5">
+                <div className="h-2 overflow-hidden rounded-full bg-subtle" role="progressbar" aria-valuenow={Math.round(video.progress * 100)} aria-valuemin={0} aria-valuemax={100} aria-label="Video oluşturuluyor">
+                  <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round(video.progress * 100)}%` }} />
+                </div>
+                <button onClick={() => videoAbort.current?.abort()} className="w-full rounded-lg border border-line py-1.5 text-xs text-muted hover:text-fg">İptal</button>
+              </div>
+            ) : (
+              <button onClick={makeVideo} disabled={!recorderType()} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-40">
+                <Film size={15} /> Videoyu oluştur
+              </button>
+            )}
+            {video?.error && <p role="alert" className="text-xs text-danger">{video.error}</p>}
+            {video?.url && (
+              <div className="space-y-1.5">
+                <video src={video.url} controls className="w-full rounded-lg border border-line bg-black" style={{ aspectRatio: `${FORMATS[sceneFormat!].w} / ${FORMATS[sceneFormat!].h}`, maxHeight: 320 }} />
+                <a href={video.url} download={`kurum-video.${video.ext}`} className="flex h-9 items-center justify-center gap-1.5 rounded-lg border border-line text-sm hover:border-accent hover:text-accent">
+                  <Download size={15} /> İndir ({video.ext?.toUpperCase()})
+                </a>
+              </div>
+            )}
+          </>
+        )}
+      </section>
+    );
+    return null;
+  };
+
+  const blocked = !!library || artOpen || layoutsOpen;
+  const showCanvas = mode !== "sunum" || !!deck;
+  return (
+    <div className="flex h-dvh flex-col bg-bg">
+      {mode === null ? (
+        <div inert={blocked} className="flex min-h-0 flex-1 flex-col">
+          <Home recent={recent} onStart={begin} onOpen={openWork} onLibrary={openLibrary} onProject={openProject} />
+        </div>
+      ) : (
+      <>
+      <header inert={blocked} className="flex h-14 shrink-0 items-center gap-1.5 border-b border-line bg-panel px-3 md:px-4">
+        <button onClick={goHome} className="flex items-center gap-1.5 rounded-md px-1.5 py-1.5 text-sm text-muted hover:bg-subtle hover:text-fg" title="Görsel Stüdyo ana sayfası">
+          <ArrowLeft size={16} /> <Logo size={24} />
+        </button>
+        <span className="h-5 w-px bg-line" aria-hidden />
+        <input value={workName} onChange={(e) => setWorkName(e.target.value)} maxLength={80} placeholder={designTitle()} aria-label="Tasarım adı" className="h-8 w-32 min-w-0 truncate rounded-md border border-transparent bg-transparent px-2 text-sm font-medium outline-none hover:border-line focus:border-accent sm:w-72" />
+        <span className={`hidden items-center gap-1 text-xs sm:flex ${saved === "error" ? "text-danger" : "text-muted"}`} role="status" title={saved === "error" ? saveError : "Çalışmalar yalnızca bu tarayıcıda saklanır"}>
+          {saved === "saving" ? <><Loader2 size={13} className="animate-spin" /> Kaydediliyor</> : saved === "saved" ? <><Check size={13} className="text-ok" /> Kaydedildi</> : saved === "error" ? "Kaydedilemedi" : null}
+        </span>
+        <span className="flex-1" />
+        <button className={iconBtn} onClick={undo} disabled={!hist.past.length} aria-label="Geri al" title="Geri al (Ctrl+Z)">
+          <Undo2 size={16} />
+        </button>
+        <button className={iconBtn} onClick={redo} disabled={!hist.future.length} aria-label="Yinele" title="Yinele (Ctrl+Y)">
+          <Redo2 size={16} />
+        </button>
+        <span className="mx-1 h-5 w-px bg-line" aria-hidden />
+        <button className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg" onClick={openLibrary} aria-haspopup="dialog">
+          <Library size={16} /> <span className="hidden md:inline">Çalışmalarım</span>
+        </button>
+        <ThemeToggle />
+        <button onClick={(e) => downloadMenu(e.currentTarget)} disabled={!showCanvas || !font || busy === "export"} aria-haspopup="menu" className="ml-1 flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-40">
+          {busy === "export" ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} İndir <ChevronDown size={14} />
+        </button>
+        <input ref={projectInput} type="file" accept=".json,application/json" className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => { openProject(e.target.files?.[0]); e.target.value = ""; }} />
+      </header>
+
+      <div inert={blocked} className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        {/* The rail: one tool at a time opens beside it; along the bottom on small screens */}
+        <nav aria-label="Araçlar" className="order-3 flex shrink-0 gap-0.5 overflow-x-auto border-t border-line bg-panel p-1.5 lg:order-1 lg:w-[76px] lg:flex-col lg:overflow-y-auto lg:border-r lg:border-t-0">
+          {tools.map((t) => {
+            const { label, Icon } = TOOLS[t];
+            return (
+              <button key={t} onClick={() => setTool(open === t ? null : t)} aria-pressed={open === t} className={`flex w-[62px] shrink-0 flex-col items-center gap-1 rounded-xl py-2 text-[11px] font-medium transition-colors ${open === t ? "bg-accent-soft text-accent" : "text-muted hover:bg-subtle hover:text-fg"}`}>
+                <Icon size={20} /> {label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <aside className={`order-2 max-h-[42dvh] min-h-0 shrink-0 overflow-y-auto border-line bg-panel lg:max-h-none lg:w-[320px] lg:border-r ${open ? "border-t lg:border-t-0" : "hidden"}`} aria-label={toolLabel}>
+          <div className="sticky top-0 z-10 flex items-center justify-between bg-panel px-4 pb-1 pt-3">
+            <h2 className="font-semibold">{toolLabel}</h2>
+            <button className={iconBtn} onClick={() => setTool(null)} aria-label="Paneli kapat"><X size={16} /></button>
+          </div>
+          {/* Stays mounted: it works for minutes on a deck, and leaving the panel mustn't cancel that. */}
+          {mode === "sunum" && !deck && (
+            <section className={`${section} ${open === "deck" ? "" : "hidden"}`}>
+              <DeckPanel docs={docs} onStart={(t: DeckTemplate, i: TemplateInfo, s: El[][]) => startDeck(t, i.primary, s)} onNote={(kind, text) => setNote({ kind, text })} />
+            </section>
+          )}
+          {panel()}
         </aside>
+
+        <main className="order-1 flex min-h-[50vh] min-w-0 flex-1 flex-col lg:order-3">
+          {showCanvas ? (
+            <>
+              <Toolbar
+                el={sel}
+                count={picked.length}
+                username={username}
+                aligns={ALIGNS}
+                onPatch={(p) => sel && patch(sel.id, p)}
+                onFont={(f) => sel && applyFont([sel.id], f)}
+                onDuplicate={() => duplicate(picked)}
+                onRemove={() => remove(picked)}
+                onOrder={(to) => reorder(picked, to)}
+                onAlign={(how) => alignMany(picked, how)}
+                onReplace={(f) => sel && replacePicture(sel.id, f)}
+                onMore={() => setTool("edit")}
+              />
+              <div className="flex min-h-0 flex-1 overflow-auto p-4 md:p-8" style={{ containerType: "size", backgroundImage: "radial-gradient(var(--line) 1px, transparent 1px)", backgroundSize: "18px 18px" }} onPointerDown={() => { setSelected(null); setEditing(null); }}>
+                {font ? (
+                  <div className="m-auto shrink-0 [&>svg]:size-full" style={{ aspectRatio: `${W} / ${H}`, width: `calc(min(100cqw, 100cqh * ${W / H}) * ${zoom})` }} onPointerDown={(e) => e.stopPropagation()}>
+                    <Editor format={format} els={view} measure={font.measure} selected={picked} onSelect={setPicked} onChange={change} editing={editing} onEditing={setEditing} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
+                  </div>
+                ) : (
+                  <p className="m-auto flex items-center gap-2 text-sm text-muted">{fontError || <><Loader2 size={16} className="animate-spin" /> Hazırlanıyor…</>}</p>
+                )}
+              </div>
+              {deck && font && <SlideStrip slides={slidesNow()} at={deck.at} measure={font.measure} onGo={goSlide} onAdd={() => setLayoutsOpen(true)} onDuplicate={duplicateSlide} onDelete={deleteSlide} onMove={moveSlide} onClose={leaveDeck} />}
+              {mode === "video" && (
+                <div className="flex items-center gap-2 border-t border-line bg-panel px-3 py-2">
+                  <ol className="flex min-w-0 flex-1 gap-2 overflow-x-auto py-0.5" aria-label="Sahneler">
+                    {scenes.map((s, i) => (
+                      <li key={s.id} className="shrink-0">
+                        <button onClick={() => setTool("scenes")} title={`Sahne ${i + 1} · ${s.seconds} sn`} aria-label={`Sahne ${i + 1}`} className="block overflow-hidden rounded border border-line hover:border-accent">
+                          {/* eslint-disable-next-line @next/next/no-img-element -- local data: SVG of the scene */}
+                          <img src={s.thumb} alt="" className="h-14 w-auto" style={{ aspectRatio: `${FORMATS[s.format].w} / ${FORMATS[s.format].h}` }} />
+                        </button>
+                      </li>
+                    ))}
+                    {!scenes.length && <li className="self-center text-xs text-muted">Henüz sahne yok. Tasarımınız hazır olunca sahne olarak ekleyin.</li>}
+                  </ol>
+                  <button onClick={addScene} disabled={!font} className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-line px-3 text-sm font-medium hover:border-accent hover:text-accent disabled:opacity-40">
+                    <Plus size={15} /> Sahne ekle
+                  </button>
+                </div>
+              )}
+              <div className="flex h-10 shrink-0 items-center gap-1 border-t border-line bg-panel px-3 text-xs text-muted">
+                <span className="mr-auto tabular-nums">{W}×{H} · {FORMATS[format].label}</span>
+                <button className={iconBtn} onClick={() => setZoom((z) => Math.max(0.25, z - 0.25))} disabled={zoom <= 0.25} aria-label="Uzaklaştır" title="Uzaklaştır"><Minus size={14} /></button>
+                <button className="h-7 w-14 rounded-md tabular-nums hover:bg-subtle" onClick={() => setZoom(1)} title="Ekrana sığdır">%{Math.round(zoom * 100)}</button>
+                <button className={iconBtn} onClick={() => setZoom((z) => Math.min(3, z + 0.25))} disabled={zoom >= 3} aria-label="Yakınlaştır" title="Yakınlaştır"><Plus size={14} /></button>
+              </div>
+            </>
+          ) : (
+            <div className="m-auto max-w-sm p-6 text-center">
+              <span className="mx-auto grid size-14 place-items-center rounded-2xl bg-accent-soft text-accent"><Presentation size={26} /></span>
+              <h2 className="mt-4 font-semibold">Sunumunuzu başlatın</h2>
+              <p className="mt-1 text-sm text-muted">Sol panelden bir tema seçin; konunuzu yazıp sunumu oluşturun ya da boş sunumla başlayın.</p>
+              {open !== "deck" && <button onClick={() => setTool("deck")} className="mt-4 h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg hover:opacity-90">Paneli aç</button>}
+            </div>
+          )}
+        </main>
       </div>
+      </>
+      )}
+
+      {note && (
+        <div role={note.kind === "error" ? "alert" : "status"} className={`fixed left-1/2 top-16 z-40 flex max-w-[90vw] -translate-x-1/2 items-center gap-2 rounded-xl border border-line bg-panel px-4 py-2.5 text-sm shadow-card ${note.kind === "error" ? "text-danger" : "text-ok"}`}>
+          {note.text}
+          <button className="-mr-1 rounded p-0.5 text-muted hover:text-fg" onClick={() => setNote(null)} aria-label="Bildirimi kapat"><X size={14} /></button>
+        </div>
+      )}
 
       {/* Its actions were made for the design it opened on: any other change (a suggestion arriving) closes it. */}
       {menu?.view === view && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
@@ -1311,7 +1518,7 @@ export default function Studio({ username }: { username: string }) {
               <h2 id="t-library" className="flex-1 text-sm font-semibold">Çalışmalarım</h2>
               <button className={iconBtn} onClick={closeLibrary} aria-label="Kapat" autoFocus><X size={16} /></button>
             </div>
-            <div className="flex flex-wrap items-end gap-2 border-b border-line px-4 py-3">
+            {mode && <div className="flex flex-wrap items-end gap-2 border-b border-line px-4 py-3">
               <label className="min-w-0 flex-1">
                 <span className="mb-0.5 block text-[11px] text-muted">{workId ? "Bu çalışmanın adı" : "Yeni çalışmanın adı"}</span>
                 <input value={workName} onChange={(e) => setWorkName(e.target.value)} maxLength={80} className={field} />
@@ -1324,11 +1531,11 @@ export default function Studio({ username }: { username: string }) {
                   Yeni çalışma olarak
                 </button>
               )}
-            </div>
+            </div>}
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {libError && <p role="alert" className="mb-3 text-sm text-danger">{libError}</p>}
               {library.length === 0 ? (
-                <p className="text-sm text-muted">Henüz kayıtlı çalışma yok. Tasarımlar yalnızca bu tarayıcıda saklanır; başka bir bilgisayara taşımak için üst çubuktaki “Projeyi kaydet” ile dosya olarak indirin.</p>
+                <p className="text-sm text-muted">Henüz kayıtlı çalışma yok. Tasarımlar yalnızca bu tarayıcıda saklanır; başka bir bilgisayara taşımak için İndir menüsünden proje dosyası olarak kaydedin.</p>
               ) : (
                 <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
                   {library.map((w) => (
@@ -1355,14 +1562,6 @@ export default function Studio({ username }: { username: string }) {
         </div>
       )}
     </div>
-  );
-}
-
-function ToolBtn({ onClick, icon, label }: { onClick: () => void; icon: ReactNode; label: string }) {
-  return (
-    <button onClick={onClick} className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg">
-      {icon} {label}
-    </button>
   );
 }
 

@@ -6,7 +6,7 @@ import { ChevronDown, Loader2, Upload } from "lucide-react";
 import { familyOf } from "@/lib/studio";
 import { LIBRARY_OPTIONS, addFontFile, ensureFont, localFontsSupported, queryLocal, uploadedFonts, type FontOption } from "./fonts";
 
-export default function FontPicker({ value, username, onPick }: { value?: string; username: string; onPick: (id: string | undefined) => void }) {
+export default function FontPicker({ value, username, onPick, compact }: { value?: string; username: string; onPick: (id: string | undefined) => void; /** In the bar above the canvas: no label, the list floats. */ compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [files, setFiles] = useState<FontOption[]>([]);
@@ -81,14 +81,14 @@ export default function FontPicker({ value, username, onPick }: { value?: string
 
   const row = "flex w-full items-center rounded-md px-2 py-1.5 text-left hover:bg-subtle";
   return (
-    <div>
-      <span className="mb-0.5 block text-[11px] text-muted">Yazı tipi</span>
+    <div className={compact ? "relative" : undefined}>
+      {!compact && <span className="mb-0.5 block text-[11px] text-muted">Yazı tipi</span>}
       <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="flex h-8 w-full items-center justify-between rounded-md border border-line bg-panel px-2 text-sm hover:border-accent" style={{ fontFamily: familyOf(value) }}>
         <span className="truncate">{current}</span>
         <ChevronDown size={14} className="shrink-0 text-muted" />
       </button>
       {open && (
-        <div className="mt-1 rounded-lg border border-line bg-panel p-1.5">
+        <div className={`mt-1 rounded-lg border border-line bg-panel p-1.5 ${compact ? "absolute left-0 top-full z-30 w-72 shadow-card" : ""}`}>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Yazı tipi ara" aria-label="Yazı tipi ara" className="mb-1 h-8 w-full rounded-md border border-line bg-panel px-2 text-sm outline-none focus:border-accent" />
           <div className="max-h-64 overflow-y-auto">
             {!needle && <button type="button" className={`${row} text-sm`} aria-pressed={!value} onClick={() => { request.current++; onPick(undefined); setOpen(false); }} style={{ fontFamily: familyOf() }}>Varsayılan (Geist)</button>}
