@@ -73,7 +73,7 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 
 ## Belge kütüphanesi
 
-Ortak belgeler sunucuda bir klasördedir (`SOURCES_HOST_DIR`, varsayılan `/srv/kurum-ai/kaynaklar`), uygulama salt okunur bağlar. Alt klasörlere dosya koymak yeterlidir; 15 saniye içinde yan menüde görünür. Dosya ilk kullanıldığında okunur, metni önbelleğe alınır. Sohbet belge okumadan başlar: belgeler yan menüden işaretlenince ya da mesajda istenince ("mevzuat klasöründeki kaynakları kullanarak...") okunur.
+Ortak belgeler sunucuda bir klasördedir (`SOURCES_HOST_DIR`, varsayılan `/srv/kurum-ai/kaynaklar`), uygulama salt okunur bağlar. Alt klasörlere dosya koymak yeterlidir; en geç 30 saniye içinde yan menüde görünür. Dosya ilk kullanıldığında okunur, metni önbelleğe alınır. Sohbet belge okumadan başlar: belgeler yan menüden işaretlenince ya da mesajda istenince ("mevzuat klasöründeki kaynakları kullanarak...") okunur.
 
 ## Desteklenen dosyalar
 

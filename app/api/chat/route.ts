@@ -177,7 +177,7 @@ export async function POST(req: Request) {
       const send = (s: string) => ctrl.enqueue(enc.encode(s));
       // Status text can carry page link labels: the stream's own separators never pass through.
       const status = (s: string) => send(STATUS_SEP + s.replace(/[\u0000-\u001f\u007f]/g, " ") + STATUS_SEP);
-      const meta: ChatMeta = { mode: "full", sources: [], unverified: [], uncertain: [], ...(selected.length === 1 ? { doc: selected[0].name, pages: pageNumbers(selected[0].text) } : {}) };
+      const meta: ChatMeta = { mode: "full", sources: [], unverified: [], uncertain: [] };
       let answer = "";
       try {
         // Documents: those attached to this chat; with none, those the message itself asks for. A plain question
@@ -213,7 +213,10 @@ export async function POST(req: Request) {
         }
         if (!fileIds.length && selected.length) meta.used = selected.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind }));
         meta.sources = selected.map((d) => d.name);
-        if (selected.length === 1) meta.doc = selected[0].name;
+        if (selected.length === 1) {
+          meta.doc = selected[0].name;
+          meta.pages = pageNumbers(selected[0].text);
+        }
         // Linked pages first: they count toward what fits in the context, and the user sees them being read.
         const pages: Page[] = [];
         const webNotes: string[] = [];
@@ -286,7 +289,7 @@ export async function POST(req: Request) {
           web ? h.map((m, i) => (i === h.length - 1 && m.role === "user" ? { ...m, content: `${m.content}\n\n${web}` } : m)) : h;
         const rule = (web ? `\n\n${WEB}` : "") + (failed.length ? failedRule(failed) : "");
         if (pages.length) meta.web = pages.map(({ url, title }) => ({ url, title }));
-        if (webNotes.length) meta.note = webNotes.join(" ");
+        if (webNotes.length) meta.note = [meta.note, ...webNotes].filter(Boolean).join(" ");
 
         let context: string;
         let hint = "";
@@ -297,8 +300,8 @@ export async function POST(req: Request) {
           answer = await streamChat(chat, model, [{ role: "system", content: GENERAL + rule }, ...withWeb(history)], think, signal, send, (n) => {
             if (n % 50 === 0) status("Düşünüyor…");
           });
-          // Only what a page or a refused link has to say; a plain answer gets no notes.
-          if (pages.length || webNotes.length) send(META_SEP + JSON.stringify({ ...meta, sources: [] }));
+          // Only what a page, a refused link or an unread document has to say; a plain answer gets no notes.
+          if (pages.length || meta.note) send(META_SEP + JSON.stringify({ ...meta, sources: [] }));
           return void ctrl.close();
         }
         const totalChars = selected.reduce((n, d) => n + d.chars, 0) + web.length;

@@ -152,7 +152,11 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       .then((l: DocMeta[]) => setPersonal(l.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind, path: `${d.folder ? `${d.folder}/` : ""}${d.name}` }))))
       .catch(() => {});
   }, []);
-  useEffect(() => refreshLibrary(), [refreshLibrary]);
+  useEffect(() => {
+    refreshLibrary();
+    const t = setInterval(() => { if (!document.hidden) refreshLibrary(); }, 15_000);
+    return () => clearInterval(t);
+  }, [refreshLibrary]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -169,12 +173,17 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   }, []);
 
   const upload = (list: FileList | File[]) => {
+    let room = MAX_CHAT_DOCS - files.filter((c) => c.status !== "error").length;
     for (const f of Array.from(list)) {
       const tmp: Card = { id: crypto.randomUUID(), name: f.name, size: f.size, kind: kindOf(f.name), status: "uploading" };
       const patch = (p: Partial<Card>) => setFiles((fs) => fs.map((x) => (x.id === tmp.id ? { ...x, ...p } : x)));
       setFiles((fs) => [...fs, tmp]);
       if (f.size > MAX_BYTES) {
         patch({ status: "error", error: "Dosya 25 MB sınırını aşıyor." });
+        continue;
+      }
+      if (room-- <= 0) {
+        patch({ status: "error", error: `Bir sohbette en fazla ${MAX_CHAT_DOCS} belge kullanılabilir.` });
         continue;
       }
       const body = new FormData();
@@ -221,7 +230,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     uploads.current.get(c.id)?.abort();
   };
   const attachedIds = useMemo(() => new Set(files.flatMap((f) => (f.serverId ? [f.serverId] : []))), [files]);
-  const cardOf = (it: Pick<LibItem, "id" | "name" | "size" | "kind">): Card => ({ id: it.id, serverId: it.id, name: it.name, size: it.size, kind: it.kind as DocKind, status: "ready" });
+  // A shared document's name on the server is its path (lib/library): source links match cards by name.
+  const cardOf = (it: Pick<LibItem, "id" | "name" | "size" | "kind"> & { path?: string }): Card => ({ id: it.id, serverId: it.id, name: it.path && it.id.startsWith("s-") ? it.path.replace(/["<>]/g, "") : it.name, size: it.size, kind: it.kind as DocKind, status: "ready" });
   const toggleDocs = (items: LibItem[], on: boolean) =>
     setFiles((fs) => {
       if (!on) {
