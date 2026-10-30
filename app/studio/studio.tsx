@@ -935,16 +935,20 @@ export default function Studio({ username }: { username: string }) {
     running.current = run;
     return run;
   };
+  const saveFailed = useRef(false);
+  const leaveWarned = useRef(false);
   const autosave = async () => {
     pending.current = null;
     setSaved("saving");
     try {
       await queueSave();
       setSaved("saved");
+      saveFailed.current = false;
       return true;
     } catch (e) {
       setSaveError((e as Error).message || "Kaydedilemedi.");
       setSaved("error");
+      saveFailed.current = true;
       return false;
     }
   };
@@ -952,18 +956,23 @@ export default function Studio({ username }: { username: string }) {
   useLayoutEffect(() => {
     latestAutosave.current = autosave;
   });
-  /** Before the design on screen is replaced: what's waiting to be saved is saved first, as itself. False: it couldn't
-   *  be, and the design stays open. Nothing is waiting any more, so a second try leaves (a full disk mustn't trap the user). */
+  /** Before the design on screen is replaced: what's unsaved is saved first, as itself. If it can't be, the design stays
+   *  open with a warning; asked again, it tries once more and then leaves (a full disk mustn't trap the user). */
   const flushSave = async () => {
     let ok = true;
-    if (pending.current) {
-      clearTimeout(pending.current);
+    if (pending.current || saveFailed.current) {
+      if (pending.current) clearTimeout(pending.current);
       ok = await autosave();
     } else if (running.current) {
       ok = await running.current.then(() => true, () => false);
     }
-    if (!ok) setNote({ kind: "error", text: "Son değişiklikler kaydedilemedi. İndir menüsünden proje dosyası olarak saklayın; yine de çıkmak için tekrar deneyin." });
-    return ok;
+    if (ok || leaveWarned.current) {
+      leaveWarned.current = saveFailed.current = false;
+      return true;
+    }
+    leaveWarned.current = true;
+    setNote({ kind: "error", text: "Son değişiklikler kaydedilemedi. İndir menüsünden proje dosyası olarak saklayın; yine de çıkmak için tekrar deneyin." });
+    return false;
   };
   // Only what the user made or opened: an untouched template isn't a work yet.
   const hasDesign = !!font && !!mode && (!!els || ownText || !!photo) && (mode !== "sunum" || !!deck);
