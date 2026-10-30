@@ -429,5 +429,5 @@ export function isLooping(text: string): boolean {
   if (words.length >= 150 && new Set(words.slice(-150)).size <= 10) return true;
   // Numbers and single letters count here: they're what makes a table's rows differ.
   const last = (tail.match(/\p{N}+|\p{L}+/gu) ?? []).slice(-60);
-  return last.length === 60 && [1, 2, 3, 4].some((n) => last.every((w, i) => i < n || w === last[i - n]));
+  return last.length === 60 && last.some((w) => /\p{L}{2}/u.test(w)) && [1, 2, 3, 4].some((n) => last.every((w, i) => i < n || w === last[i - n]));
 }
