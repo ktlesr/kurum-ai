@@ -1056,7 +1056,7 @@ function Claims({ claims, doc, onSource }: { claims: NonNullable<ChatMeta["claim
   const n = (st: keyof typeof CLAIM) => claims.filter((c) => c.status === st).length;
   const none = n("none");
   return (
-    <details className="group rounded-lg border border-line bg-panel" open={none > 0}>
+    <details className="group rounded-lg border border-line bg-panel">
       <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-muted hover:text-fg">
         <ChevronDown size={13} className="shrink-0 transition-transform group-open:rotate-180" />
         <span className="font-medium text-fg">Cümle kaynakları</span>
