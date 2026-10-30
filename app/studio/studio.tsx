@@ -981,6 +981,8 @@ export default function Studio({ username }: { username: string }) {
   const hasDesign = !!font && !!mode && (!!els || ownText || !!photo || !!workId) && (mode !== "sunum" || !!deck);
   useEffect(() => {
     if (!hasDesign) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the status follows the timer this effect starts
+    setSaved("saving"); // "Kaydedildi" would be untrue from the first change on
     pending.current = setTimeout(() => latestAutosave.current(), AUTOSAVE_MS);
     return () => {
       if (pending.current) clearTimeout(pending.current);
@@ -993,6 +995,12 @@ export default function Studio({ username }: { username: string }) {
     const t = setTimeout(() => setNote(null), 5000);
     return () => clearTimeout(t);
   }, [note]);
+  // Closing the tab within the wait: the browser's own "leave?" question (it can't be saved from here).
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => { if (pending.current || running.current) e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
   const refreshRecent = () => listWorks(username).then(setRecent, () => {});
   useEffect(() => { listWorks(username).then(setRecent, () => {}); }, [username]);
   const goHome = async () => {
