@@ -424,8 +424,10 @@ export function compactTables(md: string): string {
  * ponytail: word count only; a loop over more than 10 different words runs on to the length cap.
  */
 export function isLooping(text: string): boolean {
-  const words = text.slice(-3000).toLocaleLowerCase("tr").match(/\p{N}+|\p{L}+/gu) ?? [];
+  const tail = text.slice(-3000).toLocaleLowerCase("tr");
+  const words = tail.match(/\p{L}{2,}/gu) ?? [];
   if (words.length >= 150 && new Set(words.slice(-150)).size <= 10) return true;
-  const last = words.slice(-60);
-  return last.length === 60 && [1, 2, 3, 4].some((p) => last.every((w, i) => i < p || w === last[i - p]));
+  // Numbers and single letters count here: they're what makes a table's rows differ.
+  const last = (tail.match(/\p{N}+|\p{L}+/gu) ?? []).slice(-60);
+  return last.length === 60 && [1, 2, 3, 4].some((n) => last.every((w, i) => i < n || w === last[i - n]));
 }

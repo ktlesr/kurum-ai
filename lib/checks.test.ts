@@ -139,6 +139,8 @@ test("isLooping: a repeating answer stops, real text doesn't", () => {
   assert.equal(isLooping(amounts), false);
   const yesNo = Array.from({ length: 26 }, (_, i) => `| ${String.fromCharCode(65 + i)} | Evet | Hayır | Evet |`).join("\n");
   assert.equal(isLooping(yesNo), false);
+  const budget = Array.from({ length: 12 }, (_, m) => ["Kira", "Elektrik", "Su"].map((k) => `| ${k} | ${m + 1}. ay | 0,00 | 1000,00 |`).join("\n")).join("\n");
+  assert.equal(isLooping(budget), false);
   const table = Array.from({ length: 80 }, (_, i) => `| Satır ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + (i >> 2))} | Evet | Hayır |`).join("\n");
   assert.equal(isLooping(table), false);
 });
