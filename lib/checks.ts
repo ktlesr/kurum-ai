@@ -419,10 +419,11 @@ export function compactTables(md: string): string {
 }
 
 /**
- * A model stuck repeating itself: the last 150 words use at most 10 different ones. Real prose and tables don't.
+ * A model stuck repeating itself: the last 150 words use at most 10 different ones, or the last 60 at most 4.
+ * Real prose and tables don't.
  * ponytail: word count only; a loop over more than 10 different words runs on to the length cap.
  */
 export function isLooping(text: string): boolean {
   const words = text.slice(-3000).toLocaleLowerCase("tr").match(/\p{L}{2,}/gu) ?? [];
-  return words.length >= 150 && new Set(words.slice(-150)).size <= 10;
+  return (words.length >= 150 && new Set(words.slice(-150)).size <= 10) || (words.length >= 60 && new Set(words.slice(-60)).size <= 4);
 }

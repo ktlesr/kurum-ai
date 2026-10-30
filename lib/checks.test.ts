@@ -134,6 +134,7 @@ test("checkColumns flags a figure put under the wrong document's column", () => 
 test("isLooping: a repeating answer stops, real text doesn't", () => {
   assert.equal(isLooping("respect de olsa, respect de de olsa, ".repeat(40)), true);
   assert.equal(isLooping("respect de olsa ".repeat(10)), false); // too short to tell
+  assert.equal(isLooping("_al_en_le".repeat(25)), true); // a tight loop stops sooner
   const table = Array.from({ length: 80 }, (_, i) => `| Satır ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + (i >> 2))} | Evet | Hayır |`).join("\n");
   assert.equal(isLooping(table), false);
 });

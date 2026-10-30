@@ -29,16 +29,15 @@ type UploadEvent =
 
 /**
  * Processing profiles (plan §3.1): each maps to real request parameters.
- * Reasoning only in deep: with a whole document in a 128k context, thinking first made every answer slow.
- * auto = no reasoning, the server decides between whole-doc and search; fast = no reasoning, a too-large document
- * is always searched (no classifier call) except for quick tasks, which always need it whole; deep = reasoning + always
- * the whole document.
+ * No reasoning in any of them: Gemma 4 on vLLM with thinking on and a document gave repeating, garbled text (2026-10-30).
+ * auto = the server decides between whole-doc and search; fast = a too-large document is always searched (no classifier
+ * call) except for quick tasks, which always need it whole; deep = always the whole document.
  */
 type Profile = "auto" | "fast" | "deep";
 const PROFILES: { id: Profile; label: string; hint: string }[] = [
   { id: "auto", label: "Otomatik", hint: "Soruya göre ilgili bölümleri ya da tüm belgeyi kullanır; düşünme adımı yok." },
   { id: "fast", label: "Hızlı", hint: "Serbest sorularda en hızlı cevap; büyük belgede ilgili bölümleri kullanır. Hazır işler yine tüm belgeyi kapsar." },
-  { id: "deep", label: "Derin analiz", hint: "Önce düşünür, belgenin tamamını kullanır; daha yavaş, daha kapsamlı." },
+  { id: "deep", label: "Derin analiz", hint: "Belgenin tamamını kullanır; daha yavaş, daha kapsamlı." },
 ];
 
 const MAX_CHAT_DOCS = 20; // LIMITS.files in lib/validate
@@ -319,7 +318,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model,
-          think: profile === "deep",
+          think: false,
           scope: scope ?? (profile === "deep" ? "all" : profile === "fast" ? "part" : undefined),
           fileIds: ready.map((f) => f.serverId),
           messages: history.slice(-HISTORY).map(({ role, content }) => ({ role, content })),
