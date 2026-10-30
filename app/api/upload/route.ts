@@ -140,11 +140,12 @@ export async function GET(req: Request) {
   if (id && isSharedId(id)) {
     const e = sharedEntry(id);
     if (!e) return fail("Dosya bulunamadı.", 404);
+    if (!admission.uploadPerUser.allow(user.id)) return tooMany("belge okuma");
     try {
       const d = await sharedDoc(e, () => {}, req.signal);
       return Response.json({ ...toMeta(d), sections: docSections(d.text) });
-    } catch {
-      return fail("Dosya okunamadı.", 422);
+    } catch (e2) {
+      return e2 instanceof Busy ? busy() : fail("Dosya okunamadı.", 422);
     }
   }
   if (id) {

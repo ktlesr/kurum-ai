@@ -6,6 +6,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { admission } from "./admission";
 import { writeFileAtomic } from "./atomic";
 import { contentProblem } from "./filetype";
 import { parseFile, UserError } from "./parse";
@@ -21,7 +22,7 @@ const SCAN_MS = 15_000; // new files appear within this long
 const MAX_LOADED = 50; // documents kept in memory with their search vectors
 
 export const isSharedId = (id: string) => id.startsWith("s-");
-export interface SharedEntry { id: string; path: string; name: string; size: number; kind: DocKind }
+export interface SharedEntry { id: string; path: string; name: string; size: number; kind: DocKind; mtime: number }
 
 const kindOf = (ext: string): DocKind => (ext === "pdf" ? "pdf" : ext === "docx" ? "docx" : ext === "xlsx" || ext === "xls" || ext === "csv" ? "sheet" : "text");
 
@@ -45,7 +46,7 @@ function walk(dir: string, rel: string, depth: number, out: SharedEntry[]) {
     if (st.isDirectory()) walk(full, r, depth + 1, out);
     else if (st.isFile() && st.size > 0 && st.size <= MAX_BYTES) {
       const ext = n.toLowerCase().split(".").pop() ?? "";
-      if (EXT.has(ext)) out.push({ id: `s-${createHash("sha256").update(r).digest("hex").slice(0, 40)}`, path: r, name: n, size: st.size, kind: kindOf(ext) });
+      if (EXT.has(ext)) out.push({ id: `s-${createHash("sha256").update(r).digest("hex").slice(0, 40)}`, path: r, name: n, size: st.size, kind: kindOf(ext), mtime: st.mtimeMs });
     }
   }
 }
@@ -63,14 +64,16 @@ export const sharedEntry = (id: string) => sharedList().find((e) => e.id === id)
 
 /** The document's text, extracted on first use; a changed file (new content) is extracted again. */
 export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => void, signal: AbortSignal): Promise<Doc> {
-  const buf = readFileSync(path.join(ROOT(), ...e.path.split("/")));
-  const hash = createHash("sha256").update(buf).digest("hex");
-  const key = `${e.id}:${hash}`;
+  // Same size and time: no need to read and hash the file again.
+  const key = `${e.id}:${e.size}:${e.mtime}`;
   const had = state.loaded.get(key);
   if (had) return had;
   const running = state.running.get(key);
   if (running) return running;
-  const job = (async () => {
+  // Held from reading the file to the end of extraction: the same global limit as uploads (a full queue is refused).
+  const job = admission.upload.run(async () => {
+    const buf = readFileSync(path.join(ROOT(), ...e.path.split("/")));
+    const hash = createHash("sha256").update(buf).digest("hex");
     const file = path.join(CACHE, `${hash}.json`);
     // The name goes into prompts inside an attribute: no quote or bracket can close it.
     const name = e.path.replace(/["<>]/g, "");
@@ -92,7 +95,7 @@ export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => v
     // ponytail: oldest out first; a large library's most used documents are simply loaded again from the cache.
     if (state.loaded.size > MAX_LOADED) state.loaded.delete(state.loaded.keys().next().value as string);
     return doc;
-  })().finally(() => state.running.delete(key));
+  }, new AbortController().signal).finally(() => state.running.delete(key));
   state.running.set(key, job);
   onProgress(e.path);
   signal.throwIfAborted();
