@@ -59,6 +59,12 @@ test("pinned first, then most recent; titles are trimmed", () => {
   assert.equal(titleFrom(""), "Yeni sohbet");
 });
 
+test("parseBackup keeps a question's time and drops one no date can show", () => {
+  const c = chat("a", 1, { messages: [{ role: "user", content: "s", at: 5 }, { role: "user", content: "s", at: 1e300 }, { role: "user", content: "s", at: "x" }] } as unknown as Partial<StoredChat>);
+  const [back] = parseBackup(JSON.stringify(makeBackup([c]))) as StoredChat[];
+  assert.deepEqual(back.messages.map((m) => m.at), [5, undefined, undefined]);
+});
+
 test("parseBackup keeps valid answer timings and drops malformed ones", () => {
   const c = { id: "t1", title: "t", createdAt: 1, updatedAt: 2, docIds: [], messages: [
     { role: "assistant", content: "a", timing: { first: 3, total: 9 } },

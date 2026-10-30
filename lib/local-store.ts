@@ -144,7 +144,7 @@ export function parseBackup(text: string): StoredChat[] | string {
       messages: c.messages.map(({ role, content, at, error, meta, timing }) => {
         const m = cleanMeta(meta);
         const t = cleanTiming(timing);
-        return { role, content, ...(Number.isFinite(at) ? { at } : {}), ...(error ? { error: true } : {}), ...(m ? { meta: m } : {}), ...(t ? { timing: t } : {}) };
+        return { role, content, ...(Number.isFinite(at) && Math.abs(at as number) <= 8.64e15 ? { at } : {}), ...(error ? { error: true } : {}), ...(m ? { meta: m } : {}), ...(t ? { timing: t } : {}) };
       }),
     });
   }
