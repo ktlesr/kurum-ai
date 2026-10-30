@@ -3,7 +3,7 @@
 // The studio canvas: the same primitives the export draws (lib/studio draw), as React SVG, plus selection, move,
 // resize handles, snapping guides and in-place text editing. Coordinates are design pixels (the SVG viewBox).
 import { useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { FONT_FAMILY, FORMATS, aabb, dashOf, draw, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl } from "@/lib/studio";
+import { FORMATS, aabb, dashOf, draw, familyOf, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl } from "@/lib/studio";
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 type Box = { x: number; y: number; w: number; h: number };
@@ -93,7 +93,7 @@ export function PrimView({ p, k, uid }: { p: Prim; k: number; uid: string }) {
       {shadow && <defs>{shadow}</defs>}
       <text
         fontSize={p.size} fontWeight={p.weight} fill={p.color} textAnchor={p.anchor === "start" ? undefined : p.anchor} letterSpacing={p.tracking || undefined}
-        fontStyle={p.italic ? "italic" : undefined} textDecoration={p.underline ? "underline" : undefined} {...common} style={{ fontFamily: `${FONT_FAMILY}, Arial, sans-serif` }}
+        fontStyle={p.italic ? "italic" : undefined} textDecoration={p.underline ? "underline" : undefined} {...common} style={{ fontFamily: familyOf(p.font) }}
       >
         {p.lines.map((line, i) => (
           <tspan key={i} x={p.x} y={p.y + p.size * (0.9 + i * p.leading)}>
@@ -456,7 +456,7 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
             }}
             style={{
               width: "100%", height: "100%", resize: "none", border: "none", outline: `${2 * scale}px solid #3b82f6`, background: "rgba(255,255,255,0.12)",
-              color: editEl.color, fontFamily: `${FONT_FAMILY}, Arial, sans-serif`, fontSize: editEl.size, fontWeight: editEl.weight, lineHeight: editEl.leading,
+              color: editEl.color, fontFamily: familyOf(editEl.font), fontSize: editEl.size, fontWeight: editEl.weight, lineHeight: editEl.leading,
               letterSpacing: editEl.tracking || undefined, textAlign: editEl.align === "middle" ? "center" : editEl.align === "end" ? "right" : "left",
               padding: editEl.bg ? `0 ${editEl.size * 0.8}px` : 0, overflow: "hidden", textTransform: editEl.upper ? "uppercase" : undefined,
             }}

@@ -1,7 +1,7 @@
 // Run: pnpm test. Görsel Stüdyo layers → SVG, text fitting, the model's suggestion parser.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FORMATS, SHAPES, TEMPLATES, aabb, alignEls, cleanEls, distributeEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type El, type Measure } from "./studio.ts";
+import { FORMATS, SHAPES, TEMPLATES, registerFontCss, aabb, alignEls, cleanEls, distributeEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type El, type Measure } from "./studio.ts";
 
 // Monospace stand-in for canvas measureText: every character is 0.55 em.
 const measure: Measure = (t, size) => t.length * size * 0.55;
@@ -226,4 +226,16 @@ test("distribute: locked ones are left out, the rest still get equal gaps", () =
   const box = (id: string, x: number, more = {}) => ({ id, kind: "shape", name: id, x, y: 0, w: 100, h: 10, fill: { kind: "solid", color: "#000000" }, ...more }) as El;
   const d = distributeEls([box("a", 0), box("b", 150, { locked: true }), box("c", 400), box("d", 700)], ["a", "b", "c", "d"], "x");
   assert.deepEqual(d.map((e) => e.x), [0, 150, 350, 700]);
+});
+
+test("fonts: a loaded font is embedded and named only when used; a stored id can't reach the SVG unchecked", () => {
+  registerFontCss("poppins", "@font-face{font-family:K-poppins;src:url(data:font/woff2;base64,AAAA)}");
+  const t = cleanEls([{ kind: "text", text: "Şağlık", x: 0, y: 0, w: 500, h: 60, size: 40, font: "poppins" }])[0];
+  const svg = svgOf("kare", [t], measure);
+  assert.match(svg, /@font-face\{font-family:K-poppins/);
+  assert.match(svg, /style="font-family:K-poppins,KaiStudio,Arial,sans-serif"/);
+  assert.doesNotMatch(svgOf("kare", [{ ...t, font: undefined } as El], measure), /K-poppins/);
+  const bad = cleanEls([{ kind: "text", text: "a", x: 0, y: 0, w: 100, h: 40, size: 30, font: 'x"/><script>' }])[0];
+  assert.ok(bad.kind === "text" && bad.font === undefined);
+  assert.doesNotMatch(svgOf("kare", [{ ...t, font: 'x"/><script>' } as El], measure), /<script>/);
 });

@@ -30,7 +30,7 @@ export interface Design { template: TemplateId; format: FormatId; content: Conte
 export const DEFAULT_BRAND: Brand = { primary: "#14263d", accent: "#2e5e8c" };
 
 /** Width of `text` at `size` px and `weight`; the browser passes canvas measureText with the embedded font. */
-export type Measure = (text: string, size: number, weight: number) => number;
+export type Measure = (text: string, size: number, weight: number, font?: string) => number;
 
 type Box = { x: number; y: number; w: number; h: number };
 type Layer =
@@ -321,6 +321,8 @@ type Common = {
 export type TextEl = Common & {
   kind: "text"; text: string; role?: Role; size: number; weight: number; color: string; align: "start" | "middle" | "end";
   leading: number; tracking: number; upper?: boolean; italic?: boolean; underline?: boolean;
+  /** A font id (app/studio/fonts); none: the default font. */
+  font?: string;
   /** Shrink the size (down to 40%) until the text fits the box; off once the user sets a size. */
   auto: boolean;
   /** A filled, rounded box behind the text (the tag pill). */
@@ -345,7 +347,7 @@ export type Prim = PrimBase &
     | { kind: "ellipse"; x: number; y: number; w: number; h: number; fill: Fill | null; stroke?: Stroke }
     | { kind: "poly"; pts: [number, number][]; closed: boolean; fill: Fill | null; stroke?: Stroke }
     | { kind: "image"; x: number; y: number; w: number; h: number; pic: Picture; clip?: { x: number; y: number; w: number; h: number; radius: number } }
-    | { kind: "text"; x: number; y: number; anchor: "start" | "middle" | "end"; size: number; lines: string[]; weight: number; color: string; leading: number; tracking: number; italic?: boolean; underline?: boolean }
+    | { kind: "text"; x: number; y: number; anchor: "start" | "middle" | "end"; size: number; lines: string[]; weight: number; color: string; leading: number; tracking: number; italic?: boolean; underline?: boolean; font?: string }
   );
 
 /** SVG transform for a Tf (numbers only): rotate, then mirror around the same centre. */
@@ -540,7 +542,7 @@ export function hug(els: El[], measure: Measure): El[] {
   return els.map((e) => {
     if (e.kind !== "text" || e.auto || e.bg) return e;
     const t = e.upper ? e.text.toLocaleUpperCase("tr") : e.text;
-    const width = (s: string, size: number, weight: number) => measure(s, size, weight) + e.tracking * s.length;
+    const width = (s: string, size: number, weight: number) => measure(s, size, weight, e.font) + e.tracking * s.length;
     const lines = fitText(t, Math.max(1, e.w), Number.MAX_SAFE_INTEGER, e.size, e.size, 999, e.weight, width, e.leading).lines.length;
     const h = Math.max(1, lines) * e.size * e.leading;
     return Math.abs(h - e.h) < 0.5 ? e : { ...e, h };
@@ -550,7 +552,7 @@ export function hug(els: El[], measure: Measure): El[] {
 export function textLines(e: TextEl, measure: Measure) {
   const pad = e.bg ? e.size * 0.8 : 0;
   const t = e.upper ? e.text.toLocaleUpperCase("tr") : e.text;
-  const width = (s: string, size: number, weight: number) => measure(s, size, weight) + e.tracking * (size / e.size) * s.length;
+  const width = (s: string, size: number, weight: number) => measure(s, size, weight, e.font) + e.tracking * (size / e.size) * s.length;
   if (e.bg) return { size: e.size, lines: [t.replace(/\s+/g, " ")], pad };
   return { ...fitText(t, Math.max(1, e.w), e.auto ? Math.max(1, e.h + 0.5) : Math.max(e.size * e.leading, e.h + 0.5), e.size, e.auto ? e.size * 0.4 : e.size, 999, e.weight, width, e.leading), pad };
 }
@@ -603,7 +605,7 @@ export function draw(els: El[], measure: Measure): Prim[] {
       // With a pill the line sits in the middle of the box; otherwise the first line starts at the top.
       const y = e.bg ? e.y + e.h / 2 - size * 0.54 : e.y;
       // With a pill, its shadow is the pill's; the letters don't get a second one.
-      out.push({ ...base, ...(e.bg ? { shadow: undefined } : {}), kind: "text", x, y, anchor: e.align, size, lines, weight: e.weight, color: safeColor(e.color, "#14263d"), leading: e.leading, tracking: e.tracking * scale, ...(e.italic ? { italic: true } : {}), ...(e.underline ? { underline: true } : {}) });
+      out.push({ ...base, ...(e.bg ? { shadow: undefined } : {}), kind: "text", x, y, anchor: e.align, size, lines, weight: e.weight, color: safeColor(e.color, "#14263d"), leading: e.leading, tracking: e.tracking * scale, ...(e.italic ? { italic: true } : {}), ...(e.underline ? { underline: true } : {}), ...(e.font ? { font: e.font } : {}) });
     }
   }
   return out;
@@ -612,6 +614,13 @@ export function draw(els: El[], measure: Measure): Prim[] {
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const n = (v: number) => Math.round(v * 10) / 10;
 export const FONT_FAMILY = "KaiStudio";
+/** Stored ids reach CSS and SVG attributes: only these characters. */
+export const safeFontId = (v: unknown) => (typeof v === "string" && /^[a-z0-9-]{1,60}$/.test(v) ? v : undefined);
+/** CSS family list of a font id, the default font as fallback. */
+export const familyOf = (font?: string) => `${safeFontId(font) ? `K-${font},` : ""}${FONT_FAMILY},Arial,sans-serif`;
+// @font-face blocks of the loaded fonts (data: URLs): a design's SVG embeds those it uses.
+const fontsCss = new Map<string, string>();
+export const registerFontCss = (id: string, css: string) => void fontsCss.set(id, css);
 const fillColor = (c: string) => safeColor(c, "#000000");
 const n2 = (v: number) => Math.round(v * 100) / 100; // opacities: 5% steps
 const shadowKey = (s: Shadow) => [s.color, n(s.blur), n(s.x), n(s.y), n2(s.opacity)].join("|");
@@ -622,7 +631,7 @@ export const shadowAttrs = (s: Shadow) => `dx="${n(s.x)}" dy="${n(s.y)}" stdDevi
  * The design as a standalone SVG. `fontCss` is an @font-face block with the font as a data: URL (an SVG drawn as an
  * image can't load anything else). Images are <image> elements: inside an image no script or link ever runs.
  */
-export function svgOf(format: FormatId, els: El[], measure: Measure, fontCss = ""): string {
+export function svgOf(format: FormatId, els: El[], measure: Measure, css = ""): string {
   const { w, h } = FORMATS[format];
   const defs: string[] = [];
   const body: string[] = [];
@@ -682,10 +691,11 @@ export function svgOf(format: FormatId, els: El[], measure: Measure, fontCss = "
       const spans = p.lines.map((line, i) => `<tspan x="${n(p.x)}" y="${n(p.y + p.size * (0.9 + i * p.leading))}">${esc(line)}</tspan>`).join("");
       const anchor = p.anchor === "start" ? "" : ` text-anchor="${p.anchor}"`;
       const deco = `${p.italic ? ` font-style="italic"` : ""}${p.underline ? ` text-decoration="underline"` : ""}`;
-      body.push(`<text font-size="${n(p.size)}" font-weight="${p.weight}" fill="${p.color}"${anchor}${p.tracking ? ` letter-spacing="${n(p.tracking)}"` : ""}${deco}${common(p)}>${spans}</text>`);
+      body.push(`<text font-size="${n(p.size)}" font-weight="${p.weight}" fill="${p.color}"${anchor}${p.tracking ? ` letter-spacing="${n(p.tracking)}"` : ""}${deco}${p.font && safeFontId(p.font) ? ` style="font-family:${familyOf(p.font)}"` : ""}${common(p)}>${spans}</text>`);
     }
   }
-  const style = `<style>${fontCss}text{font-family:${FONT_FAMILY},Arial,sans-serif}</style>`;
+  const used = [...new Set(els.flatMap((e) => (e.kind === "text" && e.font ? [e.font] : [])))].map((f) => fontsCss.get(f) ?? "").join("");
+  const style = `<style>${css}${used}text{font-family:${FONT_FAMILY},Arial,sans-serif}</style>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><defs>${style}${defs.join("")}</defs>${body.join("")}</svg>`;
 }
 
@@ -721,7 +731,7 @@ export function cleanEls(raw: unknown): El[] {
         ...base, kind: "text", text: typeof r.text === "string" ? r.text.slice(0, 2000) : "", role: (["tag", "title", "subtitle", "detail", "deco"] as const).find((x) => x === r.role),
         size: Math.max(4, num(r.size, 40)), weight: [300, 400, 500, 600, 700, 800, 900].includes(r.weight as number) ? (r.weight as number) : 400, color: safeColor(r.color, "#14263d"),
         align: r.align === "middle" || r.align === "end" ? r.align : "start", leading: Math.min(3, Math.max(0.8, num(r.leading, 1.2))), tracking: Math.min(50, Math.max(-10, num(r.tracking))),
-        upper: r.upper === true, auto: r.auto === true, ...(r.italic === true ? { italic: true } : {}), ...(r.underline === true ? { underline: true } : {}),
+        upper: r.upper === true, auto: r.auto === true, ...(safeFontId(r.font) ? { font: r.font as string } : {}), ...(r.italic === true ? { italic: true } : {}), ...(r.underline === true ? { underline: true } : {}),
         ...(bg && typeof bg === "object" ? { bg: { fill: safeColor(bg.fill, "#2e5e8c"), radius: Math.max(0, num(bg.radius)) } } : {}),
       });
     } else if (r.kind === "image") {

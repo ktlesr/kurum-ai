@@ -2,6 +2,7 @@
 
 // Görsel Stüdyo helpers: reading pictures the user picks (checked before decoding), the embedded font, downloads,
 // the per-user brand kit. Everything stays in this browser.
+import { measurer } from "./fonts";
 import { useEffect, useState } from "react";
 import { DEFAULT_BRAND, FONT_FAMILY, MAX_PIXELS, rasterSize, safeColor, storedPicture, type Brand, type Content, type Measure, type Picture, type TemplateId } from "@/lib/studio";
 
@@ -118,11 +119,7 @@ export function useStudioFont() {
       const face = new FontFace(FONT_FAMILY, buf, { weight: "100 900" });
       document.fonts.add(await face.load());
       const b64 = await readAsDataUrl(new Blob([buf], { type: "font/woff2" }));
-      const ctx = document.createElement("canvas").getContext("2d")!;
-      const measure: Measure = (t, size, weight) => {
-        ctx.font = `${weight} ${size}px ${FONT_FAMILY}`;
-        return ctx.measureText(t).width;
-      };
+      const measure = measurer();
       if (live) setFont({ css: `@font-face{font-family:${FONT_FAMILY};src:url(${b64}) format("woff2");font-weight:100 900}`, measure });
     })().catch(() => live && setError("Yazı tipi yüklenemedi. Sayfayı yenileyin."));
     return () => {

@@ -14,6 +14,8 @@ import {
 import { ThemeToggle } from "../theme-toggle";
 import Editor from "./editor";
 import ContextMenu, { type MenuItem } from "./context-menu";
+import FontPicker from "./font-picker";
+import { ensureFont } from "./fonts";
 import type { Claim } from "@/lib/trace";
 import { recorderType, renderVideo, type Scene, type Transition } from "./video";
 import { listWorks, removeWork, saveWork, thumbnail, type Work } from "./works";
@@ -51,6 +53,7 @@ const iconBtn = "grid size-8 place-items-center rounded-md text-muted transition
 const chip = (on: boolean) => `rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${on ? "bg-panel text-fg shadow-card" : "text-muted hover:text-fg"}`;
 
 /** Every colour in the design that was the old brand colour becomes the new one. */
+const stamp = () => Date.now();
 function recolor(els: El[], from: string, to: string): El[] {
   const c = (x: string) => (x.toLowerCase() === from.toLowerCase() ? to : x);
   return els.map((e) => {
@@ -147,6 +150,27 @@ export default function Studio({ username }: { username: string }) {
       live = false;
     };
   }, [photo, brand.logo]);
+
+  // Fonts the design uses: loaded on demand, then drawn again (until then: the default font).
+  const [, setFontTick] = useState(0);
+  const usedFonts = (list: El[]) => [...new Set(list.flatMap((e) => (e.kind === "text" && e.font ? [e.font] : [])))];
+  const fontKey = usedFonts(els ?? []).join(",");
+  useEffect(() => {
+    let live = true;
+    for (const id of fontKey ? fontKey.split(",") : [])
+      ensureFont(id, username).then(
+        () => {
+          if (!live) return;
+          setFontTick((t) => t + 1);
+          // Heights measured with the fallback font: again with the real one (not an undo step).
+          if (font) setEls((c) => c && hug(c, font.measure));
+        },
+        () => live && setNote({ kind: "error", text: "Tasarımdaki bir yazı tipi bu bilgisayarda bulunamadı; varsayılan yazı tipiyle gösteriliyor." }),
+      );
+    return () => {
+      live = false;
+    };
+  }, [fontKey, username, font]);
 
   const generated = useMemo(() => (font ? fromTemplate({ template, format, content, brand, photo }, font.measure) : []), [font, template, format, content, brand, photo]);
   const view = els ?? generated;
@@ -434,7 +458,7 @@ export default function Studio({ username }: { username: string }) {
   };
   /** Looks without content: colours, type, corners, transparency (same kind of element only). */
   const styleOf = (e: El): Partial<El> =>
-    e.kind === "text" ? { color: e.color, size: e.size, weight: e.weight, align: e.align, leading: e.leading, tracking: e.tracking, upper: e.upper, italic: e.italic, underline: e.underline, bg: e.bg, opacity: e.opacity, auto: e.auto, shadow: e.shadow }
+    e.kind === "text" ? { color: e.color, size: e.size, weight: e.weight, align: e.align, leading: e.leading, tracking: e.tracking, upper: e.upper, italic: e.italic, underline: e.underline, font: e.font, bg: e.bg, opacity: e.opacity, auto: e.auto, shadow: e.shadow }
     : e.kind === "shape" ? { fill: e.fill, radius: e.radius, opacity: e.opacity, stroke: e.stroke, noFill: e.noFill, shadow: e.shadow }
     : { radius: e.radius, opacity: e.opacity, shadow: e.shadow };
   const pasteStyle = (id: string) => {
@@ -590,7 +614,7 @@ export default function Studio({ username }: { username: string }) {
   async function exportAs(e: (typeof EXPORTS)[number]) {
     if (!font) return;
     setEditing(null);
-    const svg = svgOf(format, view, font.measure, font.css);
+    const svg = svgOf(format, await fontsReady(view), font.measure, font.css);
     const name = `kurum-gorsel-${template}-${format}.${e.ext}`;
     if (e.ext === "svg") return download(new Blob([svg], { type: e.mime }), name);
     setBusy("export");
@@ -613,12 +637,22 @@ export default function Studio({ username }: { username: string }) {
     }
   }
   const sceneFormat = scenes[0]?.format;
-  const addScene = () => {
+  /** A font chosen for these (arrives after loading: applied to the design as it is then). */
+  const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => (e.kind === "text" && ids.includes(e.id) && !e.locked ? { ...e, font: f } : e)));
+  /** Everything drawn into a picture waits for its fonts (a design just opened may still be loading them), and gets
+   *  its text boxes measured with them. */
+  const fontsReady = async (list: El[]) => {
+    await Promise.allSettled(usedFonts(list).map((id) => ensureFont(id, username)));
+    return font ? hug(list, font.measure) : list;
+  };
+  const addScene = async () => {
     if (!font) return;
+    const ready = await fontsReady(view);
     if (sceneFormat && sceneFormat !== format) return setNote({ kind: "error", text: `Sahneler ${FORMATS[sceneFormat].label} formatında; aynı formatta ekleyin ya da sahneleri temizleyin.` });
     if (scenes.length >= 20) return setNote({ kind: "error", text: "En fazla 20 sahne eklenebilir." });
-    const thumb = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgOf(format, view, font.measure, font.css))}`;
-    setScenes((s) => [...s, { id: newId(), els: view, seconds: 4, format, thumb }]);
+    const thumb = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgOf(format, ready, font.measure, font.css))}`;
+    // Checked again here: another scene may have been added while the fonts loaded.
+    setScenes((s) => (s.length >= 20 || (s[0] && s[0].format !== format) ? s : [...s, { id: newId(), els: ready, seconds: 4, format, thumb }]));
     setNote({ kind: "ok", text: `Sahne ${scenes.length + 1} eklendi. Tasarımı değiştirip bir sonraki sahneyi ekleyebilirsiniz.` });
   };
   const moveScene = (i: number, d: -1 | 1) =>
@@ -637,7 +671,8 @@ export default function Studio({ username }: { username: string }) {
     videoUrl.current = undefined;
     setVideo({ progress: 0 });
     try {
-      const { blob, ext } = await renderVideo(scenes, { format: sceneFormat!, transition, motion, music, captions: burnCaptions }, font.measure, font.css, (p) => setVideo((v) => (v && !v.url ? { ...v, progress: p } : v)), ac.signal);
+      const ready = await Promise.all(scenes.map(async (s) => ({ ...s, els: await fontsReady(s.els) })));
+      const { blob, ext } = await renderVideo(ready, { format: sceneFormat!, transition, motion, music, captions: burnCaptions }, font.measure, font.css, (p) => setVideo((v) => (v && !v.url ? { ...v, progress: p } : v)), ac.signal);
       if (ac.signal.aborted) return; // cancelled or left at the very end: no URL nobody will free
       videoUrl.current = URL.createObjectURL(blob);
       setVideo({ progress: 1, url: videoUrl.current, ext });
@@ -677,8 +712,9 @@ export default function Studio({ username }: { username: string }) {
     if (!font) return;
     try {
       const id = workId ?? newId();
-      const thumb = await thumbnail(svgOf(format, view, font.measure, font.css), W, H);
-      await saveWork(username, { id, name: workName.trim().slice(0, 80) || "Adsız tasarım", format, template, els: view, thumb, updatedAt: Date.now() });
+      const ready = await fontsReady(view);
+      const thumb = await thumbnail(svgOf(format, ready, font.measure, font.css), W, H);
+      await saveWork(username, { id, name: workName.trim().slice(0, 80) || "Adsız tasarım", format, template, els: ready, thumb, updatedAt: stamp() });
       setWorkId(id);
       setLibrary(await listWorks(username));
       setNote({ kind: "ok", text: "Çalışmalarım'a kaydedildi (yalnızca bu tarayıcıda)." });
@@ -1030,10 +1066,13 @@ export default function Studio({ username }: { username: string }) {
                 <button className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => reorder(picked, "front")}><ArrowUpToLine size={13} /> En öne</button>
                 <button className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => reorder(picked, "back")}><ArrowDownToLine size={13} /> En arkaya</button>
               </div>
+              {view.some((e) => e.kind === "text" && picked.includes(e.id)) && (
+                <FontPicker value={undefined} username={username} onPick={(f) => applyFont(picked, f)} />
+              )}
               <p className="text-xs text-muted">Shift ya da Ctrl ile tıklayarak seçime ekleyip çıkarın; boş alanda sürükleyerek kutu içindekileri seçin. Aynı boyut ilk seçilene göre yapılır.</p>
             </section>
           ) : sel ? (
-            <Inspector key={sel.id} el={sel} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={(p, commit) => patch(sel.id, p, commit)} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onAlign={(how) => alignMany([sel.id], how, true)} />
+            <Inspector key={sel.id} el={sel} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={(p, commit) => patch(sel.id, p, commit)} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onAlign={(how) => alignMany([sel.id], how, true)} />
           ) : (
             <section className={section}>
               <h2 className={heading}>Özellikler</h2>
@@ -1170,6 +1209,8 @@ function Slider({ label, value, min, max, step, onChange, onCommit, show }: { la
 
 interface InspectorProps {
   el: El;
+  username: string;
+  onFont: (font: string | undefined) => void;
   canvas: { w: number; h: number };
   brand: Brand;
   u: number;
@@ -1183,7 +1224,7 @@ interface InspectorProps {
   onAlign: (how: AlignTo) => void;
 }
 
-function Inspector({ el, brand, u, onPatch, onCommit, onRemove, onDuplicate, onOrder, onReplace, onAlign }: InspectorProps) {
+function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove, onDuplicate, onOrder, onReplace, onAlign }: InspectorProps) {
   const live = (p: Partial<El>) => onPatch(p, false);
   const now = (p: Partial<El>) => onPatch(p, true);
   const swatches = [...new Set([brand.primary, brand.accent, "#ffffff", "#14263d", "#000000"])];
@@ -1257,6 +1298,7 @@ function Inspector({ el, brand, u, onPatch, onCommit, onRemove, onDuplicate, onO
       {el.kind === "text" && (
         <section className={section}>
           <h3 className={heading}>Yazı</h3>
+          <FontPicker value={el.font} username={username} onPick={onFont} />
           <textarea aria-label="Metin" value={el.text} onChange={(e) => live({ text: e.target.value })} onBlur={onCommit} rows={3} className={`${field} resize-y`} lang="tr" />
           <div className="grid grid-cols-2 gap-2">
             <Num label="Yazı boyutu" value={el.size} min={6} max={600} onChange={(size) => live({ size, auto: false })} onCommit={onCommit} />
