@@ -424,6 +424,6 @@ export function compactTables(md: string): string {
  * ponytail: word count only; a loop over more than 10 different words runs on to the length cap.
  */
 export function isLooping(text: string): boolean {
-  const words = text.slice(-3000).toLocaleLowerCase("tr").match(/\p{L}{2,}/gu) ?? [];
+  const words = text.slice(-3000).toLocaleLowerCase("tr").match(/\p{N}+|\p{L}{2,}/gu) ?? []; // numbers count: a table's differ row by row
   return (words.length >= 150 && new Set(words.slice(-150)).size <= 10) || (words.length >= 60 && new Set(words.slice(-60)).size <= 4);
 }
