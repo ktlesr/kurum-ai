@@ -119,6 +119,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const streamingRef = useRef(false);
   const chatIdRef = useRef<string | null>(null);
   const libRef = useRef<LibItem[]>([]);
+  const pendingDocs = useRef<string[]>([]); // a saved chat's documents the library hasn't listed yet
   useEffect(() => { streamingRef.current = streaming; chatIdRef.current = chatId; libRef.current = [...shared, ...personal]; });
   const local = useChats(username, async (id) => {
     // Another tab changed the open chat: show its version unless this tab is mid-answer.
@@ -127,6 +128,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     if (c) {
       setMessages(c.messages);
       setFiles((fs) => [...fs.filter((f) => !f.serverId), ...cardsOf(c.docIds, libRef.current)]);
+      pendingDocs.current = (c.docIds ?? []).filter((d) => !libRef.current.some((x) => x.id === d));
     } else { setChatId(null); setMessages([]); }
   });
 
@@ -157,6 +159,13 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   }, [checkModels]);
 
   // The library (side menu): listed only. `files` holds what this chat uses; a chat starts with nothing.
+  useEffect(() => {
+    const lib = [...shared, ...personal];
+    const found = cardsOf(pendingDocs.current, lib);
+    if (!found.length) return;
+    pendingDocs.current = pendingDocs.current.filter((d) => !lib.some((x) => x.id === d));
+    setFiles((fs) => [...fs, ...found.filter((c) => !fs.some((f) => f.serverId === c.serverId))].slice(0, MAX_CHAT_DOCS));
+  }, [shared, personal]);
   const refreshLibrary = useCallback(() => {
     api("/api/library").then((r) => (r.ok ? r.json() : [])).then((l: LibItem[]) => setShared(l)).catch(() => {});
     api("/api/upload")
@@ -362,6 +371,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     setChatId(c.id);
     setMessages(c.messages);
     setFiles(cardsOf(c.docIds, [...shared, ...personal]));
+    pendingDocs.current = (c.docIds ?? []).filter((d) => !shared.some((x) => x.id === d) && !personal.some((x) => x.id === d));
     setDrawer(false);
   };
   const newChat = () => {
@@ -369,6 +379,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     setChatId(null);
     setMessages([]);
     setFiles([]);
+    pendingDocs.current = [];
     setDrawer(false);
   };
   const deleteChat = (c: StoredChat) => {

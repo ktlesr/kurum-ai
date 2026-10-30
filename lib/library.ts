@@ -74,7 +74,9 @@ export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => v
   const job = admission.upload.run(async () => {
     const buf = readFileSync(path.join(ROOT(), ...e.path.split("/")));
     const hash = createHash("sha256").update(buf).digest("hex");
-    const file = path.join(CACHE, `${hash}.json`);
+    // Same bytes under another extension are parsed differently (a table, not plain text).
+    const ext = e.name.toLowerCase().split(".").pop() ?? "";
+    const file = path.join(CACHE, `${hash}.${ext}.json`);
     // The name goes into prompts inside an attribute: no quote or bracket can close it.
     const name = e.path.replace(/["<>]/g, "");
     let doc: Doc | undefined;
@@ -82,7 +84,6 @@ export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => v
       doc = { ...(JSON.parse(readFileSync(file, "utf8")) as Doc), id: e.id, name };
     } catch {}
     if (!doc) {
-      const ext = e.name.toLowerCase().split(".").pop() ?? "";
       const problem = await contentProblem(ext, buf).catch(() => "Dosya okunamadı.");
       if (problem) throw new UserError(problem);
       // One request's cancel must not fail another waiting for the same file: extraction runs to its end.
