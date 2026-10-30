@@ -49,8 +49,13 @@ export async function downloadPptx(slides: El[][], measure: Measure, name: strin
         // The size the canvas really draws at (fit to box), in points: the canvas is 960 pt wide.
         const p = draw([e], measure).find((x) => x.kind === "text");
         if (!p || p.kind !== "text") continue;
-        slide.addText(e.upper ? e.text.toLocaleUpperCase("tr") : e.text, {
-          ...box, margin: e.bg ? [0, p.size * 0.4, 0, p.size * 0.4] : 0, fontFace: family(e.font), fontSize: Math.max(1, Math.round(p.size * 0.5 * 10) / 10), color: hex(e.color), bold: e.weight >= 600, italic: !!e.italic, underline: e.underline ? { style: "sng" } : undefined,
+        // Text the canvas had to cut goes as drawn, or it would overflow here. Other text stays whole, so PowerPoint can
+        // wrap it for the font it really has.
+        const cut = p.lines.at(-1)?.endsWith("…") && !e.text.trimEnd().endsWith("…");
+        const text = cut ? p.lines.join("\n") : e.text;
+        slide.addText(e.upper ? text.toLocaleUpperCase("tr") : text, {
+          // pptxgenjs order: left, right, bottom, top (points).
+          ...box, margin: e.bg ? [p.size * 0.2, p.size * 0.2, 0, 0] : 0, fontFace: family(e.font), fontSize: Math.max(1, Math.round(p.size * 0.5 * 10) / 10), color: hex(e.color), bold: e.weight >= 600, italic: !!e.italic, underline: e.underline ? { style: "sng" } : undefined,
           align: e.align === "middle" ? "center" : e.align === "end" ? "right" : "left", valign: e.bg ? "middle" : "top", lineSpacingMultiple: e.leading, charSpacing: e.tracking * 0.5 || undefined, transparency,
           ...(e.bg ? { fill: { color: hex(e.bg.fill), transparency }, shape: pptx.ShapeType.roundRect, rectRadius: Math.min(e.bg.radius, e.h / 2) * PX } : {}), shadow,
         });
