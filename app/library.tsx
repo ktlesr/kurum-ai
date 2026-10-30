@@ -4,9 +4,10 @@
 // folder trees, closed until opened. Nothing here reaches a chat by itself: a tick adds a document (or a folder) to the
 // open chat only.
 import { useState, type ReactNode } from "react";
+import type { DocMeta } from "@/lib/server";
 import { Check, ChevronRight, File as FileIcon, Folder, FolderInput, Library as LibraryIcon, Plus, Trash2, Upload, Users } from "lucide-react";
 
-export interface LibItem { id: string; path: string; name: string; size: number; kind: string }
+export interface LibItem { id: string; path: string; name: string; size: number; kind: string; warning?: string; verify?: DocMeta["verify"] }
 type Node = { name: string; dirs: Map<string, Node>; files: LibItem[] };
 
 function treeOf(items: LibItem[]): Node {

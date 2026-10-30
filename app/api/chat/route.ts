@@ -212,6 +212,8 @@ export async function POST(req: Request) {
           }
         }
         if (!fileIds.length && selected.length) meta.used = selected.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind }));
+        // Attached personal documents show their warnings on their cards; these have no card yet.
+        for (const d of selected) if (d.warning && (isSharedId(d.id) || !fileIds.length)) meta.note = [meta.note, `${d.name}: ${d.warning}`].filter(Boolean).join(" ");
         meta.sources = selected.map((d) => d.name);
         if (selected.length === 1) {
           meta.doc = selected[0].name;

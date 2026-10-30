@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -81,6 +81,15 @@ const greeting = () => {
   return h < 6 ? "İyi geceler" : h < 12 ? "Günaydın" : h < 18 ? "İyi günler" : "İyi akşamlar";
 };
 
+// A shared document's name on the server is its path (lib/library): source links match cards by name.
+const cardOf = (it: Pick<LibItem, "id" | "name" | "size" | "kind"> & Partial<LibItem>): Card => ({ id: it.id, serverId: it.id, name: it.path && it.id.startsWith("s-") ? it.path.replace(/["<>]/g, "") : it.name, size: it.size, kind: it.kind as DocKind, status: "ready", warning: it.warning, verify: it.verify });
+/** The documents a saved chat used, those still in the library. */
+const cardsOf = (docIds: string[] | undefined, lib: LibItem[]) =>
+  (docIds ?? []).flatMap((id) => {
+    const it = lib.find((x) => x.id === id);
+    return it ? [cardOf(it)] : [];
+  });
+
 export default function Chat({ username, isAdmin }: { username: string; isAdmin: boolean }) {
   const [files, setFiles] = useState<Card[]>([]);
   const [shared, setShared] = useState<LibItem[]>([]);
@@ -109,13 +118,16 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const uploads = useRef(new Map<string, AbortController>());
   const streamingRef = useRef(false);
   const chatIdRef = useRef<string | null>(null);
-  useEffect(() => { streamingRef.current = streaming; chatIdRef.current = chatId; });
+  const libRef = useRef<LibItem[]>([]);
+  useEffect(() => { streamingRef.current = streaming; chatIdRef.current = chatId; libRef.current = [...shared, ...personal]; });
   const local = useChats(username, async (id) => {
     // Another tab changed the open chat: show its version unless this tab is mid-answer.
     if (id !== chatIdRef.current || streamingRef.current) return;
     const c = await local.get(id);
-    if (c) setMessages(c.messages);
-    else { setChatId(null); setMessages([]); }
+    if (c) {
+      setMessages(c.messages);
+      setFiles((fs) => [...fs.filter((f) => !f.serverId), ...cardsOf(c.docIds, libRef.current)]);
+    } else { setChatId(null); setMessages([]); }
   });
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is only readable after mount
@@ -149,7 +161,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     api("/api/library").then((r) => (r.ok ? r.json() : [])).then((l: LibItem[]) => setShared(l)).catch(() => {});
     api("/api/upload")
       .then((r) => (r.ok ? r.json() : []))
-      .then((l: DocMeta[]) => setPersonal(l.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind, path: `${d.folder ? `${d.folder}/` : ""}${d.name}` }))))
+      .then((l: DocMeta[]) => setPersonal(l.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind, path: `${d.folder ? `${d.folder}/` : ""}${d.name}`, warning: d.warning, verify: d.verify }))))
       .catch(() => {});
   }, []);
   useEffect(() => {
@@ -230,8 +242,6 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     uploads.current.get(c.id)?.abort();
   };
   const attachedIds = useMemo(() => new Set(files.flatMap((f) => (f.serverId ? [f.serverId] : []))), [files]);
-  // A shared document's name on the server is its path (lib/library): source links match cards by name.
-  const cardOf = (it: Pick<LibItem, "id" | "name" | "size" | "kind"> & { path?: string }): Card => ({ id: it.id, serverId: it.id, name: it.path && it.id.startsWith("s-") ? it.path.replace(/["<>]/g, "") : it.name, size: it.size, kind: it.kind as DocKind, status: "ready" });
   const toggleDocs = (items: LibItem[], on: boolean) =>
     setFiles((fs) => {
       if (!on) {
@@ -331,7 +341,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         // Documents the message asked for stay with this chat for the follow-up questions.
         if (parsedMeta.used?.length) {
           docIds = parsedMeta.used.map((u) => u.id);
-          setFiles((fs) => [...fs, ...parsedMeta.used!.filter((u) => !fs.some((f) => f.serverId === u.id)).map(cardOf)]);
+          setFiles((fs) => [...fs, ...parsedMeta.used!.filter((u) => !fs.some((f) => f.serverId === u.id)).map(cardOf)].slice(0, MAX_CHAT_DOCS));
         }
       }
     } catch (e) {
@@ -351,12 +361,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     if (streaming) return;
     setChatId(c.id);
     setMessages(c.messages);
-    // The documents this chat used, those still in the library.
-    const lib = [...shared, ...personal];
-    setFiles((c.docIds ?? []).flatMap((id) => {
-      const it = lib.find((x) => x.id === id);
-      return it ? [cardOf(it)] : [];
-    }));
+    setFiles(cardsOf(c.docIds, [...shared, ...personal]));
     setDrawer(false);
   };
   const newChat = () => {
@@ -402,6 +407,12 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           <div className="flex flex-wrap gap-1.5 px-3 pt-3">
             {files.map((f) => (
               <FileChip key={f.id} f={f} onOpen={() => f.serverId && setSource({ serverId: f.serverId })} onRemove={() => remove(f)} />
+            ))}
+            {files.map((f) => (
+              <Fragment key={f.id}>
+                {f.verify && f.verify.uncertain > 0 && <p className="w-full text-xs text-warn-fg">{f.name}: {fmtNum(f.verify.uncertain)} / {fmtNum(f.verify.numbers)} tablo sayısında iki okuma uyuşmadı; bunlar (?) ile işaretli.</p>}
+                {f.warning && <p className="w-full text-xs text-warn-fg">{f.name}: {f.warning}</p>}
+              </Fragment>
             ))}
           </div>
         )}
