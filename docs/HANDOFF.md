@@ -7,7 +7,7 @@ Başka bilgisayarda kaldığın yerden devam etmek için. Sır, `.env`, gerçek 
 ```bash
 git pull
 pnpm install          # pnpm 10.19; playwright-core 1.64.1 sabit sürüm
-pnpm test             # 88/88 geçmeli; ayrıca: npx tsc --noEmit && pnpm lint
+pnpm test             # hepsi geçmeli; ayrıca: npx tsc --noEmit && pnpm lint
 ```
 
 Claude Code'a ilk mesaj olarak: "docs/HANDOFF.md'yi oku, kaldığımız yerden devam edelim."
@@ -23,9 +23,15 @@ Claude Code'a ilk mesaj olarak: "docs/HANDOFF.md'yi oku, kaldığımız yerden d
 
 ## Ortam
 
-- Uygulama: Next.js 16.3.6 (standalone), React 19, Postgres. Canlı: `https://ai.ekutlu.com`.
+- Uygulama: Next.js 16.3.6 (standalone), React 19, Postgres. Canlı: `https://ai.zafer.gov.tr`.
 - Sunucu: DGX Spark `spark-e905` (GB10, aarch64), Dokploy ile deploy (`deploy/compose.yml`, Dockerfile varsayılan hedefi `app-docling`).
 - Modeller: vLLM (`RedHatAI/gemma-4-26B-A4B-it-NVFP4`, compose profili `vllm`) ve cihazdaki Ollama (`gemma4:12b`, `embeddinggemma`).
+
+## Son yapılanlar (2026-10-30)
+
+- Belge kütüphanesi (`lib/library.ts`, `app/library.tsx`): sohbet belgesiz başlar; ortak klasör sunucuda `/srv/kurum-ai/kaynaklar` (salt okunur); belge işaretlenince ya da mesajda istenince okunur.
+- Sunum modu (`lib/deck.ts`, `app/studio/deck-panel.tsx`, `app/studio/pptx.ts`, `docs/tasks/TASK-032-sunum.md`).
+- Gerçek modelle ve PowerPoint'te denenmedi; ilk deneme kullanıcıda. `ai.ekutlu.com` aynı uygulamayı açar ama `APP_ORIGIN` ile eşleşmediği için yükleme ve sohbet 403 alır.
 
 ## Son yapılanlar (bu oturum)
 
@@ -69,7 +75,7 @@ Claude Code'a ilk mesaj olarak: "docs/HANDOFF.md'yi oku, kaldığımız yerden d
 **Kullanıcı ya da sunucu kararı bekleyenler:**
 1. **Altın set taban çizgisi:**
    - Yönetici sayfasından "degerlendirme" kullanıcısı açılır.
-   - Sonra şu komut çalıştırılır: `KAI_URL=https://ai.ekutlu.com KAI_USER=degerlendirme KAI_PASS=… node scripts/eval-golden.mjs D:/20pdf`
+   - Sonra şu komut çalıştırılır: `KAI_URL=https://ai.zafer.gov.tr KAI_USER=degerlendirme KAI_PASS=… node scripts/eval-golden.mjs D:/20pdf`
    - Rapor `D:\20pdf\_golden\report-*.md` dosyasına yazılır.
 2. **TASK-024 (`DocumentArtifact`):** 1. maddedeki ölçümden sonra.
 3. **Yerel ASR/TTS:** model servisi (Whisper, Piper) için onay, GB10 bellek ölçümü.
