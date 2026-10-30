@@ -245,7 +245,15 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
       {guides.h.map((y, i) => <line key={`h${i}`} y1={y} y2={y} x1={0} x2={W} stroke="#e11d48" strokeWidth={stroke} strokeDasharray={`${6 * scale} ${4 * scale}`} pointerEvents="none" />)}
 
       {sel && (
-        <g pointerEvents={sel.locked ? "none" : undefined}>
+        <g
+          pointerEvents={sel.locked ? "none" : undefined}
+          onContextMenu={(e) => {
+            // A resize handle belongs to the selected element: its menu, not the empty canvas's.
+            e.preventDefault();
+            e.stopPropagation();
+            onMenu?.(sel.id, e.clientX, e.clientY);
+          }}
+        >
           <rect x={sel.x} y={sel.y} width={sel.w} height={sel.h} fill="none" stroke="#3b82f6" strokeWidth={stroke * 1.4} strokeDasharray={sel.locked ? `${4 * scale} ${4 * scale}` : undefined} pointerEvents="none" />
           {!sel.locked &&
             editing !== sel.id &&
