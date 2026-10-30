@@ -45,7 +45,9 @@ function clean(r: unknown): Work | null {
   const x = r as Partial<Work> | null;
   if (!x || typeof x.id !== "string" || typeof x.format !== "string" || !Object.hasOwn(FORMATS, x.format)) return null;
   const els = cleanEls(x.els);
-  if (!els.length) return null;
+  const deck = cleanDeck(x.deck);
+  // A deck's open slide may be empty; its other slides aren't lost with it.
+  if (!els.length && !deck) return null;
   return {
     id: x.id.slice(0, 64),
     name: typeof x.name === "string" ? x.name.slice(0, 80) : "Adsız tasarım",
@@ -54,7 +56,7 @@ function clean(r: unknown): Work | null {
     els,
     thumb: typeof x.thumb === "string" && /^data:image\/(png|jpeg);base64,/.test(x.thumb) ? x.thumb : "",
     updatedAt: typeof x.updatedAt === "number" ? x.updatedAt : 0,
-    ...(cleanDeck(x.deck) ? { deck: cleanDeck(x.deck) } : {}),
+    ...(deck ? { deck } : {}),
   };
 }
 

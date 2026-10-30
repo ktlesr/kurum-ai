@@ -906,13 +906,13 @@ export default function Studio({ username }: { username: string }) {
       if (file.size > 60 * 1024 * 1024) throw new Error("Proje dosyası çok büyük.");
       const j = JSON.parse(await file.text()) as { kind?: unknown; format?: unknown; els?: unknown; deck?: unknown };
       if (j.kind !== "kurum-ai-gorsel" || typeof j.format !== "string" || !Object.hasOwn(FORMATS, j.format)) throw new Error("Bu bir Görsel Stüdyo proje dosyası değil.");
-      const next = cleanEls(j.els);
-      if (!next.length) throw new Error("Proje dosyasında öğe yok.");
       const saved = cleanDeck(j.deck);
       if (saved) {
         await openDeck(saved);
         return setNote({ kind: "ok", text: "Sunum açıldı." });
       }
+      const next = cleanEls(j.els);
+      if (!next.length) throw new Error("Proje dosyasında öğe yok.");
       setDeck(null);
       setFormat(j.format as FormatId);
       change(next);

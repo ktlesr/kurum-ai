@@ -66,7 +66,9 @@ export async function uploadedFonts(user: string): Promise<FontOption[]> {
 /** Real family names of the fonts that aren't in the library, for files that name them (PPTX). */
 export async function familyNames(user: string): Promise<Map<string, string>> {
   const up = await uploadedFonts(user).catch(() => []);
-  return new Map([...up.map((f) => [f.id, f.label] as const), ...[...(localList ?? [])].map(([id, f]) => [id, f.label] as const)]);
+  // ponytail: an uploaded font's label is its file name: the style part is cut; reading the font's name table would be exact.
+  const familyOf = (label: string) => label.replace(/[-_ ]?\[.*$/, "").replace(/[-_ ]+(thin|hairline|extra ?light|ultra ?light|light|regular|book|medium|semi ?bold|demi ?bold|extra ?bold|ultra ?bold|bold|black|heavy|italic|oblique|variable|vf)\b.*$/i, "") || label;
+  return new Map([...up.map((f) => [f.id, familyOf(f.label)] as const), ...[...(localList ?? [])].map(([id, f]) => [id, f.label] as const)]);
 }
 /** A font file → stored and loaded; a file the browser can't read as a font is refused here. */
 export async function addFontFile(user: string, file: File): Promise<FontOption> {
