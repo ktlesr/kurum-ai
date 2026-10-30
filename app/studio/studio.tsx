@@ -804,7 +804,8 @@ export default function Studio({ username }: { username: string }) {
     [s[deck.at], s[deck.at + d]] = [s[deck.at + d], s[deck.at]];
     setSlides(s, deck.at + d);
   };
-  const leaveDeck = () => {
+  const leaveDeck = async () => {
+    if (!(await flushSave())) return;
     setDeck(null);
     setEls(null);
     clearEditing();
@@ -940,23 +941,29 @@ export default function Studio({ username }: { username: string }) {
     try {
       await queueSave();
       setSaved("saved");
+      return true;
     } catch (e) {
       setSaveError((e as Error).message || "Kaydedilemedi.");
       setSaved("error");
+      return false;
     }
   };
   const latestAutosave = useRef(autosave);
   useLayoutEffect(() => {
     latestAutosave.current = autosave;
   });
-  /** Before the design on screen is replaced: what's waiting to be saved is saved first, as itself. */
+  /** Before the design on screen is replaced: what's waiting to be saved is saved first, as itself. False: it couldn't
+   *  be, and the design stays open. Nothing is waiting any more, so a second try leaves (a full disk mustn't trap the user). */
   const flushSave = async () => {
+    let ok = true;
     if (pending.current) {
       clearTimeout(pending.current);
-      await autosave();
+      ok = await autosave();
     } else if (running.current) {
-      await running.current.catch(() => {});
+      ok = await running.current.then(() => true, () => false);
     }
+    if (!ok) setNote({ kind: "error", text: "Son değişiklikler kaydedilemedi. İndir menüsünden proje dosyası olarak saklayın; yine de çıkmak için tekrar deneyin." });
+    return ok;
   };
   // Only what the user made or opened: an untouched template isn't a work yet.
   const hasDesign = !!font && !!mode && (!!els || ownText || !!photo) && (mode !== "sunum" || !!deck);
@@ -977,7 +984,7 @@ export default function Studio({ username }: { username: string }) {
   const refreshRecent = () => listWorks(username).then(setRecent, () => {});
   useEffect(() => { listWorks(username).then(setRecent, () => {}); }, [username]);
   const goHome = async () => {
-    await flushSave();
+    if (!(await flushSave())) return;
     cancelSuggest();
     setMode(null);
     setDeck(null);
@@ -1019,7 +1026,8 @@ export default function Studio({ username }: { username: string }) {
     }
   };
   const openWork = async (w: Work) => {
-    await flushSave();
+    if (w.id === workId) return closeLibrary(); // already open, and newer than the list's copy
+    if (!(await flushSave())) return closeLibrary();
     cancelSuggest(); // a suggestion still on its way must not land on the opened work
     setTemplate(w.template);
     setZoom(1);
@@ -1062,7 +1070,7 @@ export default function Studio({ username }: { username: string }) {
       if (file.size > 60 * 1024 * 1024) throw new Error("Proje dosyası çok büyük.");
       const j = JSON.parse(await file.text()) as { kind?: unknown; format?: unknown; els?: unknown; deck?: unknown };
       if (j.kind !== "kurum-ai-gorsel" || typeof j.format !== "string" || !Object.hasOwn(FORMATS, j.format)) throw new Error("Bu bir Görsel Stüdyo proje dosyası değil.");
-      await flushSave();
+      if (!(await flushSave())) return;
       setWorkName(""); // a new work, not the one that was open
       const saved = cleanDeck(j.deck);
       if (saved) {
