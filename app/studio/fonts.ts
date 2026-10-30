@@ -63,6 +63,11 @@ export async function uploadedFonts(user: string): Promise<FontOption[]> {
   const all = await stored<Stored[]>(user, "readonly", (s) => s.getAll());
   return all.map((f) => ({ id: f.id, label: f.label, cat: "Yüklediklerim" }));
 }
+/** Real family names of the fonts that aren't in the library, for files that name them (PPTX). */
+export async function familyNames(user: string): Promise<Map<string, string>> {
+  const up = await uploadedFonts(user).catch(() => []);
+  return new Map([...up.map((f) => [f.id, f.label] as const), ...[...(localList ?? [])].map(([id, f]) => [id, f.label] as const)]);
+}
 /** A font file → stored and loaded; a file the browser can't read as a font is refused here. */
 export async function addFontFile(user: string, file: File): Promise<FontOption> {
   if (file.size > MAX_FILE) throw new Error("Yazı tipi dosyası en fazla 15 MB olabilir.");

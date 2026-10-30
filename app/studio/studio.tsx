@@ -21,7 +21,7 @@ import { MAX_SLIDES, rethemeSlides, slideFrom, type DeckTemplate, type Layout, t
 import FontPicker from "./font-picker";
 import { THEMES, type Theme } from "@/lib/themes";
 import { OPEN_COLOR } from "@/lib/studio-assets";
-import { ensureFont } from "./fonts";
+import { familyNames, ensureFont } from "./fonts";
 import type { Claim } from "@/lib/trace";
 import { recorderType, renderVideo, type Scene, type Transition } from "./video";
 import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, type Work } from "./works";
@@ -774,7 +774,7 @@ export default function Studio({ username }: { username: string }) {
     setBusy("export");
     try {
       const ready = await Promise.all(slidesNow().map(fontsReady));
-      await downloadPptx(ready, font.measure, `kurum-sunum-${deck.template.id}.pptx`);
+      await downloadPptx(ready, font.measure, `kurum-sunum-${deck.template.id}.pptx`, await familyNames(username));
       setNote({ kind: "ok", text: "PPTX indirildi. Yazı tipleri dosyaya gömülmez: bilgisayarda yoksa PowerPoint benzeriyle gösterir." });
     } catch (e) {
       console.error(e);

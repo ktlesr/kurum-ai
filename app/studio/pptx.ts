@@ -30,10 +30,10 @@ async function pictureBox(e: Extract<El, { kind: "image" }>): Promise<string> {
   return c.toDataURL("image/png");
 }
 
-const family = (font?: string) => LIBRARY_FONTS.find((f) => f.id === font)?.label ?? "Calibri";
 const solid = (f: Extract<Prim, { kind: "rect" }>["fill"]) => (!f ? undefined : f.kind === "solid" ? f.color : f.stops[0].color);
 
-export async function downloadPptx(slides: El[][], measure: Measure, name: string) {
+export async function downloadPptx(slides: El[][], measure: Measure, name: string, families: ReadonlyMap<string, string>) {
+  const family = (font?: string) => (font && families.get(font)) ?? LIBRARY_FONTS.find((f) => f.id === font)?.label ?? "Calibri";
   const { default: PptxGen } = await import("pptxgenjs");
   const pptx = new PptxGen();
   pptx.layout = "LAYOUT_WIDE"; // 13.33 x 7.5 in
@@ -56,7 +56,7 @@ export async function downloadPptx(slides: El[][], measure: Measure, name: strin
         slide.addText(e.upper ? text.toLocaleUpperCase("tr") : text, {
           // pptxgenjs order: left, right, bottom, top (points).
           ...box, margin: e.bg ? [p.size * 0.2, p.size * 0.2, 0, 0] : 0, fontFace: family(e.font), fontSize: Math.max(1, Math.round(p.size * 0.5 * 10) / 10), color: hex(e.color), bold: e.weight >= 600, italic: !!e.italic, underline: e.underline ? { style: "sng" } : undefined,
-          align: e.align === "middle" ? "center" : e.align === "end" ? "right" : "left", valign: e.bg ? "middle" : "top", lineSpacingMultiple: e.leading, charSpacing: e.tracking * 0.5 || undefined, transparency,
+          align: e.align === "middle" ? "center" : e.align === "end" ? "right" : "left", valign: e.bg ? "middle" : "top", lineSpacingMultiple: e.leading, charSpacing: (p.tracking ?? 0) * 0.5 || undefined, transparency,
           ...(e.bg ? { fill: { color: hex(e.bg.fill), transparency }, shape: pptx.ShapeType.roundRect, rectRadius: Math.min(e.bg.radius, e.h / 2) * PX } : {}), shadow,
         });
       } else {
