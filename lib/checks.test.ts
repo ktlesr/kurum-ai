@@ -137,6 +137,8 @@ test("isLooping: a repeating answer stops, real text doesn't", () => {
   assert.equal(isLooping("_al_en_le".repeat(25)), true); // a tight loop stops sooner
   const amounts = Array.from({ length: 30 }, (_, i) => `| ${i + 1} | ${1250 + i * 10} TL | Uygun |`).join("\n");
   assert.equal(isLooping(amounts), false);
+  const yesNo = Array.from({ length: 26 }, (_, i) => `| ${String.fromCharCode(65 + i)} | Evet | Hayır | Evet |`).join("\n");
+  assert.equal(isLooping(yesNo), false);
   const table = Array.from({ length: 80 }, (_, i) => `| Satır ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + (i >> 2))} | Evet | Hayır |`).join("\n");
   assert.equal(isLooping(table), false);
 });
