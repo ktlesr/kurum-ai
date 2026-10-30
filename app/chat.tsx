@@ -13,6 +13,8 @@ import { useChats } from "./use-chats";
 import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
 import { searchChats, titleFrom, type Message, type StoredChat } from "@/lib/local-store";
 import type { DocKind, DocMeta } from "@/lib/server";
+import { LibraryPanel, type LibItem } from "./library";
+
 
 type Card = Partial<DocMeta> & {
   id: string; name: string; size: number; kind: DocKind; status: "uploading" | "ready" | "error"; error?: string;
@@ -38,6 +40,7 @@ const PROFILES: { id: Profile; label: string; hint: string }[] = [
   { id: "deep", label: "Derin analiz", hint: "Önce düşünür, belgenin tamamını kullanır; daha yavaş, daha kapsamlı." },
 ];
 
+const MAX_CHAT_DOCS = 20; // LIMITS.files in lib/validate
 const ACCEPT = ".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.html,.htm,.png,.jpg,.jpeg,.webp";
 const MAX_BYTES = 25 * 1024 * 1024;
 const ICONS = { pdf: FileText, docx: FileType, sheet: FileSpreadsheet, text: FileIcon, image: ImageIcon } as const;
@@ -80,6 +83,8 @@ const greeting = () => {
 
 export default function Chat({ username, isAdmin }: { username: string; isAdmin: boolean }) {
   const [files, setFiles] = useState<Card[]>([]);
+  const [shared, setShared] = useState<LibItem[]>([]);
+  const [personal, setPersonal] = useState<LibItem[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState("");
   const [profile, setProfile] = useState<Profile>("auto");
@@ -139,19 +144,15 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     return () => clearInterval(t);
   }, [checkModels]);
 
-  // Files uploaded earlier are kept on the server; bring their cards back.
-  useEffect(() => {
+  // The library (side menu): listed only. `files` holds what this chat uses; a chat starts with nothing.
+  const refreshLibrary = useCallback(() => {
+    api("/api/library").then((r) => (r.ok ? r.json() : [])).then((l: LibItem[]) => setShared(l)).catch(() => {});
     api("/api/upload")
-      .then((r) => r.json() as Promise<DocMeta[]>)
-      .then((list) =>
-        setFiles((fs) => {
-          // Effects run twice in dev (Strict Mode): skip docs that are already listed.
-          const have = new Set(fs.map((f) => f.serverId));
-          return [...list.filter((d) => !have.has(d.id)).map((d) => ({ ...d, serverId: d.id, status: "ready" as const })), ...fs];
-        }),
-      )
+      .then((r) => (r.ok ? r.json() : []))
+      .then((l: DocMeta[]) => setPersonal(l.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind, path: `${d.folder ? `${d.folder}/` : ""}${d.name}` }))))
       .catch(() => {});
   }, []);
+  useEffect(() => refreshLibrary(), [refreshLibrary]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -198,7 +199,10 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           for (const l of lines.filter(Boolean)) {
             const ev = JSON.parse(l) as UploadEvent;
             if (ev.type === "progress") patch({ progress: { stage: ev.stage, done: ev.done, total: ev.total } });
-            else if (ev.type === "done") patch({ ...ev.doc, id: tmp.id, serverId: ev.doc.id, status: "ready", progress: undefined });
+            else if (ev.type === "done") {
+              patch({ ...ev.doc, id: tmp.id, serverId: ev.doc.id, status: "ready", progress: undefined });
+              refreshLibrary();
+            }
             else patch({ status: "error", error: ev.error, progress: undefined });
           }
         }
@@ -211,11 +215,29 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     setDrawer(false);
   };
 
+  /** Out of this chat; the document stays in the library. An upload still running is cancelled. */
   const remove = (c: Card) => {
     setFiles((fs) => fs.filter((x) => x.id !== c.id));
     uploads.current.get(c.id)?.abort();
-    if (c.serverId) api(`/api/upload?id=${c.serverId}`, { method: "DELETE" });
-    if (c.serverId && source?.serverId === c.serverId) setSource(null);
+  };
+  const attachedIds = useMemo(() => new Set(files.flatMap((f) => (f.serverId ? [f.serverId] : []))), [files]);
+  const cardOf = (it: Pick<LibItem, "id" | "name" | "size" | "kind">): Card => ({ id: it.id, serverId: it.id, name: it.name, size: it.size, kind: it.kind as DocKind, status: "ready" });
+  const toggleDocs = (items: LibItem[], on: boolean) =>
+    setFiles((fs) => {
+      if (!on) {
+        const out = new Set(items.map((i) => i.id));
+        return fs.filter((f) => !f.serverId || !out.has(f.serverId));
+      }
+      const have = new Set(fs.map((f) => f.serverId));
+      return [...fs, ...items.filter((i) => !have.has(i.id)).map(cardOf)].slice(0, MAX_CHAT_DOCS);
+    });
+  const deleteDoc = (id: string) => {
+    setFiles((fs) => fs.filter((f) => f.serverId !== id));
+    if (source?.serverId === id) setSource(null);
+    api(`/api/upload?id=${id}`, { method: "DELETE" }).finally(refreshLibrary);
+  };
+  const moveDoc = (id: string, folder: string) => {
+    api(`/api/upload?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder }) }).finally(refreshLibrary);
   };
 
   const ready = files.filter((f) => f.status === "ready");
@@ -245,7 +267,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     // Saved before the answer starts (a closed tab keeps the question) and again when it ends.
     // Read-modify-write: a rename or pin made while the answer streams (or in another tab) is kept.
     const id = chatId ?? crypto.randomUUID();
-    const docIds = ready.map((f) => f.serverId!).filter(Boolean);
+    let docIds = ready.map((f) => f.serverId!).filter(Boolean);
     const persist = (msgs: Message[]) =>
       local.upsert(id, (cur) => ({
         ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
@@ -293,7 +315,15 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       const failure = raw.split(ERROR_SEP)[1];
       if (failure !== undefined) return setLast(() => ({ role: "assistant", content: failure, error: true }));
       const [, metaJson] = raw.split(META_SEP);
-      if (metaJson) setLast((m) => ({ ...m, meta: JSON.parse(metaJson) as ChatMeta }));
+      if (metaJson) {
+        const parsedMeta = JSON.parse(metaJson) as ChatMeta;
+        setLast((m) => ({ ...m, meta: parsedMeta }));
+        // Documents the message asked for stay with this chat for the follow-up questions.
+        if (parsedMeta.used?.length) {
+          docIds = parsedMeta.used.map((u) => u.id);
+          setFiles((fs) => [...fs, ...parsedMeta.used!.filter((u) => !fs.some((f) => f.serverId === u.id)).map(cardOf)]);
+        }
+      }
     } catch (e) {
       if (!(e instanceof DOMException && e.name === "AbortError")) {
         setLast(() => ({ role: "assistant", content: "Bağlantı koptu. Lütfen tekrar deneyin.", error: true }));
@@ -311,12 +341,19 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     if (streaming) return;
     setChatId(c.id);
     setMessages(c.messages);
+    // The documents this chat used, those still in the library.
+    const lib = [...shared, ...personal];
+    setFiles((c.docIds ?? []).flatMap((id) => {
+      const it = lib.find((x) => x.id === id);
+      return it ? [cardOf(it)] : [];
+    }));
     setDrawer(false);
   };
   const newChat = () => {
     if (streaming) return;
     setChatId(null);
     setMessages([]);
+    setFiles([]);
     setDrawer(false);
   };
   const deleteChat = (c: StoredChat) => {
@@ -488,28 +525,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         </ul>
       </nav>
 
-      <section aria-label="Belgelerim" className="border-t border-line px-3 py-3">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-xs font-medium text-muted">Belgelerim</span>
-          <button onClick={() => fileInput.current?.click()} className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted hover:bg-subtle hover:text-fg">
-            <Upload size={13} /> Ekle
-          </button>
-        </div>
-        {!files.length ? (
-          <button
-            onClick={() => fileInput.current?.click()}
-            className="flex w-full flex-col items-center gap-1 rounded-lg border border-dashed border-line px-3 py-4 text-center text-xs text-muted transition-colors hover:border-accent hover:text-fg"
-          >
-            <Upload size={16} />
-            <span>Dosya seçin ya da sürükleyin</span>
-            <span>PDF, DOCX, XLSX, CSV, TXT · en fazla 25 MB</span>
-          </button>
-        ) : (
-          <ul className="flex max-h-56 flex-col gap-1.5 overflow-y-auto">
-            {files.map((f) => <DocCard key={f.id} f={f} active={!!f.serverId && source?.serverId === f.serverId} onOpen={() => f.serverId && setSource({ serverId: f.serverId })} onRemove={() => remove(f)} />)}
-          </ul>
-        )}
-      </section>
+      <LibraryPanel shared={shared} personal={personal} attached={attachedIds} onToggle={toggleDocs} onOpen={(id) => setSource({ serverId: id })} onDelete={deleteDoc} onMove={moveDoc} onUpload={() => fileInput.current?.click()} />
 
       <details className="group border-t border-line px-3 py-2 text-xs text-muted">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md py-1 hover:text-fg">
@@ -627,7 +643,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
               <div className="text-center">
                 <h2 className="text-2xl font-semibold tracking-tight text-brand">{greeting()}, {username}</h2>
                 <p className="mt-2 text-sm text-muted">
-                  {ready.length ? "Belgeleriniz hazır. Bir soru sorun ya da hazır işlerden birini seçin." : "Bir soru sorun ya da belge ekleyin; belgeleri inceleyip karşılaştırma ve değerlendirme yapabilirim."}
+                  {ready.length ? "Seçtiğiniz belgeler hazır. Bir soru sorun ya da hazır işlerden birini seçin." : "Bir soru sorun; gerektiğinde belgeleri inceleyip karşılaştırma ve değerlendirme yapabilirim."}
                 </p>
               </div>
               {composer}
@@ -640,9 +656,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
                   ))}
                 </div>
               ) : (
-                <button onClick={() => fileInput.current?.click()} className="flex items-center gap-2 rounded-xl border border-dashed border-line px-5 py-4 text-sm text-muted transition-colors hover:border-accent hover:text-fg">
-                  <Upload size={18} /> Dosya seçin ya da buraya sürükleyin
-                </button>
+                <p className="max-w-md text-center text-sm text-muted">Belgelerden yararlanmak için yazmanız yeterli: “mevzuat klasöründeki kaynakları kullanarak özet hazırla”. Yan menüden de seçebilirsiniz.</p>
               )}
               <p className="max-w-md text-center text-xs text-muted">
                 Kalıcı çalışma alanınız bu cihazda; AI işlemesi kurum sunucusunda yapılır. Belgeler harici bulut AI servisine gönderilmez.
@@ -725,42 +739,6 @@ function FileChip({ f, onOpen, onRemove }: { f: Card; onOpen: () => void; onRemo
         <X size={12} />
       </button>
     </span>
-  );
-}
-
-function DocCard({ f, active, onOpen, onRemove }: { f: Card; active: boolean; onOpen: () => void; onRemove: () => void }) {
-  const Icon = ICONS[iconKey(f)];
-  const details = [
-    fmtSize(f.size),
-    f.pages && `${fmtNum(f.pages)} sayfa`,
-    f.sheets && `${f.sheets} sheet`,
-    f.rows && f.kind !== "pdf" && `${fmtNum(f.rows)} satır`,
-    f.verify && `${f.verify.tables} tablo çift okundu`,
-  ].filter(Boolean);
-  const pct = f.progress ? Math.round((f.progress.done / f.progress.total) * 100) : 0;
-  return (
-    <li className={`relative overflow-hidden rounded-lg border bg-panel p-2.5 ${active ? "border-accent" : "border-line"}`}>
-      <div className="flex items-start gap-2">
-        <Icon size={16} className={f.status === "error" ? "mt-0.5 shrink-0 text-danger" : "mt-0.5 shrink-0 text-accent"} />
-        <button onClick={onOpen} disabled={f.status !== "ready"} className="min-w-0 flex-1 text-left disabled:cursor-default">
-          <p className="truncate text-sm font-medium" title={f.name}>{f.name}</p>
-          <p className="mt-0.5 text-xs text-muted">{f.status === "uploading" ? (f.progress ? `${f.progress.stage} · ${f.progress.done}/${f.progress.total}` : "Okunuyor…") : details.join(" · ")}</p>
-        </button>
-        <button onClick={onRemove} className="shrink-0 rounded p-0.5 text-muted hover:bg-subtle hover:text-fg" aria-label={`${f.name} kaldır`}>
-          <X size={14} />
-        </button>
-      </div>
-      {f.error && <p className="mt-1 text-xs text-danger">{f.error}</p>}
-      {f.verify && f.verify.uncertain > 0 && (
-        <p className="mt-1 text-xs text-warn-fg">{fmtNum(f.verify.uncertain)} / {fmtNum(f.verify.numbers)} tablo sayısında iki okuma uyuşmadı; bunlar (?) ile işaretli.</p>
-      )}
-      {f.warning && <p className="mt-1 text-xs text-warn-fg">{f.warning}</p>}
-      {f.status === "uploading" && (
-        <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-subtle">
-          {f.progress ? <div className="h-full bg-accent transition-[width] duration-300" style={{ width: `${pct}%` }} /> : <div className="progress-bar h-full w-2/5 bg-accent" />}
-        </div>
-      )}
-    </li>
   );
 }
 

@@ -49,7 +49,10 @@ services:
     # "default" is what this stack always had (db, vLLM); "browsing" adds the browser container.
     networks: [default, browsing]
     extra_hosts: ["host.docker.internal:host-gateway"]
-    volumes: [appdata:/app/.cache]
+    # The shared document library: subfolders on the host, read-only here (lib/library). The app only reads it.
+    volumes:
+      - appdata:/app/.cache
+      - ${SOURCES_HOST_DIR:-/srv/kurum-ai/kaynaklar}:/app/kaynaklar:ro
     expose: ["3000"]
     # cgroup cap for the app and its Docling child (audit S5: RLIMIT_AS breaks torch; a cgroup limit doesn't).
     mem_limit: ${APP_MEM_LIMIT:-16g}

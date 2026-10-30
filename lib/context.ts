@@ -25,6 +25,8 @@ export const STATUS_SEP = "\u001d";
 export const ERROR_SEP = "\u001f";
 
 export interface ChatMeta {
+  /** Library documents this answer read because the message asked for them: the chat keeps them for follow-ups. */
+  used?: { id: string; name: string; size: number; kind: string }[];
   mode: "full" | "rag" | "scan" | "truncated";
   sources: string[];
   unverified: string[];

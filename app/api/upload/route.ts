@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { extractDir, holdExtract } from "@/lib/workspace";
 import { deleteDoc, dropExtractIfUnused, docsOf, getDoc, MAX_BYTES, MAX_DOCS_PER_USER, saveDoc, toMeta, uniqueName, type Doc } from "@/lib/server";
 import { docSections } from "@/lib/context";
+import { isSharedId, sharedDoc, sharedEntry } from "@/lib/library";
 import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
 import { logError } from "@/lib/log";
@@ -117,12 +118,35 @@ async function accept(req: Request, user: User, releaseSlot: () => void): Promis
   return { res: new Response(body, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8" } }), streaming: true };
 }
 
+/** Moves a doc of the user's to a folder of their library. */
+export async function PATCH(req: Request) {
+  const user = await requireApiUser(req);
+  if (user instanceof Response) return user;
+  const d = getDoc(user.id, new URL(req.url).searchParams.get("id") ?? "");
+  if (!d) return fail("Dosya bulunamadı.", 404);
+  const b = (await req.json().catch(() => null)) as { folder?: unknown } | null;
+  if (typeof b?.folder !== "string") return fail("Geçersiz klasör.");
+  const folder = b.folder.split("/").map((p) => p.replace(/[\u0000-\u001f"<>\\]/g, "").trim().slice(0, 60)).filter((p) => p && p !== "." && p !== "..").slice(0, 4).join("/");
+  saveDoc({ ...d, folder: folder || undefined });
+  return Response.json(toMeta(getDoc(user.id, d.id)!));
+}
+
 /** Docs uploaded earlier (they survive restarts), so the page can restore its file list. */
 export async function GET(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
   // ?id=…: one doc's extracted text by page/sheet, for the source panel. Someone else's doc is a plain 404.
   const id = new URL(req.url).searchParams.get("id");
+  if (id && isSharedId(id)) {
+    const e = sharedEntry(id);
+    if (!e) return fail("Dosya bulunamadı.", 404);
+    try {
+      const d = await sharedDoc(e, () => {}, req.signal);
+      return Response.json({ ...toMeta(d), sections: docSections(d.text) });
+    } catch {
+      return fail("Dosya okunamadı.", 422);
+    }
+  }
   if (id) {
     const d = getDoc(user.id, id);
     return d ? Response.json({ ...toMeta(d), sections: docSections(d.text) }) : fail("Dosya bulunamadı.", 404);

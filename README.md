@@ -71,6 +71,10 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 | `WEB_BROWSER_SANDBOX` | (otomatik) | Yalnızca uygulamanın kendisi Chromium açtığında: önce Chromium'un sandbox'ı denenir, olmazsa sandbox'sız açılır ve log'a yazılır. `true`: sandbox şart; `false`: denenmez |
 | `DOCLING_OFFLINE` | `true` | Docling'i çevrimdışı modda çalıştırır (`HF_HUB_OFFLINE=1`). Modeller önceden indirilmiş olmalı; ilk kurulumda bir kez `false` yapın ya da aşağıdaki kapalı ağ adımlarını izleyin. Yönetici sayfasındaki **Ayarlar** bölümünden de açılıp kapatılır; oradaki seçim bu değerin önüne geçer |
 
+## Belge kütüphanesi
+
+Ortak belgeler sunucuda bir klasördedir (`SOURCES_HOST_DIR`, varsayılan `/srv/kurum-ai/kaynaklar`), uygulama salt okunur bağlar. Alt klasörlere dosya koymak yeterlidir; 15 saniye içinde yan menüde görünür. Dosya ilk kullanıldığında okunur, metni önbelleğe alınır. Sohbet belge okumadan başlar: belgeler yan menüden işaretlenince ya da mesajda istenince ("mevzuat klasöründeki kaynakları kullanarak...") okunur.
+
 ## Desteklenen dosyalar
 
 PDF, DOCX (eski `.doc` yok), XLSX / XLS / CSV (her sheet Markdown tablo olarak), TXT / MD, PNG / JPG / WEBP görsel (ekran görüntüsü soru kutusuna yapıştırılabilir; metni ve tabloları kurumun kendi görsel modeli `VISION_MODEL` okur, görsel dışarı çıkmaz). Dosya başına en fazla 25 MB. UTF-8 okunamayan TXT/CSV dosyaları Windows-1254 (Türkçe) olarak okunur.

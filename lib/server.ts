@@ -22,6 +22,8 @@ export interface DocMeta {
   rows?: number;
   sheets?: number;
   warning?: string;
+  /** Personal library: the user's own folder ("Raporlar/2026"); none: top level. */
+  folder?: string;
   verify?: { tables: number; numbers: number; uncertain: number; skipped?: string };
 }
 
@@ -92,7 +94,7 @@ export function getDoc(userId: string, id: string): Doc | undefined {
   return d?.ownerId === userId ? d : undefined;
 }
 
-export const MAX_DOCS_PER_USER = 20; // = chat fileIds limit (lib/validate.ts)
+export const MAX_DOCS_PER_USER = 300; // the personal library; one chat reads at most LIMITS.files (lib/validate.ts)
 export const docsOf = (userId: string) => [...docs.values()].filter((d) => d.ownerId === userId);
 
 /**

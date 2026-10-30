@@ -1,5 +1,8 @@
 import { requireApiUser } from "@/lib/auth";
-import { cptFor, getDoc, recordTokens, type Doc } from "@/lib/server";
+import { cptFor, docsOf, getDoc, recordTokens, type Doc } from "@/lib/server";
+import { isSharedId, sharedDoc, sharedEntry, sharedList, type SharedEntry } from "@/lib/library";
+import { PICK_PROMPT, matchByName, parsePicked, wantsSources, type SourceEntry } from "@/lib/sources";
+import { UserError } from "@/lib/parse";
 import type { Msg, Provider } from "@/lib/provider";
 import { modelConfig, NUM_CTX, providerOf } from "@/lib/model-config";
 import { parseChatRequest } from "@/lib/validate";
@@ -154,8 +157,9 @@ export async function POST(req: Request) {
   const { model, fileIds, messages, think, scope } = parsed;
 
   // Another user's doc is indistinguishable from a missing one.
-  const selected = fileIds.map((id) => getDoc(user.id, id)) as Doc[];
-  if (selected.some((d) => !d)) {
+  let selected = fileIds.filter((id) => !isSharedId(id)).map((id) => getDoc(user.id, id)) as Doc[];
+  const sharedAsked = fileIds.filter(isSharedId).map((id) => sharedEntry(id));
+  if (selected.some((d) => !d) || sharedAsked.some((e) => !e)) {
     return fail("Dosya sunucuda bulunamadı. Dosyayı kaldırıp tekrar yükleyin.", 409);
   }
   if (!(await chat.healthy())) return fail("Model sunucusu çalışmıyor. Yöneticinize bildirin.", 503);
@@ -173,9 +177,43 @@ export async function POST(req: Request) {
       const send = (s: string) => ctrl.enqueue(enc.encode(s));
       // Status text can carry page link labels: the stream's own separators never pass through.
       const status = (s: string) => send(STATUS_SEP + s.replace(/[\u0000-\u001f\u007f]/g, " ") + STATUS_SEP);
-      const meta: ChatMeta = { mode: "full", sources: selected.map((d) => d.name), unverified: [], uncertain: [], ...(selected.length === 1 ? { doc: selected[0].name, pages: pageNumbers(selected[0].text) } : {}) };
+      const meta: ChatMeta = { mode: "full", sources: [], unverified: [], uncertain: [], ...(selected.length === 1 ? { doc: selected[0].name, pages: pageNumbers(selected[0].text) } : {}) };
       let answer = "";
       try {
+        // Documents: those attached to this chat; with none, those the message itself asks for. A plain question
+        // reads nothing and makes no extra model call. The picker sees file paths only, never contents.
+        const asked0 = messages.findLast((m) => m.role === "user")?.content ?? "";
+        let shared = sharedAsked as SharedEntry[];
+        if (!fileIds.length && wantsSources(asked0)) {
+          const mine = docsOf(user.id);
+          const entries: SourceEntry[] = [...sharedList().map((e) => ({ id: e.id, path: e.path })), ...mine.map((d) => ({ id: d.id, path: `Belgelerim/${d.folder ? `${d.folder}/` : ""}${d.name}` }))];
+          let picks = matchByName(asked0, entries);
+          if (!picks.length && entries.length) {
+            status("Kaynaklar taranıyor…");
+            const list = entries.slice(0, 400);
+            const answer0 = await chatOnce(chat, model, [{ role: "system", content: PICK_PROMPT }, { role: "user", content: `İstek: ${asked0}\n\n<liste>\n${list.map((e, i) => `${i + 1}. ${e.path.replace(/[<>]/g, "")}`).join("\n")}\n</liste>` }], signal, 60).catch((e) => {
+              if (signal.aborted) throw e;
+              return "";
+            });
+            picks = parsePicked(answer0, list);
+          }
+          shared = picks.flatMap((p) => (isSharedId(p.id) ? (sharedEntry(p.id) ?? []) : []));
+          selected = picks.flatMap((p) => (isSharedId(p.id) ? [] : (getDoc(user.id, p.id) ?? [])));
+          if (!picks.length && /kaynak|klasör/i.test(asked0)) meta.note = "Bu istekle eşleşen belge bulunamadı; cevap belge kullanılmadan yazıldı. Yan menüden belge seçebilirsiniz.";
+        }
+        for (const e of shared) {
+          status(`Belge okunuyor: ${e.name}`);
+          try {
+            selected = [...selected, await sharedDoc(e, () => {}, signal)];
+          } catch (err) {
+            if (signal.aborted) throw err;
+            if (!(err instanceof UserError)) logError("library", err);
+            meta.note = [meta.note, `${e.name} okunamadı.`].filter(Boolean).join(" ");
+          }
+        }
+        if (!fileIds.length && selected.length) meta.used = selected.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind }));
+        meta.sources = selected.map((d) => d.name);
+        if (selected.length === 1) meta.doc = selected[0].name;
         // Linked pages first: they count toward what fits in the context, and the user sees them being read.
         const pages: Page[] = [];
         const webNotes: string[] = [];
