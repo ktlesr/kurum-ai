@@ -119,6 +119,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const streamingRef = useRef(false);
   const chatIdRef = useRef<string | null>(null);
   const libRef = useRef<LibItem[]>([]);
+  const [libLoaded, setLibLoaded] = useState(false); // a saved chat's documents are known only then: sending waits
   const pendingDocs = useRef<string[]>([]); // a saved chat's documents the library hasn't listed yet
   useEffect(() => { streamingRef.current = streaming; chatIdRef.current = chatId; libRef.current = [...shared, ...personal]; });
   const local = useChats(username, async (id) => {
@@ -167,11 +168,12 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     setFiles((fs) => [...fs, ...found.filter((c) => !fs.some((f) => f.serverId === c.serverId))].slice(0, MAX_CHAT_DOCS));
   }, [shared, personal]);
   const refreshLibrary = useCallback(() => {
-    api("/api/library").then((r) => (r.ok ? r.json() : [])).then((l: LibItem[]) => setShared(l)).catch(() => {});
-    api("/api/upload")
+    const a = api("/api/library").then((r) => (r.ok ? r.json() : [])).then((l: LibItem[]) => setShared(l)).catch(() => {});
+    const b = api("/api/upload")
       .then((r) => (r.ok ? r.json() : []))
       .then((l: DocMeta[]) => setPersonal(l.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind, path: `${d.folder ? `${d.folder}/` : ""}${d.name}`, warning: d.warning, verify: d.verify }))))
       .catch(() => {});
+    Promise.all([a, b]).then(() => setLibLoaded(true));
   }, []);
   useEffect(() => {
     refreshLibrary();
@@ -277,7 +279,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   /** scope "all": the question needs the whole document (summaries etc.), so a too-large doc is scanned, not searched. */
   const send = async (text: string, scope?: "all") => {
     const q = text.trim();
-    if (!q || streaming) return;
+    if (!q || streaming || !libLoaded) return;
     const history: Message[] = [...messages.filter((m) => !m.error), { role: "user", content: q }];
     const t0 = Date.now();
     const secs = () => Math.round((Date.now() - t0) / 1000);
@@ -465,7 +467,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           ) : (
             <button
               onClick={() => send(input)}
-              disabled={!input.trim()}
+              disabled={!input.trim() || !libLoaded}
               className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent text-accent-fg transition-opacity disabled:opacity-40"
               aria-label="Gönder"
             >
