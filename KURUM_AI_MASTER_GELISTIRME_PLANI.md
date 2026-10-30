@@ -157,6 +157,7 @@ Dosya seçildi → yerel kalıcı kopya doğrulandı → kullanıcı görevi ba�
 
 - **HyCanvas:** kodu AGPL-3.0; herhangi bir parçasını kopyalamak Kurum AI'ı AGPL yapar. Değiştirilmeden ayrı servis olarak çalıştırılabilir. Ancak bu ikinci bir kullanıcı/oturum sistemi ve ikinci bir veritabanı getirir, OIDC sağlayıcımız yok, yazı tipleri dış CDN'den (fonts.bunny.net) yüklenir, yerel `http://vllm` adresi reddedilir, WebP çıktısı yoktur. Proje 1.0 öncesi ve iki kişilik. İleride tam tasarım editörü gerekirse yalnızca değiştirilmemiş ayrı servis olarak yeniden değerlendirilir.
 - **presenton:** analitik (Mixpanel) ve topluluk çağrıları varsayılan açık. Webhook ve URL indirmede SSRF yüzeyi var. PPTX/PDF dışa aktarma motoru kapalı kaynak (`@presenton/export-core`). Arayüz yalnızca İngilizce ve sadece 16:9 sunum üretir.
+- **Güncelleme (30.10.2026, kullanıcı isteği):** Uygulamalar yine entegre edilmez, ama presenton'un Apache-2.0 şablon verisi atıfla içe aktarılır ve Sunum modu kurulur. HyCanvas'tan (AGPL) kod alınmaz. Ayrıntı: `docs/tasks/TASK-032-sunum.md`.
 - **Ödünç alınan fikir (kendi kodumuzla):** presenton'un yaklaşımı. Şablon, mutlak konumlu katmanlardan oluşan bir JSON'dur. Model yalnızca şemaya uygun metin içeriğini doldurur. Çizim deterministik koddur ve modele bırakılmaz. HyCanvas'tan da yalnızca fikir alınır: marka kilidi (logo ve renklerin değiştirilmesini engelleme) ve sunucusuz dışa aktarma.
 
 **Görsel Stüdyo v1 tasarımı:**

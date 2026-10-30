@@ -1,0 +1,130 @@
+[
+{
+"id": "civic",
+"name": "Civic",
+"desc": "Modern, monochrome layouts with bold typography and structured compositions for government, policy, research, and public-sector presentations.",
+"layouts": 23,
+"primary": "#000000",
+"background": "#ececec"
+},
+{
+"id": "dynamic",
+"name": "Dynamic",
+"desc": "Bold, high-contrast layouts with dark textured backgrounds and warm accents for impactful, story-driven presentations.",
+"layouts": 25,
+"primary": "#c24d12",
+"background": "#171717"
+},
+{
+"id": "editorial",
+"name": "Editorial",
+"desc": "Magazine-inspired layouts with refined typography, bold blue accents, and polished compositions for narrative, insight-rich presentations.",
+"layouts": 17,
+"primary": "#155f99",
+"background": "#1d242d"
+},
+{
+"id": "executive",
+"name": "Executive",
+"desc": "Leadership-ready layouts with bold typography, crisp structure, and subtle violet accents for strategic, decision-focused presentations.",
+"layouts": 24,
+"primary": "#8554eb",
+"background": "#f8f7fb"
+},
+{
+"id": "general",
+"name": "General",
+"desc": "General template best for simple presentations, great spacing and clean layout.",
+"layouts": 10,
+"primary": "#3b82f6",
+"background": "#9333ea"
+},
+{
+"id": "horizon",
+"name": "Horizon",
+"desc": "Warm, polished layouts with bold typography, elegant curves, and image-led compositions for real estate, architecture, and property investment presentations.",
+"layouts": 21,
+"primary": "#a65300",
+"background": "#f8fafc"
+},
+{
+"id": "landmark",
+"name": "Landmark",
+"desc": "Bold architectural layouts with striking red accents, oversized imagery, and crisp typography for real estate development, property sales, and investment presentations.",
+"layouts": 22,
+"primary": "#e60904",
+"background": "#f7f5f3"
+},
+{
+"id": "modern",
+"name": "Modern",
+"desc": "Clean, contemporary layouts with generous whitespace, confident typography, and bold visual accents for a polished presentation.",
+"layouts": 8,
+"primary": "#f59e0b",
+"background": "#f5f8fe"
+},
+{
+"id": "momentum",
+"name": "Momentum",
+"desc": "A polished, high-energy business template for strategy, performance, product, and leadership presentations, combining bold typography, fluid accents, strong data storytelling, and versatile editorial ",
+"layouts": 22,
+"primary": "#213ebb",
+"background": "#f6f7fc"
+},
+{
+"id": "mosaic",
+"name": "Mosaic",
+"desc": "Vibrant, modular layouts with bold color blocking, rounded geometric frames, and playful editorial compositions for energetic, visually driven presentations.",
+"layouts": 23,
+"primary": "#7c6af4",
+"background": "#ffffff"
+},
+{
+"id": "nova",
+"name": "Nova",
+"desc": "Futuristic, high-contrast layouts with luminous blue gradients and bold typography for technology, economics, innovation, and forward-looking presentations.",
+"layouts": 14,
+"primary": "#2862a2",
+"background": "#ffffff"
+},
+{
+"id": "pulse",
+"name": "Pulse",
+"desc": "Clean, clinical layouts with crisp typography, calming blue accents, and structured compositions for healthcare, research, and medical presentations.",
+"layouts": 23,
+"primary": "#18324a",
+"background": "#ffffff"
+},
+{
+"id": "signal",
+"name": "Signal",
+"desc": "Bold, warm-toned layouts with strong typography and dynamic image framing for marketing, campaign, growth, and digital strategy presentations.",
+"layouts": 17,
+"primary": "#e1bb80",
+"background": "#ffffff"
+},
+{
+"id": "standard",
+"name": "Standard",
+"desc": "Balanced, adaptable layouts that keep business and everyday content clear, organized, and easy to follow.",
+"layouts": 10,
+"primary": "#3182bd",
+"background": "#1b8c2d"
+},
+{
+"id": "swift",
+"name": "Swift",
+"desc": "Bright, energetic layouts with crisp structure and visual momentum for concise, fast-paced presentations.",
+"layouts": 8,
+"primary": "#bdeff8",
+"background": "#bff4ff"
+},
+{
+"id": "verdant",
+"name": "Verdant",
+"desc": "Refined, organic layouts with expressive serif typography and flowing green accents for polished, narrative-driven presentations.",
+"layouts": 12,
+"primary": "#285f20",
+"background": "#ffffff"
+}
+]

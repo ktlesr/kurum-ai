@@ -8,20 +8,23 @@ import Link from "next/link";
 import {
   AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight,
   AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, ClipboardPaste, Copy, Download, FolderOpen, Image as ImageIcon,
-  AlignHorizontalSpaceAround, AlignVerticalSpaceAround, BoxSelect, FlipHorizontal2, FlipVertical2, Palette, Italic, MoveDown, MoveUp, Paintbrush, Pencil, RotateCcw, Scissors, Underline,
+  Presentation, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, BoxSelect, FlipHorizontal2, FlipVertical2, Palette, Italic, MoveDown, MoveUp, Paintbrush, Pencil, RotateCcw, Scissors, Underline,
   ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Library, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import { ThemeToggle } from "../theme-toggle";
 import Editor from "./editor";
 import ContextMenu, { type MenuItem } from "./context-menu";
 import ArtPicker from "./art-picker";
+import { DeckPanel, LayoutPicker, SlideStrip, loadTemplate } from "./deck-panel";
+import { downloadPptx } from "./pptx";
+import { rethemeSlides, slideFrom, type DeckTemplate, type Layout, type TemplateInfo } from "@/lib/deck";
 import FontPicker from "./font-picker";
 import { THEMES, type Theme } from "@/lib/themes";
 import { OPEN_COLOR } from "@/lib/studio-assets";
 import { ensureFont } from "./fonts";
 import type { Claim } from "@/lib/trace";
 import { recorderType, renderVideo, type Scene, type Transition } from "./video";
-import { listWorks, removeWork, saveWork, thumbnail, type Work } from "./works";
+import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, type Work } from "./works";
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
@@ -92,6 +95,9 @@ export default function Studio({ username }: { username: string }) {
   // The chosen elements; one of them alone gets the inspector, several get the alignment panel.
   const [picked, setPicked] = useState<string[]>([]);
   const [activeTheme, setActiveTheme] = useState("");
+  // Sunum mode: `els` is the slide on the canvas; the others wait here (slides[at] is out of date until saved back).
+  const [deck, setDeck] = useState<{ template: DeckTemplate; slides: El[][]; at: number; primary: string; theme?: Theme } | null>(null);
+  const [layoutsOpen, setLayoutsOpen] = useState(false);
   const [artOpen, setArtOpen] = useState(false);
   const [alignCanvas, setAlignCanvas] = useState(false); // several chosen: to each other, or to the canvas
   const selected = picked.length === 1 ? picked[0] : null;
@@ -260,6 +266,16 @@ export default function Studio({ username }: { username: string }) {
     await Promise.allSettled([t.head, t.body].map((id) => ensureFont(id, username)));
     if (now.current.view !== start) return; // edited or switched meanwhile: the user's newer step wins
     const next = { ...brand, primary: t.primary, accent: t.accent };
+    if (deck) {
+      // Every slide (lib/deck rethemeSlides); fonts were loaded above.
+      const all = rethemeSlides(slidesNow(), t, deck.theme ? [deck.theme.primary, deck.theme.accent] : []);
+      setDeck({ ...deck, slides: all, primary: t.primary, theme: t });
+      setEls(all[deck.at]);
+      setHist({ past: [], future: [] });
+      saveBrand(next);
+      setActiveTheme(t.name);
+      return;
+    }
     const cur = now.current.els;
     const base = cur ? recolor(cur, brand, next) : fromTemplate({ template, format, content, brand: next, photo }, font.measure);
     change(base.map((e) => (e.kind === "text" && e.role !== "deco" ? fitPill({ ...e, font: e.role === "title" || e.role === "tag" ? t.head : t.body }, font.measure) : e)));
@@ -283,6 +299,7 @@ export default function Studio({ username }: { username: string }) {
   };
 
   const chooseTemplate = (t: TemplateId) => {
+    if (deck) return setNote({ kind: "error", text: "Sunumdayken sayfa düzenini alttaki + ile seçin." });
     cancelSuggest();
     setTemplate(t);
     if (!ownText) setContent(SAMPLE[t]);
@@ -290,6 +307,7 @@ export default function Studio({ username }: { username: string }) {
   };
   const chooseFormat = (f: FormatId) => {
     if (f === format) return;
+    if (deck) return setNote({ kind: "error", text: "Sunumlar 16:9 yatay formattadır." });
     // An edited design (or an opened work) moves to the new format with its edits; a template one is laid out anew.
     if (els) change(refit(els, format, f));
     else reset();
@@ -608,7 +626,7 @@ export default function Studio({ username }: { username: string }) {
   // Shift+F10; with several chosen, they all move, copy and go together.
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   function onKey(e: KeyboardEvent) {
-    if (library || artOpen) return; // the dialog has the keyboard; the canvas behind it doesn't change
+    if (library || artOpen || layoutsOpen) return; // the dialog has the keyboard; the canvas behind it doesn't change
     const t = e.target as HTMLElement;
     if (t.closest("input, textarea, select, [contenteditable]")) return;
     const mod = e.ctrlKey || e.metaKey;
@@ -681,6 +699,87 @@ export default function Studio({ username }: { username: string }) {
     }
   }
   const sceneFormat = scenes[0]?.format;
+  // ---- Sunum ----
+  const clearEditing = () => {
+    setHist({ past: [], future: [] }); // undo stays within one slide
+    setPicked([]);
+    setEditing(null);
+  };
+  const slidesNow = () => (deck ? deck.slides.map((s, i) => (i === deck.at ? view : s)) : []);
+  const startDeck = (template: DeckTemplate, primary: string, slides: El[][]) => {
+    cancelSuggest();
+    setDeck({ template, slides, at: 0, primary });
+    setFormat("yatay");
+    setEls(slides[0]);
+    clearEditing();
+    setWorkId(null);
+    // The fonts of the slides and of the layouts on offer, so previews show them.
+    const fonts = new Set([...slides.flat(), ...template.layouts.flatMap((l) => l.els)].flatMap((e) => (typeof (e as { font?: unknown }).font === "string" ? [(e as { font: string }).font] : [])));
+    Promise.allSettled([...fonts].map((id) => ensureFont(id, username))).then(() => setFontTick((n) => n + 1));
+  };
+  const openDeck = async (d: SavedDeck) => {
+    const t = await loadTemplate(d.template);
+    startDeck(t, d.primary, d.slides);
+  };
+  const goSlide = (i: number) => {
+    if (!deck || i === deck.at) return;
+    const slides = slidesNow();
+    setDeck({ ...deck, slides, at: i });
+    setEls(slides[i]);
+    clearEditing();
+  };
+  /** Slides changed as a list: the canvas shows slide `at` of them. */
+  const setSlides = (slides: El[][], at: number) => {
+    if (!deck) return;
+    setDeck({ ...deck, slides, at });
+    setEls(slides[at]);
+    clearEditing();
+  };
+  const addSlide = (l: Layout) => {
+    setLayoutsOpen(false);
+    const s = slidesNow();
+    if (!deck) return;
+    // A new slide wears the theme the deck has.
+    const fresh = slideFrom(l, undefined, deck.primary);
+    const slide = deck.theme ? rethemeSlides([fresh], deck.theme)[0] : fresh;
+    setSlides([...s.slice(0, deck.at + 1), slide, ...s.slice(deck.at + 1)], deck.at + 1);
+  };
+  const duplicateSlide = () => {
+    const s = slidesNow();
+    if (deck) setSlides([...s.slice(0, deck.at + 1), s[deck.at].map((e) => ({ ...e, id: newId() }) as El), ...s.slice(deck.at + 1)], deck.at + 1);
+  };
+  const deleteSlide = () => {
+    const s = slidesNow();
+    if (deck && s.length > 1) setSlides(s.filter((_, i) => i !== deck.at), Math.min(deck.at, s.length - 2));
+  };
+  const moveSlide = (d: -1 | 1) => {
+    const s = slidesNow();
+    if (!deck || !s[deck.at + d]) return;
+    [s[deck.at], s[deck.at + d]] = [s[deck.at + d], s[deck.at]];
+    setSlides(s, deck.at + d);
+  };
+  const leaveDeck = () => {
+    setDeck(null);
+    setEls(null);
+    clearEditing();
+    setWorkId(null);
+  };
+  const exportDeck = async () => {
+    if (!font || !deck) return;
+    setBusy("export");
+    try {
+      const ready = await Promise.all(slidesNow().map(fontsReady));
+      await downloadPptx(ready, font.measure, `kurum-sunum-${deck.template.id}.pptx`);
+      setNote({ kind: "ok", text: "PPTX indirildi. Yazı tipleri dosyaya gömülmez: bilgisayarda yoksa PowerPoint benzeriyle gösterir." });
+    } catch (e) {
+      console.error(e);
+      setNote({ kind: "error", text: "PPTX oluşturulamadı." });
+    } finally {
+      setBusy("");
+    }
+  };
+  const savedDeck = (): SavedDeck | undefined => (deck ? { template: deck.template.id, primary: deck.primary, slides: slidesNow() } : undefined);
+
   /** A font chosen for these (arrives after loading: applied to the design as it is then). */
   const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => (e.kind === "text" && ids.includes(e.id) && !e.locked ? (font ? fitPill({ ...e, font: f }, font.measure) : { ...e, font: f }) : e)));
   /** Everything drawn into a picture waits for its fonts (a design just opened may still be loading them), and gets
@@ -758,7 +857,7 @@ export default function Studio({ username }: { username: string }) {
       const id = workId ?? newId();
       const ready = await fontsReady(view);
       const thumb = await thumbnail(svgOf(format, ready, font.measure, font.css), W, H);
-      await saveWork(username, { id, name: workName.trim().slice(0, 80) || "Adsız tasarım", format, template, els: ready, thumb, updatedAt: stamp() });
+      await saveWork(username, { id, name: workName.trim().slice(0, 80) || "Adsız tasarım", format, template, els: ready, thumb, updatedAt: stamp(), ...(deck ? { deck: savedDeck() } : {}) });
       setWorkId(id);
       setLibrary(await listWorks(username));
       setNote({ kind: "ok", text: "Çalışmalarım'a kaydedildi (yalnızca bu tarayıcıda)." });
@@ -769,9 +868,14 @@ export default function Studio({ username }: { username: string }) {
   const openWork = (w: Work) => {
     cancelSuggest(); // a suggestion still on its way must not land on the opened work
     setTemplate(w.template);
-    setFormat(w.format);
-    change(w.els);
-    setWorkId(w.id);
+    if (w.deck) {
+      openDeck(w.deck).then(() => setWorkId(w.id), () => setNote({ kind: "error", text: "Sunumun şablonu yüklenemedi." }));
+    } else {
+      setDeck(null);
+      setFormat(w.format);
+      change(w.els);
+      setWorkId(w.id);
+    }
     setWorkName(w.name);
     setSelected(null);
     closeLibrary();
@@ -790,15 +894,21 @@ export default function Studio({ username }: { username: string }) {
     setLibrary(await listWorks(username).catch(() => []));
   };
 
-  const saveProject = () => download(new Blob([JSON.stringify({ kind: "kurum-ai-gorsel", version: 1, template, format, els: view })], { type: "application/json" }), `kurum-gorsel-${template}-${format}.json`);
+  const saveProject = () => download(new Blob([JSON.stringify({ kind: "kurum-ai-gorsel", version: 1, template, format, els: view, ...(deck ? { deck: savedDeck() } : {}) })], { type: "application/json" }), `kurum-gorsel-${template}-${format}.json`);
   const openProject = async (file: File | undefined) => {
     if (!file) return;
     try {
       if (file.size > 60 * 1024 * 1024) throw new Error("Proje dosyası çok büyük.");
-      const j = JSON.parse(await file.text()) as { kind?: unknown; format?: unknown; els?: unknown };
+      const j = JSON.parse(await file.text()) as { kind?: unknown; format?: unknown; els?: unknown; deck?: unknown };
       if (j.kind !== "kurum-ai-gorsel" || typeof j.format !== "string" || !Object.hasOwn(FORMATS, j.format)) throw new Error("Bu bir Görsel Stüdyo proje dosyası değil.");
       const next = cleanEls(j.els);
       if (!next.length) throw new Error("Proje dosyasında öğe yok.");
+      const saved = cleanDeck(j.deck);
+      if (saved) {
+        await openDeck(saved);
+        return setNote({ kind: "ok", text: "Sunum açıldı." });
+      }
+      setDeck(null);
       setFormat(j.format as FormatId);
       change(next);
       setSelected(null);
@@ -815,7 +925,7 @@ export default function Studio({ username }: { username: string }) {
 
   return (
     <div className="flex h-dvh flex-col bg-bg">
-      <header inert={!!library || artOpen} className="flex h-14 shrink-0 items-center gap-1.5 border-b border-line bg-panel/80 px-3 backdrop-blur md:px-4">
+      <header inert={!!library || artOpen || layoutsOpen} className="flex h-14 shrink-0 items-center gap-1.5 border-b border-line bg-panel/80 px-3 backdrop-blur md:px-4">
         <Link href="/" className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted hover:bg-subtle hover:text-fg">
           <ArrowLeft size={16} /> Asistan
         </Link>
@@ -842,9 +952,19 @@ export default function Studio({ username }: { username: string }) {
         <ThemeToggle />
       </header>
 
-      <div inert={!!library || artOpen} className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      <div inert={!!library || artOpen || layoutsOpen} className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Left: start from a template, texts, brand */}
         <aside className="order-2 min-h-0 overflow-y-auto border-line bg-panel lg:order-1 lg:w-[320px] lg:shrink-0 lg:border-r">
+          <section className={section} aria-labelledby="t-deck">
+            <h2 id="t-deck" className={`${heading} flex items-center gap-1.5`}><Presentation size={13} /> Sunum (PowerPoint)</h2>
+            {deck ? (
+              <p className="text-xs text-muted">{deck.template.name} şablonu, {deck.slides.length} slayt. Alttaki şeritten slaytlara geçin ve yeni düzen ekleyin; temalar tüm slaytlara uygulanır.</p>
+            ) : (
+              <DeckPanel docs={docs} onStart={(t: DeckTemplate, i: TemplateInfo, s: El[][]) => startDeck(t, i.primary, s)} onNote={(kind, text) => setNote({ kind, text })} />
+            )}
+          </section>
+
+          {!deck && (<>
           <section className={section} aria-labelledby="t-template">
             <h2 id="t-template" className={heading}>Şablon</h2>
             <div className="grid grid-cols-2 gap-2">
@@ -927,6 +1047,8 @@ export default function Studio({ username }: { username: string }) {
               </label>
             ))}
           </section>
+
+          </>)}
 
           <section className={section} aria-labelledby="t-video">
             <h2 id="t-video" className={heading}>Video (Reels)</h2>
@@ -1062,12 +1184,18 @@ export default function Studio({ username }: { username: string }) {
               <p className="flex items-center gap-2 text-sm text-muted">{fontError || <><Loader2 size={16} className="animate-spin" /> Hazırlanıyor…</>}</p>
             )}
           </div>
+          {deck && font && <SlideStrip slides={slidesNow()} at={deck.at} measure={font.measure} onGo={goSlide} onAdd={() => setLayoutsOpen(true)} onDuplicate={duplicateSlide} onDelete={deleteSlide} onMove={moveSlide} onClose={leaveDeck} />}
           <div className="flex flex-wrap items-center gap-2 border-t border-line bg-panel px-4 py-2.5">
             <span className="mr-auto text-xs text-muted">{W}×{H} · {FORMATS[format].label}</span>
             {note && (
               <p role={note.kind === "error" ? "alert" : "status"} className={`order-first w-full text-sm sm:order-none sm:w-auto ${note.kind === "error" ? "text-danger" : "text-ok"}`}>
                 {note.text}
               </p>
+            )}
+            {deck && (
+              <button onClick={exportDeck} disabled={!font || busy === "export"} className="flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-40">
+                {busy === "export" ? <Loader2 size={15} className="animate-spin" /> : <Presentation size={15} />} PowerPoint (PPTX)
+              </button>
             )}
             {EXPORTS.map((e) => (
               <button key={e.ext} onClick={() => exportAs(e)} disabled={!font || busy === "export"} className={`flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors disabled:opacity-40 ${e.ext === "png" ? "bg-accent text-accent-fg hover:opacity-90" : "border border-line bg-panel hover:border-accent hover:text-accent"}`}>
@@ -1162,6 +1290,7 @@ export default function Studio({ username }: { username: string }) {
         }}
       />
 
+      {layoutsOpen && deck && font && <LayoutPicker template={deck.template} accent={deck.primary} measure={font.measure} onPick={addSlide} onClose={() => setLayoutsOpen(false)} />}
       {artOpen && <ArtPicker onPick={addArt} onClose={() => setArtOpen(false)} />}
       {library && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onPointerDown={closeLibrary}>
