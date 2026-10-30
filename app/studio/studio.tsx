@@ -977,8 +977,8 @@ export default function Studio({ username }: { username: string }) {
     setNote({ kind: "error", text: "Son değişiklikler kaydedilemedi. İndir menüsünden proje dosyası olarak saklayın; yine de çıkmak için tekrar deneyin." });
     return false;
   };
-  // Only what the user made or opened: an untouched template isn't a work yet.
-  const hasDesign = !!font && !!mode && (!!els || ownText || !!photo) && (mode !== "sunum" || !!deck);
+  // Only what the user made or opened: an untouched template isn't a work yet (a saved work back on a template still is one).
+  const hasDesign = !!font && !!mode && (!!els || ownText || !!photo || !!workId) && (mode !== "sunum" || !!deck);
   useEffect(() => {
     if (!hasDesign) return;
     pending.current = setTimeout(() => latestAutosave.current(), AUTOSAVE_MS);
