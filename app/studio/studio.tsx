@@ -18,7 +18,7 @@ import { listWorks, removeWork, saveWork, thumbnail, type Work } from "./works";
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, TEMPLATES, cleanEls, fromTemplate, hug, newId, svgOf, toSvg,
+  DEFAULT_BRAND, FORMATS, LIMITS, TEMPLATES, cleanEls, fromTemplate, hug, newId, refit, svgOf, toSvg,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
@@ -218,8 +218,11 @@ export default function Studio({ username }: { username: string }) {
     reset();
   };
   const chooseFormat = (f: FormatId) => {
+    if (f === format) return;
+    // An edited design (or an opened work) moves to the new format with its edits; a template one is laid out anew.
+    if (els) change(refit(els, format, f));
+    else reset();
     setFormat(f);
-    reset();
   };
 
   function cancelSuggest() {

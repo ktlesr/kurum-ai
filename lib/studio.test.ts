@@ -1,7 +1,7 @@
 // Run: pnpm test. Görsel Stüdyo layers → SVG, text fitting, the model's suggestion parser.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FORMATS, TEMPLATES, fitText, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type Measure } from "./studio.ts";
+import { FORMATS, TEMPLATES, fitText, fromTemplate, refit, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type Measure } from "./studio.ts";
 
 // Monospace stand-in for canvas measureText: every character is 0.55 em.
 const measure: Measure = (t, size) => t.length * size * 0.55;
@@ -152,4 +152,19 @@ test("rasterSize: VP8 and hostile headers end without reading past the buffer", 
   assert.equal(rasterSize(new Uint8Array([0xff, 0xd8, ...new Array(64).fill(0xff)])), null); // only fill bytes
   assert.equal(rasterSize(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, ...new Array(40).fill(0)])), null); // zero length
   assert.equal(rasterSize(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0xff, 0xff, ...new Array(40).fill(0)])), null); // past the end
+});
+
+test("refit: an edited design keeps its edits in another format", () => {
+  const els = fromTemplate(design(), measure).map((e) => (e.kind === "text" && e.role === "title" ? { ...e, text: "Elle yazıldı", size: 90 } : e));
+  for (const to of ["dikey", "hikaye", "yatay"] as const) {
+    const out = refit(els, "kare", to);
+    const { w, h } = FORMATS[to];
+    assert.equal(out.length, els.length);
+    const bg = out.find((e) => e.name === "Arka plan")!;
+    assert.deepEqual([bg.x, bg.y, bg.w, bg.h], [0, 0, w, h], `${to}: background spans the canvas`);
+    const title = out.find((e) => e.kind === "text" && e.role === "title");
+    assert.ok(title?.kind === "text" && title.text === "Elle yazıldı" && title.size === 90 * Math.min(w / 1080, h / 1080));
+    for (const e of out) assert.ok(e.x >= -1 && e.y >= -1 && e.x + e.w <= w + 1 && e.y + e.h <= h + 1, `${to}: ${e.name} inside`);
+  }
+  assert.equal(refit(els, "kare", "kare"), els);
 });

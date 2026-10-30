@@ -363,7 +363,32 @@ export function fromTemplate(d: Design, measure: Measure): El[] {
   });
 }
 
-/** Text drawn inside its box: wrapped to the width, cut at the height (or shrunk first when `auto`). */
+/**
+ * An edited design moved to another format, instead of starting over from the template: everything scales by the
+ * smaller of the two ratios around its scaled centre; what touches an edge keeps touching it and what spans the canvas
+ * spans the new one (backgrounds, strips, a photo band).
+ */
+export function refit(els: El[], from: FormatId, to: FormatId): El[] {
+  const a = FORMATS[from];
+  const b = FORMATS[to];
+  if (from === to) return els;
+  const s = Math.min(b.w / a.w, b.h / a.h);
+  const axis = (pos: number, size: number, A: number, B: number) => {
+    if (pos <= 0.5 && pos + size >= A - 0.5) return [0, B]; // spans it
+    const len = size * s;
+    if (pos <= 0.5) return [pos < -0.5 ? pos * s : 0, len]; // starts at the edge (or bleeds over it)
+    if (pos + size >= A - 0.5) return [B - len + (pos + size - A) * s, len];
+    return [(pos + size / 2) * (B / A) - len / 2, len];
+  };
+  return els.map((e) => {
+    const [x, w] = axis(e.x, e.w, a.w, b.w);
+    const [y, h] = axis(e.y, e.h, a.h, b.h);
+    const box = { ...e, x, y, w, h };
+    if (e.kind === "text") return { ...box, size: e.size * s, tracking: e.tracking * s, ...(e.bg ? { bg: { ...e.bg, radius: e.bg.radius * s } } : {}) } as El;
+    return (e.radius ? { ...box, radius: e.radius * s } : box) as El;
+  });
+}
+
 /**
  * Boxes that follow their text: without "Kutuya sığdır" (and without a pill) a text box is as tall as its wrapped
  * lines, so a bigger size or a longer text grows the box instead of being cut.
