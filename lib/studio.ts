@@ -444,6 +444,70 @@ export function fromTemplate(d: Design, measure: Measure): El[] {
  * smaller of the two ratios around its scaled centre; what touches an edge keeps touching it and what spans the canvas
  * spans the new one (backgrounds, strips, a photo band).
  */
+/** The screen-aligned box around an element as drawn (a turned element's corners). */
+export function aabb(e: El) {
+  const rot = Number.isFinite(e.rotation) ? (e.rotation as number) % 360 : 0;
+  if (!rot) return { x: e.x, y: e.y, w: e.w, h: e.h };
+  const a = (rot * Math.PI) / 180;
+  const w = Math.abs(e.w * Math.cos(a)) + Math.abs(e.h * Math.sin(a));
+  const h = Math.abs(e.w * Math.sin(a)) + Math.abs(e.h * Math.cos(a));
+  return { x: e.x + e.w / 2 - w / 2, y: e.y + e.h / 2 - h / 2, w, h };
+}
+
+export type AlignTo = "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom";
+/**
+ * Lines the chosen elements up on an edge or centre: of `to` (the canvas) when given, else of the box around them all.
+ * Locked ones don't move (and with others chosen, they are the reference like the rest). Only positions change.
+ */
+export function alignEls(els: El[], ids: string[], how: AlignTo, to?: { w: number; h: number }): El[] {
+  const set = new Set(ids);
+  const boxes = els.filter((e) => set.has(e.id)).map(aabb);
+  if (!boxes.length) return els;
+  const ref = to
+    ? { x: 0, y: 0, w: to.w, h: to.h }
+    : (() => {
+        const x = Math.min(...boxes.map((b) => b.x));
+        const y = Math.min(...boxes.map((b) => b.y));
+        return { x, y, w: Math.max(...boxes.map((b) => b.x + b.w)) - x, h: Math.max(...boxes.map((b) => b.y + b.h)) - y };
+      })();
+  return els.map((e) => {
+    if (!set.has(e.id) || e.locked) return e;
+    const b = aabb(e);
+    const dx = how === "left" ? ref.x - b.x : how === "hcenter" ? ref.x + ref.w / 2 - (b.x + b.w / 2) : how === "right" ? ref.x + ref.w - (b.x + b.w) : 0;
+    const dy = how === "top" ? ref.y - b.y : how === "vcenter" ? ref.y + ref.h / 2 - (b.y + b.h / 2) : how === "bottom" ? ref.y + ref.h - (b.y + b.h) : 0;
+    return dx || dy ? ({ ...e, x: e.x + dx, y: e.y + dy } as El) : e;
+  });
+}
+
+/**
+ * Equal gaps between the chosen elements along an axis (3 or more): the outermost two stay, the ones between move so
+ * every gap between neighbouring edges is the same.
+ */
+export function distributeEls(els: El[], ids: string[], axis: "x" | "y"): El[] {
+  const set = new Set(ids);
+  // Locked ones aren't part of it: they would stay put in the middle and break the equal gaps.
+  const items = els.filter((e) => set.has(e.id) && !e.locked).map((e) => ({ e, b: aabb(e) }));
+  if (items.length < 3) return els;
+  const pos = (b: ReturnType<typeof aabb>) => (axis === "x" ? b.x : b.y);
+  const len = (b: ReturnType<typeof aabb>) => (axis === "x" ? b.w : b.h);
+  items.sort((a, b) => pos(a.b) + len(a.b) / 2 - (pos(b.b) + len(b.b) / 2));
+  const first = items[0].b;
+  const last = items[items.length - 1].b;
+  const span = pos(last) + len(last) - pos(first);
+  const gap = (span - items.reduce((s, i) => s + len(i.b), 0)) / (items.length - 1);
+  const moved = new Map<string, number>();
+  let at = pos(first);
+  for (const i of items) {
+    moved.set(i.e.id, at - pos(i.b));
+    at += len(i.b) + gap;
+  }
+  return els.map((e) => {
+    const d = moved.get(e.id);
+    if (!d || e.locked) return e;
+    return { ...e, [axis]: e[axis] + d } as El;
+  });
+}
+
 export function refit(els: El[], from: FormatId, to: FormatId): El[] {
   const a = FORMATS[from];
   const b = FORMATS[to];
@@ -488,7 +552,7 @@ export function textLines(e: TextEl, measure: Measure) {
   const t = e.upper ? e.text.toLocaleUpperCase("tr") : e.text;
   const width = (s: string, size: number, weight: number) => measure(s, size, weight) + e.tracking * (size / e.size) * s.length;
   if (e.bg) return { size: e.size, lines: [t.replace(/\s+/g, " ")], pad };
-  return { ...fitText(t, Math.max(1, e.w), Math.max(e.size * e.leading, e.h + 0.5), e.size, e.auto ? e.size * 0.4 : e.size, 999, e.weight, width, e.leading), pad };
+  return { ...fitText(t, Math.max(1, e.w), e.auto ? Math.max(1, e.h + 0.5) : Math.max(e.size * e.leading, e.h + 0.5), e.size, e.auto ? e.size * 0.4 : e.size, 999, e.weight, width, e.leading), pad };
 }
 
 export function draw(els: El[], measure: Measure): Prim[] {

@@ -1,7 +1,7 @@
 // Run: pnpm test. Görsel Stüdyo layers → SVG, text fitting, the model's suggestion parser.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FORMATS, SHAPES, TEMPLATES, cleanEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type Measure } from "./studio.ts";
+import { FORMATS, SHAPES, TEMPLATES, aabb, alignEls, cleanEls, distributeEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type El, type Measure } from "./studio.ts";
 
 // Monospace stand-in for canvas measureText: every character is 0.55 em.
 const measure: Measure = (t, size) => t.length * size * 0.55;
@@ -203,4 +203,27 @@ test("shapes: a dotted line is valid SVG (one linecap); refit scales outline and
   }
   const [r] = refit([l], "yatay", "kare") as (typeof l)[];
   assert.ok(r.stroke.width === 10 * 0.5625 && r.shadow.blur === 20 * 0.5625 && r.shadow.y === 8 * 0.5625);
+});
+
+test("align and distribute: to each other, to the canvas, turned boxes, locked ones stay", () => {
+  const box = (id: string, x: number, y: number, w: number, h: number, more = {}) => ({ id, kind: "shape", name: id, x, y, w, h, fill: { kind: "solid", color: "#000000" }, ...more }) as El;
+  const els = [box("a", 10, 10, 100, 50), box("b", 300, 200, 50, 80), box("c", 600, 400, 200, 20, { locked: true })];
+  const left = alignEls(els, ["a", "b"], "left");
+  assert.deepEqual(left.map((e) => e.x), [10, 10, 600]);
+  const right = alignEls(els, ["a", "b", "c"], "right");
+  assert.deepEqual(right.map((e) => e.x + e.w), [800, 800, 800]); // c is locked but sets the edge
+  const mid = alignEls(els, ["a"], "vcenter", { w: 1080, h: 1080 });
+  assert.equal(mid[0].y + mid[0].h / 2, 540);
+  // a box turned 90° is aligned by what is drawn: its height is now its width
+  const turned = alignEls([box("t", 100, 100, 200, 40, { rotation: 90 })], ["t"], "left", { w: 1080, h: 1080 })[0];
+  assert.equal(Math.round(aabb(turned).x) + 0, 0);
+  const d = distributeEls([box("a", 0, 0, 100, 10), box("b", 150, 0, 100, 10), box("c", 700, 0, 100, 10)], ["a", "b", "c"], "x");
+  assert.deepEqual(d.map((e) => e.x), [0, 350, 700]);
+  assert.equal(distributeEls(els, ["a", "b"], "x"), els);
+});
+
+test("distribute: locked ones are left out, the rest still get equal gaps", () => {
+  const box = (id: string, x: number, more = {}) => ({ id, kind: "shape", name: id, x, y: 0, w: 100, h: 10, fill: { kind: "solid", color: "#000000" }, ...more }) as El;
+  const d = distributeEls([box("a", 0), box("b", 150, { locked: true }), box("c", 400), box("d", 700)], ["a", "b", "c", "d"], "x");
+  assert.deepEqual(d.map((e) => e.x), [0, 150, 350, 700]);
 });

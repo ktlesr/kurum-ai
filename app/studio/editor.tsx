@@ -3,11 +3,17 @@
 // The studio canvas: the same primitives the export draws (lib/studio draw), as React SVG, plus selection, move,
 // resize handles, snapping guides and in-place text editing. Coordinates are design pixels (the SVG viewBox).
 import { useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { FONT_FAMILY, FORMATS, dashOf, draw, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl } from "@/lib/studio";
+import { FONT_FAMILY, FORMATS, aabb, dashOf, draw, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl } from "@/lib/studio";
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 type Box = { x: number; y: number; w: number; h: number };
-type Drag = { mode: "move" | "resize" | "rotate"; id: string; handle?: Handle; px: number; py: number; box: Box; ratio: number; rot: number; moved: boolean };
+type Drag = {
+  mode: "move" | "resize" | "rotate" | "marquee"; id: string; handle?: Handle; px: number; py: number; box: Box; ratio: number; rot: number; moved: boolean;
+  /** move: every chosen unlocked element's starting place (they move together); marquee: Shift adds to the choice. */
+  group?: { id: string; x: number; y: number }[]; add?: boolean;
+  /** marquee started on a locked element (the background): a click without dragging chooses that element. */
+  under?: string;
+};
 /** (x, y) turned by `deg` around (cx, cy). */
 const turn = (x: number, y: number, cx: number, cy: number, deg: number) => {
   const a = (deg * Math.PI) / 180;
@@ -103,8 +109,9 @@ interface Props {
   format: FormatId;
   els: El[];
   measure: Measure;
-  selected: string | null;
-  onSelect: (id: string | null) => void;
+  /** The chosen elements (several: Shift/Ctrl+click or a box dragged on the empty canvas). */
+  selected: string[];
+  onSelect: (ids: string[]) => void;
   /** commit: the end of a gesture (one undo step); otherwise a live update while dragging or typing. */
   onChange: (els: El[], commit: boolean) => void;
   editing: string | null;
@@ -144,11 +151,27 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
   const start = (e: RPointerEvent, el: El, mode: Drag["mode"], handle?: Handle) => {
     e.stopPropagation();
     if (e.button !== 0) return;
-    onSelect(el.id);
+    // Shift/Ctrl+click adds or removes it; a click on one of several chosen keeps them all (to drag them together).
+    // A locked element (the background) can't move: dragging on it chooses with a box, a click chooses it.
+    if (mode === "move" && el.locked) return startMarquee(e, el.id);
+    if (mode === "move" && (e.shiftKey || e.ctrlKey || e.metaKey)) return onSelect(selected.includes(el.id) ? selected.filter((x) => x !== el.id) : [...selected, el.id]);
+    const ids = mode === "move" && selected.includes(el.id) ? selected : [el.id];
+    if (ids !== selected) onSelect(ids);
     if (el.locked || editing === el.id) return;
     const p = point(e);
-    drag.current = { mode, id: el.id, handle, px: p.x, py: p.y, box: { x: el.x, y: el.y, w: el.w, h: el.h }, ratio: el.w / el.h, rot: rotOf(el), moved: false };
+    const group = mode === "move" ? live.current.filter((x) => ids.includes(x.id) && !x.locked).map((x) => ({ id: x.id, x: x.x, y: x.y })) : undefined;
+    drag.current = { mode, id: el.id, handle, px: p.x, py: p.y, box: { x: el.x, y: el.y, w: el.w, h: el.h }, ratio: el.w / el.h, rot: rotOf(el), moved: false, group };
   };
+  /** On the empty canvas: a box that chooses what it fully covers. */
+  const startMarquee = (e: RPointerEvent, under?: string) => {
+    if (e.button !== 0) return;
+    if (editing) onEditing(null);
+    const add = e.shiftKey || e.ctrlKey || e.metaKey;
+    if (!add) onSelect([]);
+    const p = point(e);
+    drag.current = { mode: "marquee", id: "", px: p.x, py: p.y, box: { x: p.x, y: p.y, w: 0, h: 0 }, ratio: 1, rot: 0, moved: false, add, under };
+  };
+  const [marquee, setMarquee] = useState<Box | null>(null);
 
   const move = (e: RPointerEvent) => {
     const d = drag.current;
@@ -160,10 +183,15 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
     // Captured only once it is a drag: a plain click (and a double click to edit) stays on the element.
     if (!d.moved) svg.current?.setPointerCapture(e.pointerId);
     d.moved = true;
+    if (d.mode === "marquee") {
+      setMarquee({ x: Math.min(p.x, d.px), y: Math.min(p.y, d.py), w: Math.abs(dx), h: Math.abs(dy) });
+      return;
+    }
     const el = live.current.find((x) => x.id === d.id);
     if (!el) return;
     const thr = 8 * scale;
-    const others = live.current.filter((x) => x.id !== d.id && !x.locked);
+    const moving = new Set(d.group?.map((g) => g.id) ?? [d.id]);
+    const others = live.current.filter((x) => !moving.has(x.id) && !x.locked);
     const vLines = [0, W / 2, W, ...others.flatMap((o) => [o.x, o.x + o.w / 2, o.x + o.w])];
     const hLines = [0, H / 2, H, ...others.flatMap((o) => [o.y, o.y + o.h / 2, o.y + o.h])];
     const snap = (vals: number[], lines: number[]) => {
@@ -183,6 +211,33 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
       else for (const q of [0, 90, 180, 270, 360]) if (Math.abs(deg - q) < 3) deg = q;
       deg %= 360;
       onChange(live.current.map((x) => (x.id === d.id ? ({ ...x, rotation: deg ? Math.round(deg * 10) / 10 : undefined } as El) : x)), false);
+      return;
+    }
+    if (d.mode === "move" && d.group && d.group.length > 1) {
+      // Together: the box around all of them snaps, and every one moves by the same amount.
+      const from = d.group.map((g) => {
+        const x = live.current.find((q) => q.id === g.id)!;
+        return aabb({ ...x, x: g.x, y: g.y });
+      });
+      const gx = Math.min(...from.map((q) => q.x)) + dx;
+      const gy = Math.min(...from.map((q) => q.y)) + dy;
+      const gw = Math.max(...from.map((q) => q.x + q.w)) + dx - gx;
+      const gh = Math.max(...from.map((q) => q.y + q.h)) + dy - gy;
+      if (!e.altKey) {
+        const sx = snap([gx, gx + gw / 2, gx + gw], vLines);
+        const sy = snap([gy, gy + gh / 2, gy + gh], hLines);
+        if (sx) {
+          dx += sx.delta;
+          g.v.push(sx.line);
+        }
+        if (sy) {
+          dy += sy.delta;
+          g.h.push(sy.line);
+        }
+      }
+      setGuides(g);
+      const at = new Map(d.group.map((q) => [q.id, q]));
+      onChange(live.current.map((x) => (at.has(x.id) ? ({ ...x, x: at.get(x.id)!.x + dx, y: at.get(x.id)!.y + dy } as El) : x)), false);
       return;
     }
     if (d.mode === "move") {
@@ -245,10 +300,26 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
     drag.current = null;
     if (svg.current?.hasPointerCapture(e.pointerId)) svg.current.releasePointerCapture(e.pointerId);
     setGuides({ v: [], h: [] });
+    if (d?.mode === "marquee") {
+      setMarquee(null);
+      if (!d.moved) {
+        if (d.under) onSelect(!d.add ? [d.under] : selected.includes(d.under) ? selected.filter((x) => x !== d.under) : [...selected, d.under]);
+        return;
+      }
+      const p = point(e);
+      const box = { x: Math.min(p.x, d.px), y: Math.min(p.y, d.py), x2: Math.max(p.x, d.px), y2: Math.max(p.y, d.py) };
+      const inside = live.current.filter((x) => {
+        const b = aabb(x);
+        return !x.locked && b.x >= box.x && b.y >= box.y && b.x + b.w <= box.x2 && b.y + b.h <= box.y2;
+      }).map((x) => x.id);
+      onSelect(d.add ? [...new Set([...selected, ...inside])] : inside);
+      return;
+    }
     if (d?.moved) onChange(live.current, true);
   };
 
-  const sel = els.find((e) => e.id === selected);
+  const chosen = els.filter((e) => selected.includes(e.id));
+  const sel = chosen.length === 1 ? chosen[0] : undefined;
   const editEl = els.find((e) => e.id === editing && e.kind === "text") as TextEl | undefined;
   const prims = draw(editEl ? els.map((e) => (e.id === editEl.id ? { ...e, text: "" } : e)) : els, measure);
   const hs = 11 * scale; // handle size on screen ≈ 11 px
@@ -260,15 +331,12 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
       viewBox={`0 0 ${W} ${H}`}
       className="block max-h-full max-w-full touch-none select-none rounded-lg bg-white shadow-[0_8px_40px_rgb(20_38_61/0.18)]"
       style={{ aspectRatio: `${W} / ${H}` }}
-      onPointerDown={() => {
-        onSelect(null);
-        if (editing) onEditing(null);
-      }}
+      onPointerDown={(e) => startMarquee(e)}
       onPointerMove={move}
       onContextMenu={(e) => {
         if ((e.target as Element).closest("textarea")) return; // the text being edited keeps the browser's menu
         e.preventDefault();
-        onSelect(null);
+        onSelect([]);
         onMenu?.(null, e.clientX, e.clientY);
       }}
       onPointerUp={end}
@@ -297,7 +365,8 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            onSelect(el.id);
+            // On one of several chosen: the menu for all of them.
+            if (!selected.includes(el.id)) onSelect([el.id]);
             onMenu?.(el.id, e.clientX, e.clientY);
           }}
           onDoubleClick={(e) => {
@@ -309,6 +378,21 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
 
       {guides.v.map((x, i) => <line key={`v${i}`} x1={x} x2={x} y1={0} y2={H} stroke="#e11d48" strokeWidth={stroke} strokeDasharray={`${6 * scale} ${4 * scale}`} pointerEvents="none" />)}
       {guides.h.map((y, i) => <line key={`h${i}`} y1={y} y2={y} x1={0} x2={W} stroke="#e11d48" strokeWidth={stroke} strokeDasharray={`${6 * scale} ${4 * scale}`} pointerEvents="none" />)}
+
+      {chosen.length > 1 && (
+        <g pointerEvents="none">
+          {chosen.map((c) => (
+            <rect key={c.id} x={c.x} y={c.y} width={c.w} height={c.h} transform={rotAttr(c)} fill="none" stroke="#3b82f6" strokeWidth={stroke} strokeDasharray={c.locked ? `${4 * scale} ${4 * scale}` : undefined} />
+          ))}
+          {(() => {
+            const bs = chosen.map(aabb);
+            const x = Math.min(...bs.map((b) => b.x));
+            const y = Math.min(...bs.map((b) => b.y));
+            return <rect x={x} y={y} width={Math.max(...bs.map((b) => b.x + b.w)) - x} height={Math.max(...bs.map((b) => b.y + b.h)) - y} fill="none" stroke="#3b82f6" strokeWidth={stroke * 1.4} strokeDasharray={`${6 * scale} ${4 * scale}`} />;
+          })()}
+        </g>
+      )}
+      {marquee && <rect x={marquee.x} y={marquee.y} width={marquee.w} height={marquee.h} fill="rgb(59 130 246 / 0.08)" stroke="#3b82f6" strokeWidth={stroke} pointerEvents="none" />}
 
       {sel && (
         <g

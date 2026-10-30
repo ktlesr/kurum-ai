@@ -8,7 +8,7 @@ import Link from "next/link";
 import {
   AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight,
   AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, ClipboardPaste, Copy, Download, FolderOpen, Image as ImageIcon,
-  FlipHorizontal2, FlipVertical2, Italic, MoveDown, MoveUp, Paintbrush, Pencil, RotateCcw, Scissors, Underline,
+  AlignHorizontalSpaceAround, AlignVerticalSpaceAround, BoxSelect, FlipHorizontal2, FlipVertical2, Italic, MoveDown, MoveUp, Paintbrush, Pencil, RotateCcw, Scissors, Underline,
   ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Library, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import { ThemeToggle } from "../theme-toggle";
@@ -20,7 +20,7 @@ import { listWorks, removeWork, saveWork, thumbnail, type Work } from "./works";
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, SHAPES, TEMPLATES, cleanEls, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type ShapeId,
+  DEFAULT_BRAND, FORMATS, LIMITS, SHAPES, TEMPLATES, aabb, alignEls, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type ShapeId,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
@@ -78,7 +78,11 @@ export default function Studio({ username }: { username: string }) {
   const [els, setEls] = useState<El[] | null>(null);
   // Undo history: the elements with the canvas format they were laid out for.
   const [hist, setHist] = useState<{ past: Snap[]; future: Snap[] }>({ past: [], future: [] });
-  const [selected, setSelected] = useState<string | null>(null);
+  // The chosen elements; one of them alone gets the inspector, several get the alignment panel.
+  const [picked, setPicked] = useState<string[]>([]);
+  const [alignCanvas, setAlignCanvas] = useState(false); // several chosen: to each other, or to the canvas
+  const selected = picked.length === 1 ? picked[0] : null;
+  const setSelected = (id: string | null) => setPicked(id ? [id] : []);
   const [editing, setEditing] = useState<string | null>(null);
   const [brief, setBrief] = useState("");
   // The user's own uploaded documents (TASK-025): a poster can be written from one; each field shows its page.
@@ -117,7 +121,7 @@ export default function Studio({ username }: { username: string }) {
   const gesture = useRef<Snap | null>(null); // the design when a drag or typing started (its undo point)
   // Right-click menu, its items built when it opens (from an event, with the design as it is then); the element and style clipboards live only in this page.
   const [menu, setMenu] = useState<{ items: MenuItem[]; x: number; y: number; view: El[] } | null>(null);
-  const [clip, setClip] = useState<El | null>(null);
+  const [clip, setClip] = useState<El[] | null>(null);
   const [styleClip, setStyleClip] = useState<El | null>(null);
   const replaceTarget = useRef<string | null>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
@@ -147,7 +151,7 @@ export default function Studio({ username }: { username: string }) {
   const generated = useMemo(() => (font ? fromTemplate({ template, format, content, brand, photo }, font.measure) : []), [font, template, format, content, brand, photo]);
   const view = els ?? generated;
   // The latest committed state for callbacks that run later (a suggestion arriving, undo from the keyboard).
-  const now = useRef({ view, els, format, hist, clip: null as El | null });
+  const now = useRef({ view, els, format, hist, clip: null as El[] | null });
   useLayoutEffect(() => {
     now.current = { view, els, format, hist, clip };
   });
@@ -172,7 +176,7 @@ export default function Studio({ username }: { username: string }) {
     setMenu(null);
     setFormat(s.format);
     setEls(s.els);
-    setSelected((id) => (s.els.some((e) => e.id === id) ? id : null)); // still there: stays selected
+    setPicked((ids) => ids.filter((id) => s.els.some((e) => e.id === id))); // still there: stays chosen
     setEditing(null);
   };
   const undo = () => {
@@ -327,43 +331,106 @@ export default function Studio({ username }: { username: string }) {
     }
   };
 
-  const remove = (id: string) => {
-    change(view.filter((e) => e.id !== id));
-    setSelected(null);
+  /** Ids that may change: the given ones that aren't locked. */
+  const free = (ids: string[]) => ids.filter((id) => view.some((e) => e.id === id && !e.locked));
+  const remove = (ids: string[]) => {
+    const gone = new Set(free(ids));
+    if (!gone.size) return;
+    change(view.filter((e) => !gone.has(e.id)));
+    setPicked([]);
   };
-  const duplicate = (id: string) => {
-    const e = view.find((x) => x.id === id);
-    if (!e) return;
-    const copy = { ...e, id: newId(), x: e.x + 24 * u, y: e.y + 24 * u, locked: false } as El;
-    const i = view.indexOf(e);
-    change([...view.slice(0, i + 1), copy, ...view.slice(i + 1)]);
-    setSelected(copy.id);
+  const duplicate = (ids: string[]) => {
+    const set = new Set(free(ids));
+    const copies: string[] = [];
+    // Each copy right above its original, a little lower right.
+    const next = view.flatMap((e) => {
+      if (!set.has(e.id)) return [e];
+      const c = { ...e, id: newId(), x: e.x + 24 * u, y: e.y + 24 * u, locked: false } as El;
+      copies.push(c.id);
+      return [e, c];
+    });
+    if (!copies.length) return;
+    change(next);
+    setPicked(copies);
   };
-  const reorder = (id: string, to: "front" | "back" | "up" | "down") => {
-    const i = view.findIndex((e) => e.id === id);
-    if (i < 0) return;
-    const rest = view.filter((e) => e.id !== id);
-    // Locked backgrounds stay at the bottom: "back" means just above them.
-    const floor = rest.findIndex((e) => !e.locked);
-    const j = to === "front" ? rest.length : to === "back" ? Math.max(0, floor) : to === "up" ? Math.min(rest.length, i + 1) : Math.max(0, i - 1);
-    change([...rest.slice(0, j), view[i], ...rest.slice(j)]);
+  const reorder = (ids: string[], to: "front" | "back" | "up" | "down") => {
+    const set = new Set(free(ids));
+    if (!set.size) return;
+    let next: El[];
+    if (to === "up" || to === "down") {
+      // One step each, keeping their order; one already at the edge stays.
+      next = [...view];
+      const order = to === "up" ? [...next.keys()].reverse() : [...next.keys()];
+      for (const i of order) {
+        const j = to === "up" ? i + 1 : i - 1;
+        if (!set.has(next[i].id) || j < 0 || j >= next.length || set.has(next[j].id)) continue;
+        if (to === "down" && next[j].locked) continue; // locked backgrounds stay at the bottom
+        [next[i], next[j]] = [next[j], next[i]];
+      }
+    } else {
+      const moving = view.filter((e) => set.has(e.id));
+      const rest = view.filter((e) => !set.has(e.id));
+      // Locked backgrounds stay at the bottom: "back" means just above them.
+      const floor = rest.findIndex((e) => !e.locked);
+      const j = to === "front" ? rest.length : floor < 0 ? rest.length : floor;
+      next = [...rest.slice(0, j), ...moving, ...rest.slice(j)];
+    }
+    change(next);
   };
 
-  const copyEl = (id: string) => {
-    setClip(view.find((e) => e.id === id) ?? null);
+  const copyEl = (ids: string[]) => {
+    const list = view.filter((e) => ids.includes(e.id));
+    if (list.length) setClip(list);
   };
-  /** The copy lands a little lower right, inside the canvas (it may come from another format). */
+  /** Cut: only what can be removed goes to the clipboard (locked ones stay, and aren't copied either). */
+  const cut = (ids: string[]) => {
+    const f = free(ids);
+    if (!f.length) return;
+    copyEl(f);
+    remove(f);
+  };
+  /** The copies land a little lower right, inside the canvas (they may come from another format). */
   const paste = () => {
-    const e = now.current.clip;
-    if (!e) return;
-    // Bigger than this canvas (copied from another format): a picture or shape shrinks with its ratio; a text box gets
-    // narrower and its final height comes from the wrapped lines.
-    const k = e.kind === "text" ? 1 : Math.min(1, W / e.w, H / e.h);
-    const w = e.kind === "text" ? Math.min(e.w, W) : e.w * k;
-    const c = { ...e, id: newId(), w, h: e.h * k, locked: false } as El;
-    const sized = font ? hug([c], font.measure)[0] : c;
-    // Taller than the canvas (a long text): from the top; its height stays what the text needs.
-    add({ ...sized, x: Math.min(Math.max(0, e.x + 24 * u), W - w), y: Math.min(Math.max(0, e.y + 24 * u), Math.max(0, H - sized.h)) } as El);
+    const list = now.current.clip;
+    if (!list?.length) return;
+    const sized = list.map((e) => {
+      // Bigger than this canvas (copied from another format): a picture or shape shrinks with its ratio; a text box
+      // gets narrower and its final height comes from the wrapped lines.
+      const k = e.kind === "text" ? 1 : Math.min(1, W / e.w, H / e.h);
+      const c = { ...e, id: newId(), w: e.kind === "text" ? Math.min(e.w, W) : e.w * k, h: e.h * k, x: e.x + 24 * u, y: e.y + 24 * u, locked: false } as El;
+      return font ? hug([c], font.measure)[0] : c;
+    });
+    // One shift for all of them, so they keep their arrangement: inside the canvas where they fit, else from the
+    // top left (a long text taller than the canvas keeps the height it needs).
+    const bs = sized.map(aabb);
+    const [x0, y0] = [Math.min(...bs.map((b) => b.x)), Math.min(...bs.map((b) => b.y))];
+    const [x1, y1] = [Math.max(...bs.map((b) => b.x + b.w)), Math.max(...bs.map((b) => b.y + b.h))];
+    const dx = x1 - x0 > W ? -x0 : Math.min(Math.max(0, x0), W - (x1 - x0)) - x0;
+    const dy = y1 - y0 > H ? -y0 : Math.min(Math.max(0, y0), H - (y1 - y0)) - y0;
+    const added = sized.map((e) => ({ ...e, x: e.x + dx, y: e.y + dy }) as El);
+    change([...view, ...added]);
+    setPicked(added.map((e) => e.id));
+  };
+  /** Several chosen: to each other (or the canvas); one: to the canvas. */
+  const alignMany = (ids: string[], how: AlignTo, toCanvas = ids.length < 2) => change(alignEls(view, ids, how, toCanvas ? { w: W, h: H } : undefined));
+  const distribute = (ids: string[], axis: "x" | "y") => change(distributeEls(view, ids, axis));
+  /** Same width or height as the first chosen (pictures keep their ratio). */
+  const sameSize = (ids: string[], dim: "w" | "h") => {
+    const first = view.find((e) => e.id === ids[0]);
+    if (!first) return;
+    const set = new Set(free(ids.slice(1)));
+    change(
+      view.map((e) =>
+        set.has(e.id)
+          ? ({
+              ...e, [dim]: first[dim],
+              ...(e.kind === "image" ? (dim === "w" ? { h: (first.w * e.h) / e.w } : { w: (first.h * e.w) / e.h }) : {}),
+              // A text box that follows its lines would grow back: with a set height its text fits the box instead.
+              ...(e.kind === "text" && dim === "h" && !e.bg ? { auto: true } : {}),
+            } as El)
+          : e,
+      ),
+    );
   };
   /** Looks without content: colours, type, corners, transparency (same kind of element only). */
   const styleOf = (e: El): Partial<El> =>
@@ -383,11 +450,7 @@ export default function Studio({ username }: { username: string }) {
     }
     patch(id, st);
   };
-  const align = (id: string, p: "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom") => {
-    const e = view.find((x) => x.id === id);
-    if (!e) return;
-    patch(id, { left: { x: 0 }, hcenter: { x: (W - e.w) / 2 }, right: { x: W - e.w }, top: { y: 0 }, vcenter: { y: (H - e.h) / 2 }, bottom: { y: H - e.h } }[p]);
-  };
+
   const openMenuFor = (id: string) => {
     const e = view.find((x) => x.id === id);
     const m = document.querySelector<SVGSVGElement>('svg[role="application"]')?.getScreenCTM();
@@ -395,11 +458,20 @@ export default function Studio({ username }: { username: string }) {
     const pt = new DOMPoint(e.x + e.w / 2, e.y + e.h / 2).matrixTransform(m);
     setMenu({ items: menuItems(id), x: pt.x, y: pt.y, view });
   };
+  const ALIGNS: [AlignTo, string, ReactNode][] = [
+    ["left", "Sola hizala", <AlignStartVertical key="l" size={14} />],
+    ["hcenter", "Yatayda ortala", <AlignCenterVertical key="h" size={14} />],
+    ["right", "Sağa hizala", <AlignEndVertical key="r" size={14} />],
+    ["top", "Üste hizala", <AlignStartHorizontal key="t" size={14} />],
+    ["vcenter", "Dikeyde ortala", <AlignCenterHorizontal key="v" size={14} />],
+    ["bottom", "Alta hizala", <AlignEndHorizontal key="b" size={14} />],
+  ];
   const menuItems = (id: string | null): MenuItem[] => {
     const e = id ? view.find((x) => x.id === id) : undefined;
     if (!e)
       return [
         { label: "Yapıştır", icon: <ClipboardPaste size={14} />, keys: "Ctrl+V", run: paste, disabled: !clip },
+        { label: "Tümünü seç", icon: <BoxSelect size={14} />, keys: "Ctrl+A", run: () => setPicked(view.filter((x) => !x.locked).map((x) => x.id)) },
         "-",
         { label: "Metin ekle", icon: <Type size={14} />, run: addText },
         { label: "Şekil ekle", icon: <Shapes size={14} />, run: () => addShape() },
@@ -408,29 +480,44 @@ export default function Studio({ username }: { username: string }) {
         { label: "Geri al", icon: <Undo2 size={14} />, keys: "Ctrl+Z", run: undo, disabled: !hist.past.length },
         { label: "Yinele", icon: <Redo2 size={14} />, keys: "Ctrl+Y", run: redo, disabled: !hist.future.length },
       ];
+    // On one of several chosen: actions for all of them.
+    const ids = picked.length > 1 && picked.includes(e.id) ? picked : [e.id];
+    if (ids.length > 1) {
+      const none = !free(ids).length;
+      return [
+        { label: "Kes", icon: <Scissors size={14} />, keys: "Ctrl+X", run: () => cut(ids), disabled: none },
+        { label: "Kopyala", icon: <Copy size={14} />, keys: "Ctrl+C", run: () => copyEl(ids) },
+        { label: "Çoğalt", icon: <Copy size={14} />, keys: "Ctrl+D", run: () => duplicate(ids), disabled: none },
+        "-",
+        ...ALIGNS.map(([how, label, icon]): MenuItem => ({ label: `${label} (birbirine göre)`, icon, run: () => alignMany(ids, how), disabled: none })),
+        { label: "Yatayda eşit aralık", icon: <AlignHorizontalSpaceAround size={14} />, run: () => distribute(ids, "x"), disabled: none || ids.length < 3 },
+        { label: "Dikeyde eşit aralık", icon: <AlignVerticalSpaceAround size={14} />, run: () => distribute(ids, "y"), disabled: none || ids.length < 3 },
+        "-",
+        { label: "En öne getir", icon: <ArrowUpToLine size={14} />, run: () => reorder(ids, "front"), disabled: none },
+        { label: "En arkaya gönder", icon: <ArrowDownToLine size={14} />, run: () => reorder(ids, "back"), disabled: none },
+        "-",
+        { label: "Hepsini kilitle", icon: <Lock size={14} />, run: () => change(view.map((x) => (ids.includes(x.id) ? { ...x, locked: true } : x))) },
+        { label: "Sil", icon: <Trash2 size={14} />, keys: "Delete", run: () => remove(ids), disabled: none, danger: true },
+      ];
+    }
     const L = e.locked;
     const same = styleClip?.kind === e.kind;
     return [
       ...(e.kind === "text" ? [{ label: "Metni düzenle", icon: <Pencil size={14} />, keys: "Enter", run: () => setEditing(e.id), disabled: L } as MenuItem, "-" as const] : []),
-      { label: "Kes", icon: <Scissors size={14} />, keys: "Ctrl+X", run: () => (copyEl(e.id), remove(e.id)), disabled: L },
-      { label: "Kopyala", icon: <Copy size={14} />, keys: "Ctrl+C", run: () => copyEl(e.id) },
+      { label: "Kes", icon: <Scissors size={14} />, keys: "Ctrl+X", run: () => cut(ids), disabled: L },
+      { label: "Kopyala", icon: <Copy size={14} />, keys: "Ctrl+C", run: () => copyEl(ids) },
       { label: "Yapıştır", icon: <ClipboardPaste size={14} />, keys: "Ctrl+V", run: paste, disabled: !clip },
-      { label: "Çoğalt", icon: <Copy size={14} />, keys: "Ctrl+D", run: () => duplicate(e.id), disabled: L },
+      { label: "Çoğalt", icon: <Copy size={14} />, keys: "Ctrl+D", run: () => duplicate(ids), disabled: L },
       "-",
       { label: "Stili kopyala", icon: <Paintbrush size={14} />, run: () => setStyleClip(e) },
       { label: "Stili yapıştır", icon: <Paintbrush size={14} />, run: () => pasteStyle(e.id), disabled: L || !same },
       "-",
-      { label: "En öne getir", icon: <ArrowUpToLine size={14} />, run: () => reorder(e.id, "front"), disabled: L },
-      { label: "Bir öne", icon: <MoveUp size={14} />, run: () => reorder(e.id, "up"), disabled: L },
-      { label: "Bir geri", icon: <MoveDown size={14} />, run: () => reorder(e.id, "down"), disabled: L },
-      { label: "En arkaya gönder", icon: <ArrowDownToLine size={14} />, run: () => reorder(e.id, "back"), disabled: L },
+      { label: "En öne getir", icon: <ArrowUpToLine size={14} />, run: () => reorder(ids, "front"), disabled: L },
+      { label: "Bir öne", icon: <MoveUp size={14} />, run: () => reorder(ids, "up"), disabled: L },
+      { label: "Bir geri", icon: <MoveDown size={14} />, run: () => reorder(ids, "down"), disabled: L },
+      { label: "En arkaya gönder", icon: <ArrowDownToLine size={14} />, run: () => reorder(ids, "back"), disabled: L },
       "-",
-      { label: "Sola hizala", icon: <AlignStartVertical size={14} />, run: () => align(e.id, "left"), disabled: L },
-      { label: "Yatayda ortala", icon: <AlignCenterVertical size={14} />, run: () => align(e.id, "hcenter"), disabled: L },
-      { label: "Sağa hizala", icon: <AlignEndVertical size={14} />, run: () => align(e.id, "right"), disabled: L },
-      { label: "Üste hizala", icon: <AlignStartHorizontal size={14} />, run: () => align(e.id, "top"), disabled: L },
-      { label: "Dikeyde ortala", icon: <AlignCenterHorizontal size={14} />, run: () => align(e.id, "vcenter"), disabled: L },
-      { label: "Alta hizala", icon: <AlignEndHorizontal size={14} />, run: () => align(e.id, "bottom"), disabled: L },
+      ...ALIGNS.map(([how, label, icon]): MenuItem => ({ label: `${label} (tuvale göre)`, icon, run: () => alignMany(ids, how), disabled: L })),
       ...(e.kind === "image"
         ? (["-",
             { label: "Görseli değiştir…", icon: <ImagePlus size={14} />, run: () => {
@@ -445,11 +532,12 @@ export default function Studio({ username }: { username: string }) {
         : []),
       "-",
       { label: L ? "Kilidi aç" : "Kilitle", icon: L ? <LockOpen size={14} /> : <Lock size={14} />, run: () => patch(e.id, { locked: !L }) },
-      { label: "Sil", icon: <Trash2 size={14} />, keys: "Delete", run: () => remove(e.id), disabled: L, danger: true },
+      { label: "Sil", icon: <Trash2 size={14} />, keys: "Delete", run: () => remove(ids), disabled: L, danger: true },
     ];
   };
 
-  // Keyboard: arrows nudge (Shift: 10 px), Delete, Ctrl+Z / Ctrl+Y, Ctrl+D, Ctrl+C/X/V, Escape, menu key / Shift+F10.
+  // Keyboard: arrows nudge (Shift: 10 px), Delete, Ctrl+Z / Ctrl+Y, Ctrl+D, Ctrl+A, Ctrl+C/X/V, Escape, menu key /
+  // Shift+F10; with several chosen, they all move, copy and go together.
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   function onKey(e: KeyboardEvent) {
     if (library) return; // the dialog has the keyboard; the canvas behind it doesn't change
@@ -459,20 +547,22 @@ export default function Studio({ username }: { username: string }) {
     if (mod && e.key.toLowerCase() === "z") return e.preventDefault(), e.shiftKey ? redo() : undo();
     if (mod && e.key.toLowerCase() === "y") return e.preventDefault(), redo();
     if (mod && e.key.toLowerCase() === "v") return e.preventDefault(), paste();
-    if (!sel) return;
-    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) return e.preventDefault(), openMenuFor(sel.id);
-    if (mod && e.key.toLowerCase() === "c") return e.preventDefault(), copyEl(sel.id);
-    if (e.key === "Escape") return setSelected(null);
-    if (sel.locked) return;
-    if (mod && e.key.toLowerCase() === "d") return e.preventDefault(), duplicate(sel.id);
-    if (mod && e.key.toLowerCase() === "x") return e.preventDefault(), copyEl(sel.id), remove(sel.id);
-    if (e.key === "Delete" || e.key === "Backspace") return e.preventDefault(), remove(sel.id);
-    if (e.key === "Enter" && sel.kind === "text") return e.preventDefault(), setEditing(sel.id);
+    if (mod && e.key.toLowerCase() === "a") return e.preventDefault(), setPicked(view.filter((x) => !x.locked).map((x) => x.id));
+    const ids = picked.filter((id) => view.some((x) => x.id === id));
+    if (!ids.length) return;
+    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) return e.preventDefault(), openMenuFor(ids[ids.length - 1]);
+    if (mod && e.key.toLowerCase() === "c") return e.preventDefault(), copyEl(ids);
+    if (e.key === "Escape") return setPicked([]);
+    if (mod && e.key.toLowerCase() === "d") return e.preventDefault(), duplicate(ids);
+    if (mod && e.key.toLowerCase() === "x") return e.preventDefault(), cut(ids);
+    if (e.key === "Delete" || e.key === "Backspace") return e.preventDefault(), remove(ids);
+    if (e.key === "Enter" && sel?.kind === "text" && !sel.locked) return e.preventDefault(), setEditing(sel.id);
     const step = e.shiftKey ? 10 : 1;
     const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
-    if (d) {
+    const move = new Set(free(ids));
+    if (d && move.size) {
       e.preventDefault();
-      patch(sel.id, { x: sel.x + d[0], y: sel.y + d[1] });
+      change(view.map((x) => (move.has(x.id) ? ({ ...x, x: x.x + d[0], y: x.y + d[1] } as El) : x)));
     }
   }
   useLayoutEffect(() => {
@@ -885,7 +975,7 @@ export default function Studio({ username }: { username: string }) {
           <div className="flex min-h-0 flex-1 items-center justify-center p-4 md:p-8" style={{ backgroundImage: "radial-gradient(var(--line) 1px, transparent 1px)", backgroundSize: "18px 18px" }} onPointerDown={() => { setSelected(null); setEditing(null); }}>
             {font ? (
               <div className="flex max-h-full max-w-full" style={{ aspectRatio: `${W} / ${H}`, height: "100%" }} onPointerDown={(e) => e.stopPropagation()}>
-                <Editor format={format} els={view} measure={font.measure} selected={selected} onSelect={setSelected} onChange={change} editing={editing} onEditing={setEditing} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
+                <Editor format={format} els={view} measure={font.measure} selected={picked} onSelect={setPicked} onChange={change} editing={editing} onEditing={setEditing} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
               </div>
             ) : (
               <p className="flex items-center gap-2 text-sm text-muted">{fontError || <><Loader2 size={16} className="animate-spin" /> Hazırlanıyor…</>}</p>
@@ -908,8 +998,42 @@ export default function Studio({ username }: { username: string }) {
 
         {/* Right: the selected element, then all layers */}
         <aside className="order-3 min-h-0 overflow-y-auto border-line bg-panel lg:w-[290px] lg:shrink-0 lg:border-l">
-          {sel ? (
-            <Inspector key={sel.id} el={sel} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={(p, commit) => patch(sel.id, p, commit)} onCommit={() => change(view)} onRemove={() => remove(sel.id)} onDuplicate={() => duplicate(sel.id)} onOrder={(to) => reorder(sel.id, to)} onReplace={(f) => replacePicture(sel.id, f)} />
+          {picked.length > 1 ? (
+            <section className={section} aria-labelledby="t-multi">
+              <div className="flex items-center justify-between gap-2">
+                <h2 id="t-multi" className={heading}>{picked.length} öğe seçili</h2>
+                <div className="flex">
+                  <button className={iconBtn} onClick={() => duplicate(picked)} aria-label="Hepsini çoğalt" title="Çoğalt (Ctrl+D)"><Copy size={15} /></button>
+                  <button className={`${iconBtn} hover:text-danger`} onClick={() => remove(picked)} aria-label="Hepsini sil" title="Sil (Delete)"><Trash2 size={15} /></button>
+                </div>
+              </div>
+              <div role="group" aria-label="Hizalama referansı" className="flex rounded-lg border border-line bg-subtle p-0.5">
+                <button className={`flex-1 ${chip(!alignCanvas)}`} aria-pressed={!alignCanvas} onClick={() => setAlignCanvas(false)}>Birbirine göre</button>
+                <button className={`flex-1 ${chip(alignCanvas)}`} aria-pressed={alignCanvas} onClick={() => setAlignCanvas(true)}>Tuvale göre</button>
+              </div>
+              <div role="group" aria-label="Hizala" className="grid grid-cols-6 gap-0.5">
+                {ALIGNS.map(([how, label, icon]) => (
+                  <button key={how} className={iconBtn} onClick={() => alignMany(picked, how, alignCanvas)} aria-label={label} title={label}>{icon}</button>
+                ))}
+              </div>
+              <div role="group" aria-label="Dağıt" className="grid grid-cols-2 gap-1.5">
+                <button className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-line text-xs hover:border-accent hover:text-accent disabled:opacity-40" disabled={picked.length < 3} onClick={() => distribute(picked, "x")} title="En az 3 öğe">
+                  <AlignHorizontalSpaceAround size={14} /> Yatay eşit aralık
+                </button>
+                <button className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-line text-xs hover:border-accent hover:text-accent disabled:opacity-40" disabled={picked.length < 3} onClick={() => distribute(picked, "y")} title="En az 3 öğe">
+                  <AlignVerticalSpaceAround size={14} /> Dikey eşit aralık
+                </button>
+                <button className="h-8 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => sameSize(picked, "w")}>Aynı genişlik</button>
+                <button className="h-8 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => sameSize(picked, "h")}>Aynı yükseklik</button>
+              </div>
+              <div role="group" aria-label="Katman sırası" className="flex gap-1.5">
+                <button className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => reorder(picked, "front")}><ArrowUpToLine size={13} /> En öne</button>
+                <button className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md border border-line text-xs hover:border-accent hover:text-accent" onClick={() => reorder(picked, "back")}><ArrowDownToLine size={13} /> En arkaya</button>
+              </div>
+              <p className="text-xs text-muted">Shift ya da Ctrl ile tıklayarak seçime ekleyip çıkarın; boş alanda sürükleyerek kutu içindekileri seçin. Aynı boyut ilk seçilene göre yapılır.</p>
+            </section>
+          ) : sel ? (
+            <Inspector key={sel.id} el={sel} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={(p, commit) => patch(sel.id, p, commit)} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onAlign={(how) => alignMany([sel.id], how, true)} />
           ) : (
             <section className={section}>
               <h2 className={heading}>Özellikler</h2>
@@ -920,8 +1044,12 @@ export default function Studio({ username }: { username: string }) {
             <h2 id="t-layers" className={`${heading} flex items-center gap-1.5`}><Layers size={13} /> Katmanlar</h2>
             <ul className="space-y-0.5">
               {[...view].reverse().map((e) => (
-                <li key={e.id} className={`flex items-center gap-1 rounded-md pr-1 text-sm ${e.id === selected ? "bg-accent-soft text-fg" : "hover:bg-subtle"}`}>
-                  <button className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left" onClick={() => setSelected(e.id)}>
+                <li key={e.id} className={`flex items-center gap-1 rounded-md pr-1 text-sm ${picked.includes(e.id) ? "bg-accent-soft text-fg" : "hover:bg-subtle"}`}>
+                  <button
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+                    aria-pressed={picked.includes(e.id)}
+                    onClick={(ev) => (ev.shiftKey || ev.ctrlKey || ev.metaKey ? setPicked((p) => (p.includes(e.id) ? p.filter((x) => x !== e.id) : [...p, e.id])) : setSelected(e.id))}
+                  >
                     {e.kind === "text" ? <Type size={14} className="shrink-0 text-muted" /> : e.kind === "image" ? <ImageIcon size={14} className="shrink-0 text-muted" /> : <Square size={14} className="shrink-0 text-muted" />}
                     <span className="truncate">{e.kind === "text" && e.text.trim() ? `${e.name}: ${e.text.trim().slice(0, 24)}` : e.name}</span>
                   </button>
@@ -1051,9 +1179,11 @@ interface InspectorProps {
   onDuplicate: () => void;
   onOrder: (to: "front" | "back" | "up" | "down") => void;
   onReplace: (f: File | undefined) => void;
+  /** To the canvas, by what is drawn (a turned element's outer box). */
+  onAlign: (how: AlignTo) => void;
 }
 
-function Inspector({ el, canvas, brand, u, onPatch, onCommit, onRemove, onDuplicate, onOrder, onReplace }: InspectorProps) {
+function Inspector({ el, brand, u, onPatch, onCommit, onRemove, onDuplicate, onOrder, onReplace, onAlign }: InspectorProps) {
   const live = (p: Partial<El>) => onPatch(p, false);
   const now = (p: Partial<El>) => onPatch(p, true);
   const swatches = [...new Set([brand.primary, brand.accent, "#ffffff", "#14263d", "#000000"])];
@@ -1084,14 +1214,14 @@ function Inspector({ el, canvas, brand, u, onPatch, onCommit, onRemove, onDuplic
           <span className="text-[11px] text-muted">Tuvale hizala</span>
           <div className="flex">
             {([
-              [AlignStartVertical, "Sola", { x: 0 }],
-              [AlignCenterVertical, "Yatayda ortala", { x: (canvas.w - el.w) / 2 }],
-              [AlignEndVertical, "Sağa", { x: canvas.w - el.w }],
-              [AlignStartHorizontal, "Üste", { y: 0 }],
-              [AlignCenterHorizontal, "Dikeyde ortala", { y: (canvas.h - el.h) / 2 }],
-              [AlignEndHorizontal, "Alta", { y: canvas.h - el.h }],
-            ] as const).map(([Icon, label, p]) => (
-              <button key={label} className={iconBtn} disabled={el.locked} onClick={() => now(p)} aria-label={`Tuvale göre ${label.toLocaleLowerCase("tr")} hizala`} title={label}>
+              [AlignStartVertical, "Sola", "left"],
+              [AlignCenterVertical, "Yatayda ortala", "hcenter"],
+              [AlignEndVertical, "Sağa", "right"],
+              [AlignStartHorizontal, "Üste", "top"],
+              [AlignCenterHorizontal, "Dikeyde ortala", "vcenter"],
+              [AlignEndHorizontal, "Alta", "bottom"],
+            ] as const).map(([Icon, label, how]) => (
+              <button key={label} className={iconBtn} disabled={el.locked} onClick={() => onAlign(how)} aria-label={`Tuvale göre ${label.toLocaleLowerCase("tr")} hizala`} title={label}>
                 <Icon size={15} />
               </button>
             ))}
