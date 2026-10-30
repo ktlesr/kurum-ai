@@ -64,7 +64,7 @@ export async function downloadPptx(slides: El[][], measure: Measure, name: strin
         const opts = {
           ...box, flipH: !!e.flipX, flipV: !!e.flipY, shadow,
           ...(fillC ? { fill: { color: hex(fillC), transparency } } : {}),
-          ...(e.stroke ? { line: { color: hex(e.stroke.color), width: e.stroke.width * 0.5, ...(e.stroke.dash ? { dashType: e.stroke.dash === "dot" ? ("sysDot" as const) : ("dash" as const) } : {}) } } : {}),
+          ...(e.stroke ? { line: { color: hex(e.stroke.color), transparency, width: e.stroke.width * 0.5, ...(e.stroke.dash ? { dashType: e.stroke.dash === "dot" ? ("sysDot" as const) : ("dash" as const) } : {}) } } : {}),
         };
         const shape = e.shape ?? "rect";
         if (shape === "ellipse") slide.addShape(pptx.ShapeType.ellipse, opts);
