@@ -1,5 +1,9 @@
 // Run: pnpm test. Görsel Stüdyo layers → SVG, text fitting, the model's suggestion parser.
 import { test } from "node:test";
+import fs from "node:fs";
+import { LIBRARY_FONTS } from "./font-list.ts";
+import { THEMES } from "./themes.ts";
+import { ART_SHAPES } from "./studio-assets.ts";
 import assert from "node:assert/strict";
 import { FORMATS, SHAPES, TEMPLATES, registerFontCss, aabb, alignEls, cleanEls, distributeEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type El, type Measure } from "./studio.ts";
 
@@ -238,4 +242,26 @@ test("fonts: a loaded font is embedded and named only when used; a stored id can
   const bad = cleanEls([{ kind: "text", text: "a", x: 0, y: 0, w: 100, h: 40, size: 30, font: 'x"/><script>' }])[0];
   assert.ok(bad.kind === "text" && bad.font === undefined);
   assert.doesNotMatch(svgOf("kare", [{ ...t, font: 'x"/><script>' } as El], measure), /<script>/);
+});
+
+test("themes: readable, known fonts; art files are plain vector files", () => {
+  const ids = new Set<string>(LIBRARY_FONTS.map((f) => f.id));
+  const lum = (hex: string) => {
+    const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const contrast = (a: string, b: string) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+  for (const t of THEMES) {
+    assert.ok(ids.has(t.head) && ids.has(t.body), t.name);
+    assert.ok(contrast(t.primary, "#ffffff") >= 4.5, `${t.name}: white text on the main colour`);
+    assert.ok(contrast(t.primary, inkOn(t.primary)) >= 4.5, `${t.name}: ink on main`);
+    assert.ok(contrast(t.accent, inkOn(t.accent)) >= 4.5, `${t.name}: ink on accent ${contrast(t.accent, inkOn(t.accent))}`);
+  }
+  for (const n of ART_SHAPES) {
+    const svg = fs.readFileSync(new URL(`../public/shapes/${n}.svg`, import.meta.url), "utf8");
+    assert.ok(/^[\x00-\x7f]*$/.test(svg) && !/<script|<image|href|https?:\/\/(?!www\.w3\.org)|\son\w+=/i.test(svg), n);
+    // every reference points at an id in the same file
+    const ids = new Set([...svg.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+    for (const m of svg.matchAll(/url\(#([^)"]*)\)?/g)) assert.ok(ids.has(m[1]) && m[0].endsWith(")"), `${n}: ${m[0]}`);
+  }
 });

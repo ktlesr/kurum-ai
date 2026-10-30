@@ -8,13 +8,16 @@ import Link from "next/link";
 import {
   AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight,
   AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, ClipboardPaste, Copy, Download, FolderOpen, Image as ImageIcon,
-  AlignHorizontalSpaceAround, AlignVerticalSpaceAround, BoxSelect, FlipHorizontal2, FlipVertical2, Italic, MoveDown, MoveUp, Paintbrush, Pencil, RotateCcw, Scissors, Underline,
+  AlignHorizontalSpaceAround, AlignVerticalSpaceAround, BoxSelect, FlipHorizontal2, FlipVertical2, Palette, Italic, MoveDown, MoveUp, Paintbrush, Pencil, RotateCcw, Scissors, Underline,
   ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Library, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import { ThemeToggle } from "../theme-toggle";
 import Editor from "./editor";
 import ContextMenu, { type MenuItem } from "./context-menu";
+import ArtPicker from "./art-picker";
 import FontPicker from "./font-picker";
+import { THEMES, type Theme } from "@/lib/themes";
+import { OPEN_COLOR } from "@/lib/studio-assets";
 import { ensureFont } from "./fonts";
 import type { Claim } from "@/lib/trace";
 import { recorderType, renderVideo, type Scene, type Transition } from "./video";
@@ -22,19 +25,11 @@ import { listWorks, removeWork, saveWork, thumbnail, type Work } from "./works";
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, SHAPES, TEMPLATES, aabb, alignEls, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type ShapeId,
+  DEFAULT_BRAND, FORMATS, LIMITS, SHAPES, TEMPLATES, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type ShapeId,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
 /** Colour pairs to start a brand kit from (ana renk, vurgu). */
-const THEMES = [
-  { name: "Lacivert", primary: "#14263d", accent: "#2e5e8c" },
-  { name: "Bordo", primary: "#4a1424", accent: "#c8102e" },
-  { name: "Orman", primary: "#0f3d2e", accent: "#1f8a5b" },
-  { name: "Turuncu", primary: "#3a2410", accent: "#e07a1f" },
-  { name: "Mor", primary: "#2a1a4a", accent: "#7c3aed" },
-  { name: "Antrasit", primary: "#1f2937", accent: "#0ea5e9" },
-];
 const WEIGHTS = [
   { v: 400, label: "Normal" },
   { v: 600, label: "Yarı kalın" },
@@ -42,7 +37,7 @@ const WEIGHTS = [
   { v: 800, label: "Çok kalın" },
 ];
 const HISTORY = 100;
-type Snap = { els: El[]; format: FormatId };
+type Snap = { els: El[]; format: FormatId; primary: string; accent: string };
 type Field = Exclude<Role, "deco">;
 
 const field = "w-full rounded-lg border border-line bg-panel px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted focus:border-accent";
@@ -54,10 +49,23 @@ const chip = (on: boolean) => `rounded-md px-2.5 py-1.5 text-xs font-medium tran
 
 /** Every colour in the design that was the old brand colour becomes the new one. */
 const stamp = () => Date.now();
-function recolor(els: El[], from: string, to: string): El[] {
-  const c = (x: string) => (x.toLowerCase() === from.toLowerCase() ? to : x);
+/** Brand colours changed: everything drawn in them follows (and the shades the templates derive from them). */
+function recolor(els: El[], a: Brand, b: Brand): El[] {
+  const map = new Map<string, string>([
+    [shade(a.primary, -0.25), shade(b.primary, -0.25)],
+    [shade(a.primary, -0.6), shade(b.primary, -0.6)],
+    [shade(a.accent, -0.2), shade(b.accent, -0.2)],
+    [a.primary, b.primary],
+    [a.accent, b.accent],
+  ]);
+  const c = (x: string) => map.get(x.toLowerCase()) ?? x;
   return els.map((e) => {
-    if (e.kind === "text") return { ...e, color: c(e.color), ...(e.bg ? { bg: { ...e.bg, fill: c(e.bg.fill) } } : {}) };
+    if (e.kind === "text") {
+      if (!e.bg) return { ...e, color: c(e.color) };
+      // A pill's letters stay readable on its new colour.
+      const fill = c(e.bg.fill);
+      return { ...e, color: e.color === inkOn(e.bg.fill) ? inkOn(fill) : c(e.color), bg: { ...e.bg, fill } };
+    }
     if (e.kind === "shape")
       return {
         ...e,
@@ -83,6 +91,8 @@ export default function Studio({ username }: { username: string }) {
   const [hist, setHist] = useState<{ past: Snap[]; future: Snap[] }>({ past: [], future: [] });
   // The chosen elements; one of them alone gets the inspector, several get the alignment panel.
   const [picked, setPicked] = useState<string[]>([]);
+  const [activeTheme, setActiveTheme] = useState("");
+  const [artOpen, setArtOpen] = useState(false);
   const [alignCanvas, setAlignCanvas] = useState(false); // several chosen: to each other, or to the canvas
   const selected = picked.length === 1 ? picked[0] : null;
   const setSelected = (id: string | null) => setPicked(id ? [id] : []);
@@ -175,11 +185,11 @@ export default function Studio({ username }: { username: string }) {
   const generated = useMemo(() => (font ? fromTemplate({ template, format, content, brand, photo }, font.measure) : []), [font, template, format, content, brand, photo]);
   const view = els ?? generated;
   // The latest committed state for callbacks that run later (a suggestion arriving, undo from the keyboard).
-  const now = useRef({ view, els, format, hist, clip: null as El[] | null });
+  const now = useRef({ view, els, format, hist, brand, clip: null as El[] | null });
   useLayoutEffect(() => {
-    now.current = { view, els, format, hist, clip };
+    now.current = { view, els, format, hist, brand, clip };
   });
-  const snap = (): Snap => ({ els: now.current.view, format: now.current.format });
+  const snap = (): Snap => ({ els: now.current.view, format: now.current.format, primary: now.current.brand.primary, accent: now.current.brand.accent });
   const push = (s: Snap) => setHist((h) => ({ past: [...h.past.slice(-HISTORY + 1), s], future: [] }));
 
   /** A new design state; `commit` makes it one undo step (from where the current gesture started). */
@@ -198,6 +208,9 @@ export default function Studio({ username }: { username: string }) {
   };
   const restore = (s: Snap) => {
     setMenu(null);
+    // The brand colours go back with the design: later recolouring looks for the colours it is really drawn in.
+    if (s.primary !== brand.primary || s.accent !== brand.accent) saveBrand({ ...brand, primary: s.primary, accent: s.accent });
+    setActiveTheme("");
     setFormat(s.format);
     setEls(s.els);
     setPicked((ids) => ids.filter((id) => s.els.some((e) => e.id === id))); // still there: stays chosen
@@ -236,8 +249,22 @@ export default function Studio({ username }: { username: string }) {
     }
   };
   const setColors = (primary: string, accent: string) => {
-    if (els) change(recolor(recolor(els, brand.primary, primary), brand.accent, accent));
+    if (els) change(recolor(els, brand, { ...brand, primary, accent }));
     saveBrand({ ...brand, primary, accent });
+  };
+  /** A theme: its colours, its heading font on titles and tags, its body font on the rest (one undo step). */
+  const applyTheme = async (t: Theme) => {
+    if (!font) return;
+    // The fonts first: no flash of the old ones, and the tag's pill is measured in its new font.
+    const start = now.current.view;
+    await Promise.allSettled([t.head, t.body].map((id) => ensureFont(id, username)));
+    if (now.current.view !== start) return; // edited or switched meanwhile: the user's newer step wins
+    const next = { ...brand, primary: t.primary, accent: t.accent };
+    const cur = now.current.els;
+    const base = cur ? recolor(cur, brand, next) : fromTemplate({ template, format, content, brand: next, photo }, font.measure);
+    change(base.map((e) => (e.kind === "text" && e.role !== "deco" ? fitPill({ ...e, font: e.role === "title" || e.role === "tag" ? t.head : t.body }, font.measure) : e)));
+    saveBrand(next);
+    setActiveTheme(t.name);
   };
 
   /** Text fields on the left: in an edited design they change the element with that role. */
@@ -315,6 +342,23 @@ export default function Studio({ username }: { username: string }) {
   const shapeMenu = (at: HTMLElement) => {
     const r = at.getBoundingClientRect();
     setMenu({ x: r.left, y: r.bottom + 4, view, items: (Object.keys(SHAPES) as ShapeId[]).map((id) => ({ label: SHAPES[id].label, icon: <ShapeIcon id={id} />, run: () => addShape(id) })) });
+  };
+  /** A gallery shape as a picture (a data: URL like every picture: the design stays one file). */
+  const addArt = async (name: string) => {
+    setArtOpen(false);
+    try {
+      const r = await fetch(`/shapes/${name}.svg`);
+      if (!r.ok) throw new Error();
+      const src = `data:image/svg+xml;base64,${btoa(await r.text())}`; // the files are ASCII
+      // Onto the design as it is now (and its format): it may have changed while the file loaded.
+      const { w: cw, h: ch } = FORMATS[now.current.format];
+      const size = Math.min(cw, ch) / 3;
+      const el = { id: newId(), kind: "image", name: "Hazır şekil", x: (cw - size) / 2, y: (ch - size) / 2, w: size, h: size, pic: { src, w: 200, h: 200 }, fit: "contain" } satisfies ImageEl;
+      change([...now.current.view, el]);
+      setSelected(el.id);
+    } catch {
+      setNote({ kind: "error", text: "Şekil yüklenemedi." });
+    }
   };
   const addLogo = () => {
     if (!brand.logo) return setNote({ kind: "error", text: "Önce marka kitine logo ekleyin." });
@@ -564,7 +608,7 @@ export default function Studio({ username }: { username: string }) {
   // Shift+F10; with several chosen, they all move, copy and go together.
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   function onKey(e: KeyboardEvent) {
-    if (library) return; // the dialog has the keyboard; the canvas behind it doesn't change
+    if (library || artOpen) return; // the dialog has the keyboard; the canvas behind it doesn't change
     const t = e.target as HTMLElement;
     if (t.closest("input, textarea, select, [contenteditable]")) return;
     const mod = e.ctrlKey || e.metaKey;
@@ -638,7 +682,7 @@ export default function Studio({ username }: { username: string }) {
   }
   const sceneFormat = scenes[0]?.format;
   /** A font chosen for these (arrives after loading: applied to the design as it is then). */
-  const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => (e.kind === "text" && ids.includes(e.id) && !e.locked ? { ...e, font: f } : e)));
+  const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => (e.kind === "text" && ids.includes(e.id) && !e.locked ? (font ? fitPill({ ...e, font: f }, font.measure) : { ...e, font: f }) : e)));
   /** Everything drawn into a picture waits for its fonts (a design just opened may still be loading them), and gets
    *  its text boxes measured with them. */
   const fontsReady = async (list: El[]) => {
@@ -771,7 +815,7 @@ export default function Studio({ username }: { username: string }) {
 
   return (
     <div className="flex h-dvh flex-col bg-bg">
-      <header inert={!!library} className="flex h-14 shrink-0 items-center gap-1.5 border-b border-line bg-panel/80 px-3 backdrop-blur md:px-4">
+      <header inert={!!library || artOpen} className="flex h-14 shrink-0 items-center gap-1.5 border-b border-line bg-panel/80 px-3 backdrop-blur md:px-4">
         <Link href="/" className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted hover:bg-subtle hover:text-fg">
           <ArrowLeft size={16} /> Asistan
         </Link>
@@ -798,7 +842,7 @@ export default function Studio({ username }: { username: string }) {
         <ThemeToggle />
       </header>
 
-      <div inert={!!library} className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      <div inert={!!library || artOpen} className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Left: start from a template, texts, brand */}
         <aside className="order-2 min-h-0 overflow-y-auto border-line bg-panel lg:order-1 lg:w-[320px] lg:shrink-0 lg:border-r">
           <section className={section} aria-labelledby="t-template">
@@ -968,7 +1012,7 @@ export default function Studio({ username }: { username: string }) {
             <h2 id="t-brand" className={heading}>Marka kiti</h2>
             <div className="grid grid-cols-6 gap-1.5" role="group" aria-label="Renk temaları">
               {THEMES.map((t) => (
-                <button key={t.name} title={t.name} aria-label={`${t.name} teması`} aria-pressed={brand.primary === t.primary && brand.accent === t.accent} onClick={() => setColors(t.primary, t.accent)} className={`h-8 overflow-hidden rounded-md border-2 ${brand.primary === t.primary && brand.accent === t.accent ? "border-accent" : "border-transparent"}`}>
+                <button key={t.name} title={`${t.name} · ${t.mood}`} aria-label={`${t.name} teması`} aria-pressed={activeTheme === t.name} onClick={() => applyTheme(t)} className={`h-8 overflow-hidden rounded-md border-2 ${brand.primary === t.primary && brand.accent === t.accent ? "border-accent" : "border-transparent"}`}>
                   <span className="flex size-full">
                     <span className="flex-1" style={{ background: t.primary }} />
                     <span className="flex-1" style={{ background: t.accent }} />
@@ -1005,6 +1049,7 @@ export default function Studio({ username }: { username: string }) {
             <button className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg" onClick={(e) => shapeMenu(e.currentTarget)} aria-haspopup="menu">
               <Shapes size={15} /> Şekil <ChevronDown size={13} />
             </button>
+            <ToolBtn onClick={() => setArtOpen(true)} icon={<Sparkles size={15} />} label="Hazır şekil" />
             <ToolBtn onClick={addLogo} icon={<Stamp size={15} />} label="Logo" />
             <span className="ml-auto hidden text-xs text-muted xl:block">Çift tıkla: metni düzenle · Shift: oranı koru · Alt: hizalamasız taşı</span>
           </div>
@@ -1117,6 +1162,7 @@ export default function Studio({ username }: { username: string }) {
         }}
       />
 
+      {artOpen && <ArtPicker onPick={addArt} onClose={() => setArtOpen(false)} />}
       {library && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onPointerDown={closeLibrary}>
           <div
@@ -1463,12 +1509,23 @@ function ShapeIcon({ id }: { id: ShapeId }) {
 }
 
 function Swatches({ value, set, swatches }: { value: string; set: (c: string) => void; swatches: string[] }) {
+  const [more, setMore] = useState(false);
   return (
+    <div>
     <div className="flex items-center gap-1.5">
+      <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more} aria-label="Renk paleti" title="Renk paleti (Open Color)" className="grid size-7 place-items-center rounded border border-line text-muted hover:border-accent hover:text-accent"><Palette size={14} /></button>
       <input type="color" value={value} onChange={(e) => set(e.target.value)} className="size-7 cursor-pointer rounded border border-line bg-transparent p-0" aria-label="Renk seç" />
       {swatches.map((c) => (
         <button key={c} onClick={() => set(c)} className={`size-6 rounded-full border ${value.toLowerCase() === c ? "ring-2 ring-accent ring-offset-1" : "border-line"}`} style={{ background: c }} aria-label={`Renk ${c}`} title={c} />
       ))}
+    </div>
+    {more && (
+      <div className="mt-1.5 grid gap-px" style={{ gridTemplateColumns: "repeat(10, 1fr)" }} role="group" aria-label="Renk paleti">
+        {Object.entries(OPEN_COLOR).flatMap(([hue, shades]) =>
+          shades.map((c, i) => <button key={c} type="button" onClick={() => set(c)} className={`aspect-square rounded-[2px] ${value.toLowerCase() === c ? "ring-2 ring-accent" : ""}`} style={{ background: c }} aria-label={`${hue} ${i}`} title={`${hue} ${i} · ${c}`} />),
+        )}
+      </div>
+    )}
     </div>
   );
 }

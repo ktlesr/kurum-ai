@@ -87,7 +87,7 @@ function luminance(hex: string) {
 }
 export const inkOn = (bg: string) => (luminance(bg) > 0.4 ? "#14263d" : "#ffffff");
 /** Mixes `hex` toward black (amount < 0) or white (> 0). */
-function shade(hex: string, amount: number) {
+export function shade(hex: string, amount: number) {
   const t = amount < 0 ? 0 : 255;
   const p = Math.abs(amount);
   return "#" + [1, 3, 5].map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) * (1 - p) + t * p).toString(16).padStart(2, "0")).join("");
@@ -547,6 +547,13 @@ export function hug(els: El[], measure: Measure): El[] {
     const h = Math.max(1, lines) * e.size * e.leading;
     return Math.abs(h - e.h) < 0.5 ? e : { ...e, h };
   });
+}
+
+/** A pill as wide as its text in its font (a font change shouldn't leave it too wide or cut the word). */
+export function fitPill(e: TextEl, measure: Measure): TextEl {
+  if (!e.bg) return e;
+  const t = (e.upper ? e.text.toLocaleUpperCase("tr") : e.text).replace(/\s+/g, " ");
+  return { ...e, w: measure(t, e.size, e.weight, e.font) + e.tracking * t.length + e.size * 1.6 };
 }
 
 export function textLines(e: TextEl, measure: Measure) {
