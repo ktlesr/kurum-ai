@@ -7,11 +7,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import Link from "next/link";
 import {
   AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight,
-  AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, Copy, Download, FolderOpen, Image as ImageIcon,
+  AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, ClipboardPaste, Copy, Download, FolderOpen, Image as ImageIcon,
+  MoveDown, MoveUp, Paintbrush, Pencil, Scissors,
   ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Library, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import { ThemeToggle } from "../theme-toggle";
 import Editor from "./editor";
+import ContextMenu, { type MenuItem } from "./context-menu";
 import type { Claim } from "@/lib/trace";
 import { recorderType, renderVideo, type Scene, type Transition } from "./video";
 import { listWorks, removeWork, saveWork, thumbnail, type Work } from "./works";
@@ -108,6 +110,12 @@ export default function Studio({ username }: { username: string }) {
     [],
   );
   const gesture = useRef<Snap | null>(null); // the design when a drag or typing started (its undo point)
+  // Right-click menu, its items built when it opens (from an event, with the design as it is then); the element and style clipboards live only in this page.
+  const [menu, setMenu] = useState<{ items: MenuItem[]; x: number; y: number; view: El[] } | null>(null);
+  const [clip, setClip] = useState<El | null>(null);
+  const [styleClip, setStyleClip] = useState<El | null>(null);
+  const replaceTarget = useRef<string | null>(null);
+  const replaceInput = useRef<HTMLInputElement>(null);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is only readable after mount
   useEffect(() => setBrand(loadBrand(username)), [username]);
@@ -134,15 +142,16 @@ export default function Studio({ username }: { username: string }) {
   const generated = useMemo(() => (font ? fromTemplate({ template, format, content, brand, photo }, font.measure) : []), [font, template, format, content, brand, photo]);
   const view = els ?? generated;
   // The latest committed state for callbacks that run later (a suggestion arriving, undo from the keyboard).
-  const now = useRef({ view, els, format, hist });
+  const now = useRef({ view, els, format, hist, clip: null as El | null });
   useLayoutEffect(() => {
-    now.current = { view, els, format, hist };
+    now.current = { view, els, format, hist, clip };
   });
   const snap = (): Snap => ({ els: now.current.view, format: now.current.format });
   const push = (s: Snap) => setHist((h) => ({ past: [...h.past.slice(-HISTORY + 1), s], future: [] }));
 
   /** A new design state; `commit` makes it one undo step (from where the current gesture started). */
   const change = (raw: El[], commit = true) => {
+    setMenu(null); // its actions belong to the design before this change
     const next = font ? hug(raw, font.measure) : raw;
     if (!commit) {
       gesture.current ??= snap();
@@ -155,6 +164,7 @@ export default function Studio({ username }: { username: string }) {
     setEls(next);
   };
   const restore = (s: Snap) => {
+    setMenu(null);
     setFormat(s.format);
     setEls(s.els);
     setSelected((id) => (s.els.some((e) => e.id === id) ? id : null)); // still there: stays selected
@@ -174,6 +184,7 @@ export default function Studio({ username }: { username: string }) {
   };
   /** Back to the template (undoable, format included): template and format changes do this. */
   const reset = () => {
+    setMenu(null);
     if (now.current.view.length) push(snap());
     setEls(null);
     setSelected(null);
@@ -329,7 +340,99 @@ export default function Studio({ username }: { username: string }) {
     change([...rest.slice(0, j), view[i], ...rest.slice(j)]);
   };
 
-  // Keyboard: arrows nudge (Shift: 10 px), Delete, Ctrl+Z / Ctrl+Y, Ctrl+D, Escape.
+  const copyEl = (id: string) => {
+    setClip(view.find((e) => e.id === id) ?? null);
+  };
+  /** The copy lands a little lower right, inside the canvas (it may come from another format). */
+  const paste = () => {
+    const e = now.current.clip;
+    if (!e) return;
+    // Bigger than this canvas (copied from another format): a picture or shape shrinks with its ratio; a text box gets
+    // narrower and its final height comes from the wrapped lines.
+    const k = e.kind === "text" ? 1 : Math.min(1, W / e.w, H / e.h);
+    const w = e.kind === "text" ? Math.min(e.w, W) : e.w * k;
+    const c = { ...e, id: newId(), w, h: e.h * k, locked: false } as El;
+    const sized = font ? hug([c], font.measure)[0] : c;
+    // Taller than the canvas (a long text): from the top; its height stays what the text needs.
+    add({ ...sized, x: Math.min(Math.max(0, e.x + 24 * u), W - w), y: Math.min(Math.max(0, e.y + 24 * u), Math.max(0, H - sized.h)) } as El);
+  };
+  /** Looks without content: colours, type, corners, transparency (same kind of element only). */
+  const styleOf = (e: El): Partial<El> =>
+    e.kind === "text" ? { color: e.color, size: e.size, weight: e.weight, align: e.align, leading: e.leading, tracking: e.tracking, upper: e.upper, bg: e.bg, opacity: e.opacity, auto: e.auto }
+    : e.kind === "shape" ? { fill: e.fill, radius: e.radius, opacity: e.opacity }
+    : { radius: e.radius, opacity: e.opacity };
+  const pasteStyle = (id: string) => {
+    const src = styleClip;
+    const e = view.find((x) => x.id === id);
+    if (src && e && src.kind === e.kind) patch(id, styleOf(src));
+  };
+  const align = (id: string, p: "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom") => {
+    const e = view.find((x) => x.id === id);
+    if (!e) return;
+    patch(id, { left: { x: 0 }, hcenter: { x: (W - e.w) / 2 }, right: { x: W - e.w }, top: { y: 0 }, vcenter: { y: (H - e.h) / 2 }, bottom: { y: H - e.h } }[p]);
+  };
+  const openMenuFor = (id: string) => {
+    const e = view.find((x) => x.id === id);
+    const m = document.querySelector<SVGSVGElement>('svg[role="application"]')?.getScreenCTM();
+    if (!e || !m) return;
+    const pt = new DOMPoint(e.x + e.w / 2, e.y + e.h / 2).matrixTransform(m);
+    setMenu({ items: menuItems(id), x: pt.x, y: pt.y, view });
+  };
+  const menuItems = (id: string | null): MenuItem[] => {
+    const e = id ? view.find((x) => x.id === id) : undefined;
+    if (!e)
+      return [
+        { label: "Yapıştır", icon: <ClipboardPaste size={14} />, keys: "Ctrl+V", run: paste, disabled: !clip },
+        "-",
+        { label: "Metin ekle", icon: <Type size={14} />, run: addText },
+        { label: "Şekil ekle", icon: <Shapes size={14} />, run: addShape },
+        { label: "Logo ekle", icon: <Stamp size={14} />, run: addLogo, disabled: !brand.logo },
+        "-",
+        { label: "Geri al", icon: <Undo2 size={14} />, keys: "Ctrl+Z", run: undo, disabled: !hist.past.length },
+        { label: "Yinele", icon: <Redo2 size={14} />, keys: "Ctrl+Y", run: redo, disabled: !hist.future.length },
+      ];
+    const L = e.locked;
+    const same = styleClip?.kind === e.kind;
+    return [
+      ...(e.kind === "text" ? [{ label: "Metni düzenle", icon: <Pencil size={14} />, keys: "Enter", run: () => setEditing(e.id), disabled: L } as MenuItem, "-" as const] : []),
+      { label: "Kes", icon: <Scissors size={14} />, keys: "Ctrl+X", run: () => (copyEl(e.id), remove(e.id)), disabled: L },
+      { label: "Kopyala", icon: <Copy size={14} />, keys: "Ctrl+C", run: () => copyEl(e.id) },
+      { label: "Yapıştır", icon: <ClipboardPaste size={14} />, keys: "Ctrl+V", run: paste, disabled: !clip },
+      { label: "Çoğalt", icon: <Copy size={14} />, keys: "Ctrl+D", run: () => duplicate(e.id), disabled: L },
+      "-",
+      { label: "Stili kopyala", icon: <Paintbrush size={14} />, run: () => setStyleClip(e) },
+      { label: "Stili yapıştır", icon: <Paintbrush size={14} />, run: () => pasteStyle(e.id), disabled: L || !same },
+      "-",
+      { label: "En öne getir", icon: <ArrowUpToLine size={14} />, run: () => reorder(e.id, "front"), disabled: L },
+      { label: "Bir öne", icon: <MoveUp size={14} />, run: () => reorder(e.id, "up"), disabled: L },
+      { label: "Bir geri", icon: <MoveDown size={14} />, run: () => reorder(e.id, "down"), disabled: L },
+      { label: "En arkaya gönder", icon: <ArrowDownToLine size={14} />, run: () => reorder(e.id, "back"), disabled: L },
+      "-",
+      { label: "Sola hizala", icon: <AlignStartVertical size={14} />, run: () => align(e.id, "left"), disabled: L },
+      { label: "Yatayda ortala", icon: <AlignCenterVertical size={14} />, run: () => align(e.id, "hcenter"), disabled: L },
+      { label: "Sağa hizala", icon: <AlignEndVertical size={14} />, run: () => align(e.id, "right"), disabled: L },
+      { label: "Üste hizala", icon: <AlignStartHorizontal size={14} />, run: () => align(e.id, "top"), disabled: L },
+      { label: "Dikeyde ortala", icon: <AlignCenterHorizontal size={14} />, run: () => align(e.id, "vcenter"), disabled: L },
+      { label: "Alta hizala", icon: <AlignEndHorizontal size={14} />, run: () => align(e.id, "bottom"), disabled: L },
+      ...(e.kind === "image"
+        ? (["-",
+            { label: "Görseli değiştir…", icon: <ImagePlus size={14} />, run: () => {
+                replaceTarget.current = e.id;
+                const input = replaceInput.current;
+                if (!input) return;
+                input.accept = e.logo ? ".png,.jpg,.jpeg,.webp,.svg" : ".png,.jpg,.jpeg,.webp"; // the same choices as the inspector
+                input.click();
+              }, disabled: L },
+            ...(e.logo ? [] : [{ label: e.fit === "cover" ? "Tamamını göster (sığdır)" : "Kutuyu doldur (kırp)", icon: <ImageIcon size={14} />, run: () => patch(e.id, { fit: e.fit === "cover" ? "contain" : "cover" }), disabled: L } as MenuItem]),
+          ] as MenuItem[])
+        : []),
+      "-",
+      { label: L ? "Kilidi aç" : "Kilitle", icon: L ? <LockOpen size={14} /> : <Lock size={14} />, run: () => patch(e.id, { locked: !L }) },
+      { label: "Sil", icon: <Trash2 size={14} />, keys: "Delete", run: () => remove(e.id), disabled: L, danger: true },
+    ];
+  };
+
+  // Keyboard: arrows nudge (Shift: 10 px), Delete, Ctrl+Z / Ctrl+Y, Ctrl+D, Ctrl+C/X/V, Escape, menu key / Shift+F10.
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   function onKey(e: KeyboardEvent) {
     if (library) return; // the dialog has the keyboard; the canvas behind it doesn't change
@@ -338,10 +441,14 @@ export default function Studio({ username }: { username: string }) {
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === "z") return e.preventDefault(), e.shiftKey ? redo() : undo();
     if (mod && e.key.toLowerCase() === "y") return e.preventDefault(), redo();
+    if (mod && e.key.toLowerCase() === "v") return e.preventDefault(), paste();
     if (!sel) return;
+    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) return e.preventDefault(), openMenuFor(sel.id);
+    if (mod && e.key.toLowerCase() === "c") return e.preventDefault(), copyEl(sel.id);
     if (e.key === "Escape") return setSelected(null);
     if (sel.locked) return;
     if (mod && e.key.toLowerCase() === "d") return e.preventDefault(), duplicate(sel.id);
+    if (mod && e.key.toLowerCase() === "x") return e.preventDefault(), copyEl(sel.id), remove(sel.id);
     if (e.key === "Delete" || e.key === "Backspace") return e.preventDefault(), remove(sel.id);
     if (e.key === "Enter" && sel.kind === "text") return e.preventDefault(), setEditing(sel.id);
     const step = e.shiftKey ? 10 : 1;
@@ -574,7 +681,7 @@ export default function Studio({ username }: { username: string }) {
                 </button>
               ))}
             </div>
-            {els && <p className="text-xs text-muted">Şablon ya da format değiştirmek düzenlemeleri sıfırlar; Ctrl+Z ile geri alabilirsiniz.</p>}
+            {els && <p className="text-xs text-muted">Şablon değiştirmek düzenlemeleri sıfırlar (Ctrl+Z ile geri alınır); format değişince düzenlemeler yeni boyuta taşınır.</p>}
           </section>
 
           <section className={section} aria-labelledby="t-ai">
@@ -759,7 +866,7 @@ export default function Studio({ username }: { username: string }) {
           <div className="flex min-h-0 flex-1 items-center justify-center p-4 md:p-8" style={{ backgroundImage: "radial-gradient(var(--line) 1px, transparent 1px)", backgroundSize: "18px 18px" }} onPointerDown={() => { setSelected(null); setEditing(null); }}>
             {font ? (
               <div className="flex max-h-full max-w-full" style={{ aspectRatio: `${W} / ${H}`, height: "100%" }} onPointerDown={(e) => e.stopPropagation()}>
-                <Editor format={format} els={view} measure={font.measure} selected={selected} onSelect={setSelected} onChange={change} editing={editing} onEditing={setEditing} />
+                <Editor format={format} els={view} measure={font.measure} selected={selected} onSelect={setSelected} onChange={change} editing={editing} onEditing={setEditing} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
               </div>
             ) : (
               <p className="flex items-center gap-2 text-sm text-muted">{fontError || <><Loader2 size={16} className="animate-spin" /> Hazırlanıyor…</>}</p>
@@ -808,6 +915,21 @@ export default function Studio({ username }: { username: string }) {
           </section>
         </aside>
       </div>
+
+      {/* Its actions were made for the design it opened on: any other change (a suggestion arriving) closes it. */}
+      {menu?.view === view && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      <input
+        ref={replaceInput}
+        type="file"
+        accept=".png,.jpg,.jpeg,.webp"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={(e) => {
+          if (replaceTarget.current) replacePicture(replaceTarget.current, e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
 
       {library && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onPointerDown={closeLibrary}>

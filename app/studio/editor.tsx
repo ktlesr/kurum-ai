@@ -66,9 +66,11 @@ interface Props {
   onChange: (els: El[], commit: boolean) => void;
   editing: string | null;
   onEditing: (id: string | null) => void;
+  /** Right click: the element under the pointer (null: the empty canvas) and the screen point for the menu. */
+  onMenu?: (id: string | null, x: number, y: number) => void;
 }
 
-export default function Editor({ format, els, measure, selected, onSelect, onChange, editing, onEditing }: Props) {
+export default function Editor({ format, els, measure, selected, onSelect, onChange, editing, onEditing, onMenu }: Props) {
   const { w: W, h: H } = FORMATS[format];
   const uid = useId().replace(/:/g, "");
   const svg = useRef<SVGSVGElement>(null);
@@ -198,6 +200,12 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
         if (editing) onEditing(null);
       }}
       onPointerMove={move}
+      onContextMenu={(e) => {
+        if ((e.target as Element).closest("textarea")) return; // the text being edited keeps the browser's menu
+        e.preventDefault();
+        onSelect(null);
+        onMenu?.(null, e.clientX, e.clientY);
+      }}
       onPointerUp={end}
       onPointerCancel={end}
       role="application"
@@ -220,6 +228,12 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
           strokeWidth={stroke}
           vectorEffect="non-scaling-stroke"
           onPointerDown={(e) => start(e, el, "move")}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onSelect(el.id);
+            onMenu?.(el.id, e.clientX, e.clientY);
+          }}
           onDoubleClick={(e) => {
             e.stopPropagation();
             if (el.kind === "text" && !el.locked) onEditing(el.id);
