@@ -119,8 +119,9 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const streamingRef = useRef(false);
   const chatIdRef = useRef<string | null>(null);
   const libRef = useRef<LibItem[]>([]);
-  const [libLoaded, setLibLoaded] = useState(false); // a saved chat's documents are known only then: sending waits
-  const pendingDocs = useRef<string[]>([]); // a saved chat's documents the library hasn't listed yet
+  const [pendingDocs, setPendingDocs] = useState<string[]>([]); // a saved chat's documents the library hasn't listed
+  const [libOk, setLibOk] = useState(false); // the library was listed once
+  const docsWait = pendingDocs.length > 0 && !libOk; // sending now would lose that chat's documents
   useEffect(() => { streamingRef.current = streaming; chatIdRef.current = chatId; libRef.current = [...shared, ...personal]; });
   const local = useChats(username, async (id) => {
     // Another tab changed the open chat: show its version unless this tab is mid-answer.
@@ -129,7 +130,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     if (c) {
       setMessages(c.messages);
       setFiles((fs) => [...fs.filter((f) => !f.serverId), ...cardsOf(c.docIds, libRef.current)]);
-      pendingDocs.current = (c.docIds ?? []).filter((d) => !libRef.current.some((x) => x.id === d));
+      setPendingDocs((c.docIds ?? []).filter((d) => !libRef.current.some((x) => x.id === d)));
     } else { setChatId(null); setMessages([]); }
   });
 
@@ -162,18 +163,19 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   // The library (side menu): listed only. `files` holds what this chat uses; a chat starts with nothing.
   useEffect(() => {
     const lib = [...shared, ...personal];
-    const found = cardsOf(pendingDocs.current, lib);
+    const found = cardsOf(pendingDocs, lib);
     if (!found.length) return;
-    pendingDocs.current = pendingDocs.current.filter((d) => !lib.some((x) => x.id === d));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the library arrived after the chat was opened
+    setPendingDocs((p) => p.filter((d) => !lib.some((x) => x.id === d)));
     setFiles((fs) => [...fs, ...found.filter((c) => !fs.some((f) => f.serverId === c.serverId))].slice(0, MAX_CHAT_DOCS));
-  }, [shared, personal]);
+  }, [shared, personal, pendingDocs]);
   const refreshLibrary = useCallback(() => {
-    const a = api("/api/library").then((r) => (r.ok ? r.json() : [])).then((l: LibItem[]) => setShared(l)).catch(() => {});
+    // A failed request keeps the list as it is; the next round tries again.
+    const a = api("/api/library").then(async (r) => r.ok && (setShared(await r.json()), true)).catch(() => false);
     const b = api("/api/upload")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((l: DocMeta[]) => setPersonal(l.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind, path: `${d.folder ? `${d.folder}/` : ""}${d.name}`, warning: d.warning, verify: d.verify }))))
-      .catch(() => {});
-    Promise.all([a, b]).then(() => setLibLoaded(true));
+      .then(async (r) => r.ok && (setPersonal(((await r.json()) as DocMeta[]).map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind, path: `${d.folder ? `${d.folder}/` : ""}${d.name}`, warning: d.warning, verify: d.verify }))), true))
+      .catch(() => false);
+    Promise.all([a, b]).then(([x, y]) => { if (x && y) setLibOk(true); });
   }, []);
   useEffect(() => {
     refreshLibrary();
@@ -279,7 +281,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   /** scope "all": the question needs the whole document (summaries etc.), so a too-large doc is scanned, not searched. */
   const send = async (text: string, scope?: "all") => {
     const q = text.trim();
-    if (!q || streaming || !libLoaded) return;
+    if (!q || streaming || docsWait) return;
     const history: Message[] = [...messages.filter((m) => !m.error), { role: "user", content: q }];
     const t0 = Date.now();
     const secs = () => Math.round((Date.now() - t0) / 1000);
@@ -373,7 +375,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     setChatId(c.id);
     setMessages(c.messages);
     setFiles(cardsOf(c.docIds, [...shared, ...personal]));
-    pendingDocs.current = (c.docIds ?? []).filter((d) => !shared.some((x) => x.id === d) && !personal.some((x) => x.id === d));
+    setPendingDocs((c.docIds ?? []).filter((d) => !shared.some((x) => x.id === d) && !personal.some((x) => x.id === d)));
     setDrawer(false);
   };
   const newChat = () => {
@@ -381,7 +383,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     setChatId(null);
     setMessages([]);
     setFiles([]);
-    pendingDocs.current = [];
+    setPendingDocs([]);
     setDrawer(false);
   };
   const deleteChat = (c: StoredChat) => {
@@ -467,7 +469,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           ) : (
             <button
               onClick={() => send(input)}
-              disabled={!input.trim() || !libLoaded}
+              disabled={!input.trim() || docsWait}
+              title={docsWait ? "Sohbetin belgeleri yükleniyor…" : undefined}
               className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent text-accent-fg transition-opacity disabled:opacity-40"
               aria-label="Gönder"
             >

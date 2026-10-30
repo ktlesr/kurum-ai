@@ -74,7 +74,7 @@ function digestOf(chat: Provider, server: string, d: Doc, model: string, budget:
   const cached = d.digests?.[id];
   if (cached) return Promise.resolve(cached);
   if (signal.aborted) return Promise.reject(signal.reason);
-  const key = `${d.id}|${id}`;
+  const key = `${d.id}|${d.sourceHash ?? ""}|${id}`; // a shared file that changed keeps its id
   let run = digesting.get(key);
   if (!run) {
     const ac = new AbortController();
