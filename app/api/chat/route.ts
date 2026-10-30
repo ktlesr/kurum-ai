@@ -10,7 +10,7 @@ import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
 import { contextBudget, contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
-import { checkColumns, checkPages, pageNumbers, verifyNumbers } from "@/lib/checks";
+import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
 import { retrieve, TOP_K, windows } from "@/lib/rag";
 import { getSetting } from "@/lib/db";
@@ -120,6 +120,8 @@ const MAX_NOTES = 2048;
 
 const fail = (error: string, status: number) => Response.json({ error }, { status });
 
+class Looping extends Error {}
+
 /** One model call (lib/provider). onText gets answer pieces, onThinking the running count of reasoning chunks. */
 async function streamChatUnqueued(
   chat: Provider,
@@ -131,7 +133,20 @@ async function streamChatUnqueued(
   onThinking: (n: number) => void = () => {},
   numPredict?: number,
 ): Promise<string> {
-  const r = await chat.chat({ model, messages, think, maxTokens: numPredict ?? MAX_ANSWER, signal, onText, onThinking });
+  // A looping model is stopped here: it would otherwise hold the GPU up to the length cap.
+  const stop = new AbortController();
+  let sofar = "";
+  const r = await chat.chat({
+    model, messages, think, maxTokens: numPredict ?? MAX_ANSWER, signal: AbortSignal.any([signal, stop.signal]), onThinking,
+    onText: (piece) => {
+      sofar += piece;
+      if (isLooping(sofar)) {
+        stop.abort();
+        throw new Looping();
+      }
+      onText(piece);
+    },
+  });
   if (r.truncated && r.text && !numPredict) onText("\n\n…(cevap uzunluk sınırında kesildi)");
   if (r.promptTokens) recordTokens(model, messages.reduce((n, m) => n + m.content.length, 0), r.promptTokens);
   return r.text;
@@ -377,6 +392,8 @@ export async function POST(req: Request) {
             ERROR_SEP +
               (e instanceof Busy
                 ? "Sunucu şu an çok yoğun. Biraz sonra tekrar deneyin."
+                : e instanceof Looping
+                ? "Model aynı ifadeleri tekrar etmeye başladı, cevap durduruldu. Soruyu Otomatik profille yeniden deneyin."
                 : "Model sunucusu cevap üretemedi. Tekrar deneyin; sorun sürerse yöneticinize bildirin."),
           );
         }

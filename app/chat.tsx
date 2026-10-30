@@ -280,10 +280,11 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const hasReport = ready.some((f) => f.kind === "pdf" || f.kind === "docx");
 
   /** scope "all": the question needs the whole document (summaries etc.), so a too-large doc is scanned, not searched. */
-  const send = async (text: string, scope?: "all") => {
+  const send = async (text: string, scope?: "all", editOf?: number) => {
     const q = text.trim();
     if (!q || streaming || docsWait) return;
-    const history: Message[] = [...messages.filter((m) => !m.error), { role: "user", content: q }];
+    // An edited question replaces itself and everything after it.
+    const history: Message[] = [...messages.slice(0, editOf).filter((m) => !m.error), { role: "user", content: q, at: Date.now() }];
     const t0 = Date.now();
     const secs = () => Math.round((Date.now() - t0) / 1000);
     let first: number | undefined;
@@ -306,7 +307,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       local.upsert(id, (cur) => ({
         ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
         updatedAt: Date.now(), model, docIds,
-        messages: msgs.filter((m) => m.content || m.error).map(({ role, content, error, meta, timing }) => ({ role, content, ...(error ? { error } : {}), ...(meta ? { meta } : {}), ...(timing ? { timing } : {}) })),
+        messages: msgs.filter((m) => m.content || m.error).map(({ role, content, at, error, meta, timing }) => ({ role, content, ...(at ? { at } : {}), ...(error ? { error } : {}), ...(meta ? { meta } : {}), ...(timing ? { timing } : {}) })),
       }));
     setChatId(id);
     persist(history);
@@ -706,7 +707,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             <div className="flex-1 overflow-y-auto">
               <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-8">
                 {messages.map((m, i) => (
-                  <Bubble key={i} m={m} live={streaming && i === messages.length - 1} onSource={openSource} />
+                  <Bubble key={i} m={m} live={streaming && i === messages.length - 1} busy={streaming || docsWait} onEdit={(t) => send(t, undefined, i)} onSource={openSource} />
                 ))}
                 <div ref={bottomRef} />
               </div>
@@ -870,8 +871,73 @@ function Elapsed({ since }: { since: number }) {
   return <span className="tabular-nums">{Math.max(0, Math.round((now - since) / 1000))} sn</span>;
 }
 
-function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (chip: string, doc?: string) => void }) {
+const timeOf = (at: number) => {
+  const d = new Date(at);
+  const today = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString("tr-TR", today ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+
+function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}
+      className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted opacity-70 hover:bg-subtle hover:text-fg group-hover:opacity-100"
+    >
+      {copied ? <Check size={13} className="text-ok" /> : <Copy size={13} />} {copied ? "Kopyalandı" : "Kopyala"}
+    </button>
+  );
+}
+
+function Question({ m, busy, onEdit }: { m: Message; busy: boolean; onEdit: (text: string) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const save = () => {
+    if (!draft?.trim() || busy) return;
+    setDraft(null);
+    onEdit(draft);
+  };
+  if (draft !== null) {
+    return (
+      <div className="ml-auto w-full max-w-[85%] rounded-2xl border border-line bg-panel p-3">
+        <textarea
+          autoFocus
+          rows={Math.min(8, draft.split("\n").length + 1)}
+          value={draft}
+          aria-label="Soruyu düzenle"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setDraft(null);
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); save(); }
+          }}
+          className="w-full resize-y bg-transparent text-sm outline-none"
+        />
+        <div className="mt-2 flex items-center justify-end gap-2">
+          <span className="mr-auto text-xs text-muted">Bu sorudan sonraki mesajlar yeni cevapla değişir.</span>
+          <button onClick={() => setDraft(null)} className="h-8 rounded-lg border border-line px-3 text-sm hover:bg-subtle">Vazgeç</button>
+          <button onClick={save} disabled={!draft.trim() || busy} className="h-8 rounded-lg bg-accent px-3 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-40">Gönder</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="group ml-auto flex max-w-[85%] flex-col items-end">
+      <div className="whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-accent-fg">{m.content}</div>
+      <div className="mt-1 flex items-center gap-1">
+        {m.at && <time dateTime={new Date(m.at).toISOString()} className="mr-1 text-xs tabular-nums text-muted">{timeOf(m.at)}</time>}
+        <CopyButton text={m.content} />
+        <button
+          onClick={() => setDraft(m.content)}
+          disabled={busy}
+          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted opacity-70 hover:bg-subtle hover:text-fg disabled:opacity-40 group-hover:opacity-100"
+        >
+          <Pencil size={13} /> Düzenle
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Bubble({ m, live, busy, onEdit, onSource }: { m: Message; live: boolean; busy: boolean; onEdit: (text: string) => void; onSource: (chip: string, doc?: string) => void }) {
   // Only links made by linkPages (they carry this nonce) open the source panel.
   const [nonce] = useState(() => crypto.randomUUID().slice(0, 8));
   const pagePlugins = useMemo(() => [remarkGfm, linkPages(m.meta, nonce)], [m.meta, nonce]);
@@ -891,7 +957,7 @@ function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (c
     },
   }), [onSource, nonce, m.meta]);
   if (m.role === "user") {
-    return <div className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-accent-fg">{m.content}</div>;
+    return <Question m={m} busy={busy} onEdit={onEdit} />;
   }
   if (m.error) {
     return (
@@ -916,12 +982,7 @@ function Bubble({ m, live, onSource }: { m: Message; live: boolean; onSource: (c
       {!live && m.meta && <MetaNotes meta={m.meta} onSource={onSource} />}
       {!live && m.content && (
         <div className="mt-2 flex items-center gap-3">
-          <button
-            onClick={() => navigator.clipboard.writeText(m.content).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}
-            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted opacity-70 hover:bg-subtle hover:text-fg group-hover:opacity-100"
-          >
-            {copied ? <Check size={13} className="text-ok" /> : <Copy size={13} />} {copied ? "Kopyalandı" : "Kopyala"}
-          </button>
+          <CopyButton text={m.content} />
           {m.timing && (
             <span className="text-xs tabular-nums text-muted" title="Soru gönderildikten sonra ilk kelimenin geldiği ve cevabın bittiği süre">
               {m.timing.first !== undefined && `İlk kelime ${m.timing.first} sn · `}Toplam {m.timing.total} sn

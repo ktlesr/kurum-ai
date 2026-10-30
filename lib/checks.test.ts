@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkColumns, checkCriteria, checkMaxRows, checkPages, compactTables, markUncertain, normNum, verifyNumbers } from "./checks.ts";
+import { checkColumns, checkCriteria, checkMaxRows, checkPages, compactTables, isLooping, markUncertain, normNum, verifyNumbers } from "./checks.ts";
 
 test("normNum handles Turkish thousands and decimal comma", () => {
   assert.equal(normNum("698.264.164"), "698264164");
@@ -129,4 +129,11 @@ test("checkColumns flags a figure put under the wrong document's column", () => 
   assert.deepEqual(checkColumns("| Konu | rapor.pdf / rapor-ek.pdf |\n|---|---|\n| x | 100 |", re), []);
   const fk = [{ name: "a.pdf", text: "200" }, { name: "fark.pdf", text: "100" }];
   assert.deepEqual(checkColumns("| Konu | a.pdf | fark.pdf | Fark |\n|---|---|---|---|\n| x | 200 | 100 | 200 |", fk), []);
+});
+
+test("isLooping: a repeating answer stops, real text doesn't", () => {
+  assert.equal(isLooping("respect de olsa, respect de de olsa, ".repeat(40)), true);
+  assert.equal(isLooping("respect de olsa ".repeat(10)), false); // too short to tell
+  const table = Array.from({ length: 80 }, (_, i) => `| Satır ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + (i >> 2))} | Evet | Hayır |`).join("\n");
+  assert.equal(isLooping(table), false);
 });

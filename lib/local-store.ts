@@ -12,6 +12,8 @@ const MAX_CHATS = 5000;
 export interface Message {
   role: "user" | "assistant";
   content: string;
+  /** A question: when it was sent (ms). */
+  at?: number;
   error?: boolean;
   meta?: ChatMeta;
   status?: string;
@@ -139,10 +141,10 @@ export function parseBackup(text: string): StoredChat[] | string {
       model: typeof c.model === "string" ? c.model : undefined,
       docIds: Array.isArray(c.docIds) ? c.docIds.filter((d): d is string => typeof d === "string") : [],
       // Drop transient fields (status) and keep meta only as stored.
-      messages: c.messages.map(({ role, content, error, meta, timing }) => {
+      messages: c.messages.map(({ role, content, at, error, meta, timing }) => {
         const m = cleanMeta(meta);
         const t = cleanTiming(timing);
-        return { role, content, ...(error ? { error: true } : {}), ...(m ? { meta: m } : {}), ...(t ? { timing: t } : {}) };
+        return { role, content, ...(Number.isFinite(at) ? { at } : {}), ...(error ? { error: true } : {}), ...(m ? { meta: m } : {}), ...(t ? { timing: t } : {}) };
       }),
     });
   }
