@@ -8,7 +8,7 @@ import Link from "next/link";
 import {
   AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight,
   AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, ClipboardPaste, Copy, Download, FolderOpen, Image as ImageIcon,
-  MoveDown, MoveUp, Paintbrush, Pencil, Scissors,
+  FlipHorizontal2, FlipVertical2, Italic, MoveDown, MoveUp, Paintbrush, Pencil, RotateCcw, Scissors, Underline,
   ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Library, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import { ThemeToggle } from "../theme-toggle";
@@ -20,7 +20,7 @@ import { listWorks, removeWork, saveWork, thumbnail, type Work } from "./works";
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, TEMPLATES, cleanEls, fromTemplate, hug, newId, refit, svgOf, toSvg,
+  DEFAULT_BRAND, FORMATS, LIMITS, SHAPES, TEMPLATES, cleanEls, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type ShapeId,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
@@ -55,7 +55,12 @@ function recolor(els: El[], from: string, to: string): El[] {
   const c = (x: string) => (x.toLowerCase() === from.toLowerCase() ? to : x);
   return els.map((e) => {
     if (e.kind === "text") return { ...e, color: c(e.color), ...(e.bg ? { bg: { ...e.bg, fill: c(e.bg.fill) } } : {}) };
-    if (e.kind === "shape") return { ...e, fill: e.fill.kind === "solid" ? { kind: "solid", color: c(e.fill.color) } : { ...e.fill, stops: [{ ...e.fill.stops[0], color: c(e.fill.stops[0].color) }, { ...e.fill.stops[1], color: c(e.fill.stops[1].color) }] } };
+    if (e.kind === "shape")
+      return {
+        ...e,
+        fill: e.fill.kind === "solid" ? { kind: "solid", color: c(e.fill.color) } : { ...e.fill, stops: [{ ...e.fill.stops[0], color: c(e.fill.stops[0].color) }, { ...e.fill.stops[1], color: c(e.fill.stops[1].color) }] },
+        ...(e.stroke ? { stroke: { ...e.stroke, color: c(e.stroke.color) } } : {}),
+      };
     return e;
   });
 }
@@ -277,8 +282,12 @@ export default function Studio({ username }: { username: string }) {
   };
   const addText = () =>
     add({ id: newId(), kind: "text", name: "Metin", x: W * 0.1, y: H * 0.42, w: W * 0.8, h: 90 * u, text: "Yeni metin", size: 64 * u, weight: 700, color: brand.primary, align: "start", leading: 1.15, tracking: 0, auto: true } satisfies TextEl);
-  const addShape = () =>
-    add({ id: newId(), kind: "shape", name: "Şekil", x: W / 2 - 160 * u, y: H / 2 - 60 * u, w: 320 * u, h: 120 * u, fill: { kind: "solid", color: brand.accent }, radius: 16 * u } satisfies ShapeEl);
+  const addShape = (id: ShapeId = "rounded") => add(shapeFrom(id, W / 2, H / 2, 360 * u, brand.accent));
+  /** The shape library as a menu under the toolbar button. */
+  const shapeMenu = (at: HTMLElement) => {
+    const r = at.getBoundingClientRect();
+    setMenu({ x: r.left, y: r.bottom + 4, view, items: (Object.keys(SHAPES) as ShapeId[]).map((id) => ({ label: SHAPES[id].label, icon: <ShapeIcon id={id} />, run: () => addShape(id) })) });
+  };
   const addLogo = () => {
     if (!brand.logo) return setNote({ kind: "error", text: "Önce marka kitine logo ekleyin." });
     const b = boxOf(brand.logo, 220 * u);
@@ -358,13 +367,21 @@ export default function Studio({ username }: { username: string }) {
   };
   /** Looks without content: colours, type, corners, transparency (same kind of element only). */
   const styleOf = (e: El): Partial<El> =>
-    e.kind === "text" ? { color: e.color, size: e.size, weight: e.weight, align: e.align, leading: e.leading, tracking: e.tracking, upper: e.upper, bg: e.bg, opacity: e.opacity, auto: e.auto }
-    : e.kind === "shape" ? { fill: e.fill, radius: e.radius, opacity: e.opacity }
-    : { radius: e.radius, opacity: e.opacity };
+    e.kind === "text" ? { color: e.color, size: e.size, weight: e.weight, align: e.align, leading: e.leading, tracking: e.tracking, upper: e.upper, italic: e.italic, underline: e.underline, bg: e.bg, opacity: e.opacity, auto: e.auto, shadow: e.shadow }
+    : e.kind === "shape" ? { fill: e.fill, radius: e.radius, opacity: e.opacity, stroke: e.stroke, noFill: e.noFill, shadow: e.shadow }
+    : { radius: e.radius, opacity: e.opacity, shadow: e.shadow };
   const pasteStyle = (id: string) => {
     const src = styleClip;
     const e = view.find((x) => x.id === id);
-    if (src && e && src.kind === e.kind) patch(id, styleOf(src));
+    if (!src || !e || src.kind !== e.kind) return;
+    const st = styleOf(src);
+    // A line is only its outline: from a filled shape it takes the fill colour as its line colour, keeps its width.
+    if (e.kind === "shape" && e.shape === "line") {
+      const s = st as Partial<ShapeEl>;
+      const color = s.stroke?.color ?? (s.fill?.kind === "solid" ? s.fill.color : s.fill?.stops[0].color) ?? e.stroke?.color ?? "#14263d";
+      return patch(id, { ...s, noFill: true, stroke: { ...(e.stroke ?? { width: 4 * u }), ...s.stroke, color } });
+    }
+    patch(id, st);
   };
   const align = (id: string, p: "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom") => {
     const e = view.find((x) => x.id === id);
@@ -385,7 +402,7 @@ export default function Studio({ username }: { username: string }) {
         { label: "Yapıştır", icon: <ClipboardPaste size={14} />, keys: "Ctrl+V", run: paste, disabled: !clip },
         "-",
         { label: "Metin ekle", icon: <Type size={14} />, run: addText },
-        { label: "Şekil ekle", icon: <Shapes size={14} />, run: addShape },
+        { label: "Şekil ekle", icon: <Shapes size={14} />, run: () => addShape() },
         { label: "Logo ekle", icon: <Stamp size={14} />, run: addLogo, disabled: !brand.logo },
         "-",
         { label: "Geri al", icon: <Undo2 size={14} />, keys: "Ctrl+Z", run: undo, disabled: !hist.past.length },
@@ -859,7 +876,9 @@ export default function Studio({ username }: { username: string }) {
               <ImageIcon size={15} /> Görsel
               <input type="file" accept=".png,.jpg,.jpeg,.webp" className="sr-only" onChange={(e) => { pick("image", e.target.files?.[0]); e.target.value = ""; }} />
             </label>
-            <ToolBtn onClick={addShape} icon={<Shapes size={15} />} label="Şekil" />
+            <button className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg" onClick={(e) => shapeMenu(e.currentTarget)} aria-haspopup="menu">
+              <Shapes size={15} /> Şekil <ChevronDown size={13} />
+            </button>
             <ToolBtn onClick={addLogo} icon={<Stamp size={15} />} label="Logo" />
             <span className="ml-auto hidden text-xs text-muted xl:block">Çift tıkla: metni düzenle · Shift: oranı koru · Alt: hizalamasız taşı</span>
           </div>
@@ -1040,6 +1059,7 @@ function Inspector({ el, canvas, brand, u, onPatch, onCommit, onRemove, onDuplic
   const swatches = [...new Set([brand.primary, brand.accent, "#ffffff", "#14263d", "#000000"])];
   const ratio = el.w / el.h;
   const keep = el.kind === "image";
+  const rot = Number.isFinite(el.rotation) ? ((el.rotation as number) % 360 + 360) % 360 : 0;
 
   return (
     <>
@@ -1078,6 +1098,30 @@ function Inspector({ el, canvas, brand, u, onPatch, onCommit, onRemove, onDuplic
           </div>
         </div>
         <Slider label="Saydamlık" value={el.opacity ?? 1} min={0.1} max={1} step={0.05} show={`%${Math.round((el.opacity ?? 1) * 100)}`} onChange={(opacity) => live({ opacity })} onCommit={onCommit} />
+        <div className="flex items-end gap-1">
+          <div className="flex-1">
+            <Slider label="Döndür" value={rot > 180 ? rot - 360 : rot} min={-180} max={180} step={1} show={`${Math.round(rot > 180 ? rot - 360 : rot)}°`} onChange={(r) => live({ rotation: r ? (r + 360) % 360 : undefined })} onCommit={onCommit} />
+          </div>
+          <button className={iconBtn} disabled={el.locked || !rot} onClick={() => now({ rotation: undefined })} aria-label="Döndürmeyi sıfırla" title="Sıfırla"><RotateCcw size={14} /></button>
+          {el.kind !== "text" && (
+            <>
+              <button className={`${iconBtn} ${el.flipX ? "bg-accent-soft text-accent" : ""}`} disabled={el.locked} aria-pressed={!!el.flipX} onClick={() => now({ flipX: !el.flipX || undefined })} aria-label="Yatay çevir" title="Yatay çevir"><FlipHorizontal2 size={15} /></button>
+              <button className={`${iconBtn} ${el.flipY ? "bg-accent-soft text-accent" : ""}`} disabled={el.locked} aria-pressed={!!el.flipY} onClick={() => now({ flipY: !el.flipY || undefined })} aria-label="Dikey çevir" title="Dikey çevir"><FlipVertical2 size={15} /></button>
+            </>
+          )}
+        </div>
+        <label className="flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={!!el.shadow} disabled={el.locked} onChange={(e) => now({ shadow: e.target.checked ? { color: "#000000", blur: 24 * u, x: 0, y: 10 * u, opacity: 0.3 } : undefined })} /> Gölge
+        </label>
+        {el.shadow && (
+          <div className="space-y-2 rounded-lg bg-subtle p-2">
+            <Swatches swatches={swatches} value={el.shadow.color} set={(color) => now({ shadow: { ...el.shadow!, color } })} />
+            <Slider label="Yumuşaklık" value={el.shadow.blur} min={0} max={Math.round(120 * u)} step={1} show={`${Math.round(el.shadow.blur)} px`} onChange={(blur) => live({ shadow: { ...el.shadow!, blur } })} onCommit={onCommit} />
+            <Slider label="Yatay kayma" value={el.shadow.x} min={Math.round(-60 * u)} max={Math.round(60 * u)} step={1} show={`${Math.round(el.shadow.x)} px`} onChange={(x) => live({ shadow: { ...el.shadow!, x } })} onCommit={onCommit} />
+            <Slider label="Dikey kayma" value={el.shadow.y} min={Math.round(-60 * u)} max={Math.round(60 * u)} step={1} show={`${Math.round(el.shadow.y)} px`} onChange={(y) => live({ shadow: { ...el.shadow!, y } })} onCommit={onCommit} />
+            <Slider label="Koyuluk" value={el.shadow.opacity} min={0.05} max={1} step={0.05} show={`%${Math.round(el.shadow.opacity * 100)}`} onChange={(opacity) => live({ shadow: { ...el.shadow!, opacity } })} onCommit={onCommit} />
+          </div>
+        )}
       </section>
 
       {el.kind === "text" && (
@@ -1102,9 +1146,13 @@ function Inspector({ el, canvas, brand, u, onPatch, onCommit, onRemove, onDuplic
                 </button>
               ))}
             </div>
-            <label className="flex items-center gap-1.5 text-xs">
-              <input type="checkbox" checked={!!el.upper} onChange={(e) => now({ upper: e.target.checked })} /> BÜYÜK HARF
-            </label>
+            <div className="flex items-center gap-1">
+              <button className={`${iconBtn} ${el.italic ? "bg-accent-soft text-accent" : ""}`} aria-pressed={!!el.italic} onClick={() => now({ italic: !el.italic || undefined })} aria-label="Eğik" title="Eğik"><Italic size={15} /></button>
+              <button className={`${iconBtn} ${el.underline ? "bg-accent-soft text-accent" : ""}`} aria-pressed={!!el.underline} onClick={() => now({ underline: !el.underline || undefined })} aria-label="Altı çizili" title="Altı çizili"><Underline size={15} /></button>
+              <label className="ml-1 flex items-center gap-1.5 text-xs">
+                <input type="checkbox" checked={!!el.upper} onChange={(e) => now({ upper: e.target.checked })} /> BÜYÜK HARF
+              </label>
+            </div>
           </div>
           <Swatches swatches={swatches} value={el.color} set={(color) => now({ color })} />
           <Slider label="Satır aralığı" value={el.leading} min={0.8} max={2} step={0.02} show={el.leading.toFixed(2)} onChange={(leading) => live({ leading })} onCommit={onCommit} />
@@ -1146,7 +1194,19 @@ function Inspector({ el, canvas, brand, u, onPatch, onCommit, onRemove, onDuplic
       {el.kind === "shape" && (
         <section className={section}>
           <h3 className={heading}>Şekil</h3>
-          {el.fill.kind === "solid" ? (
+          <label className="block">
+            <span className="mb-0.5 block text-[11px] text-muted">Biçim</span>
+            <select className={small} value={shapeIdOf(el)} onChange={(e) => now(swapShape(el, e.target.value as ShapeId))}>
+              {shapeIdOf(el) === "custom" && <option value="custom">Özel</option>}
+              {(Object.keys(SHAPES) as ShapeId[]).map((id) => <option key={id} value={id}>{SHAPES[id].label}</option>)}
+            </select>
+          </label>
+          {el.shape !== "line" && (
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={!el.noFill} onChange={(e) => now({ noFill: !e.target.checked || undefined, ...(!e.target.checked && !el.stroke ? { stroke: { color: swatches[0], width: Math.max(2, 4 * u) } } : {}) })} /> Dolgu
+            </label>
+          )}
+          {el.shape === "line" || el.noFill ? null : el.fill.kind === "solid" ? (
             <Swatches swatches={swatches} value={el.fill.color} set={(color) => now({ fill: { kind: "solid", color } })} />
           ) : (
             <div className="space-y-2">
@@ -1158,10 +1218,75 @@ function Inspector({ el, canvas, brand, u, onPatch, onCommit, onRemove, onDuplic
               ))}
             </div>
           )}
-          <Slider label="Köşe" value={el.radius ?? 0} min={0} max={Math.round(Math.min(el.w, el.h) / 2)} step={1} show={`${Math.round(el.radius ?? 0)} px`} onChange={(radius) => live({ radius })} onCommit={onCommit} />
+          {(el.shape ?? "rect") === "rect" && (
+            <Slider label="Köşe" value={el.radius ?? 0} min={0} max={Math.round(Math.min(el.w, el.h) / 2)} step={1} show={`${Math.round(el.radius ?? 0)} px`} onChange={(radius) => live({ radius })} onCommit={onCommit} />
+          )}
+          {el.shape !== "line" && (
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={!!el.stroke} onChange={(e) => now(e.target.checked ? { stroke: { color: swatches[0], width: Math.max(2, 4 * u) } } : { stroke: undefined, noFill: undefined })} /> Kenarlık
+            </label>
+          )}
+          {el.stroke && (
+            <div className="space-y-2 rounded-lg bg-subtle p-2">
+              <Swatches swatches={swatches} value={el.stroke.color} set={(color) => now({ stroke: { ...el.stroke!, color } })} />
+              <Slider label="Kalınlık" value={el.stroke.width} min={1} max={Math.round(40 * u) + 1} step={1} show={`${Math.round(el.stroke.width)} px`} onChange={(width) => live({ stroke: { ...el.stroke!, width } })} onCommit={onCommit} />
+              <div role="group" aria-label="Çizgi türü" className="flex rounded-lg border border-line bg-panel p-0.5">
+                {([[undefined, "Düz"], ["dash", "Kesikli"], ["dot", "Noktalı"]] as const).map(([d, label]) => (
+                  <button key={label} className={`flex-1 ${chip(el.stroke!.dash === d)}`} aria-pressed={el.stroke!.dash === d} onClick={() => now({ stroke: { ...el.stroke!, dash: d } })}>{label}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          {el.shape === "line" && (
+            <div role="group" aria-label="Ok başı" className="flex rounded-lg border border-line bg-subtle p-0.5">
+              {([[undefined, "Oksuz"], ["end", "Sonda ok"], ["both", "İki uçta"]] as const).map(([a, label]) => (
+                <button key={label} className={`flex-1 ${chip(el.arrow === a)}`} aria-pressed={el.arrow === a} onClick={() => now({ arrow: a })}>{label}</button>
+              ))}
+            </div>
+          )}
         </section>
       )}
     </>
+  );
+}
+
+/** Which library shape an element is (by kind and points), "custom" for imported ones. */
+function shapeIdOf(e: ShapeEl): ShapeId | "custom" {
+  const kind = e.shape ?? "rect";
+  const ids = (Object.keys(SHAPES) as ShapeId[]).filter((id) => SHAPES[id].shape === kind);
+  if (kind === "poly") return ids.find((id) => JSON.stringify((SHAPES[id] as { points?: unknown }).points) === JSON.stringify(e.points)) ?? "custom";
+  if (kind === "line") return e.arrow ? "arrowLine" : "line";
+  if (kind === "rect") return !e.radius ? "rect" : e.radius >= Math.min(e.w, e.h) / 2 - 0.5 ? "pill" : "rounded";
+  return ids[0] ?? "custom";
+}
+/** Another library shape in the same box, keeping colours and outline. */
+function swapShape(e: ShapeEl, id: ShapeId): Partial<ShapeEl> {
+  const d = shapeFrom(id, e.x + e.w / 2, e.y + e.h / 2, Math.max(e.w, e.h), e.fill.kind === "solid" ? e.fill.color : e.fill.stops[0].color);
+  const line = d.shape === "line";
+  // The new box first (a line is thin; a shape made from a line gets its library proportions), then what depends on it.
+  const h = line ? d.h : e.shape === "line" ? e.w / SHAPES[id].ratio : e.h;
+  const round = (SHAPES[id] as { round?: number }).round;
+  return {
+    shape: d.shape, points: d.points, arrow: d.arrow, radius: round ? Math.min(e.w, h) * round : undefined,
+    // A line needs an outline; a filled shape from a line gets its fill back.
+    stroke: line ? (e.stroke ?? d.stroke) : e.stroke, noFill: line ? true : e.shape === "line" ? undefined : e.noFill,
+    ...(h !== e.h ? { h, y: e.y + e.h / 2 - h / 2 } : {}),
+  };
+}
+
+/** A small preview of a library shape for the menu. */
+function ShapeIcon({ id }: { id: ShapeId }) {
+  const d = SHAPES[id] as { shape: string; ratio: number; round?: number; points?: readonly (readonly [number, number])[] };
+  const [w, h] = d.shape === "line" ? [14, 2] : d.ratio >= 1 ? [14, 14 / d.ratio] : [14 * d.ratio, 14];
+  const [x, y] = [(16 - w) / 2, (16 - h) / 2];
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden className="text-current">
+      {d.shape === "ellipse" ? <ellipse cx="8" cy="8" rx={w / 2} ry={h / 2} fill="currentColor" />
+        : d.shape === "line" ? <line x1="1" x2="15" y1="8" y2="8" stroke="currentColor" strokeWidth="1.6" markerEnd={undefined} />
+        : d.points ? <polygon points={d.points.map(([px, py]) => `${x + px * w},${y + py * h}`).join(" ")} fill="currentColor" />
+        : <rect x={x} y={y} width={w} height={h} rx={d.round ? Math.min(w, h) * d.round : 0} fill="currentColor" />}
+      {id === "arrowLine" && <polygon points="15,8 11,5.5 11,10.5" fill="currentColor" />}
+    </svg>
   );
 }
 

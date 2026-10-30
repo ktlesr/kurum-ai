@@ -3,30 +3,62 @@
 // The studio canvas: the same primitives the export draws (lib/studio draw), as React SVG, plus selection, move,
 // resize handles, snapping guides and in-place text editing. Coordinates are design pixels (the SVG viewBox).
 import { useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { FONT_FAMILY, FORMATS, draw, type El, type FormatId, type Measure, type Prim, type TextEl } from "@/lib/studio";
+import { FONT_FAMILY, FORMATS, dashOf, draw, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl } from "@/lib/studio";
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 type Box = { x: number; y: number; w: number; h: number };
-type Drag = { mode: "move" | "resize"; id: string; handle?: Handle; px: number; py: number; box: Box; ratio: number; moved: boolean };
+type Drag = { mode: "move" | "resize" | "rotate"; id: string; handle?: Handle; px: number; py: number; box: Box; ratio: number; rot: number; moved: boolean };
+/** (x, y) turned by `deg` around (cx, cy). */
+const turn = (x: number, y: number, cx: number, cy: number, deg: number) => {
+  const a = (deg * Math.PI) / 180;
+  const [c, s] = [Math.cos(a), Math.sin(a)];
+  return { x: cx + (x - cx) * c - (y - cy) * s, y: cy + (x - cx) * s + (y - cy) * c };
+};
+const rotOf = (el: El) => (Number.isFinite(el.rotation) ? (el.rotation as number) % 360 : 0);
+const rotAttr = (el: El) => (rotOf(el) ? `rotate(${rotOf(el)} ${el.x + el.w / 2} ${el.y + el.h / 2})` : undefined);
 const HANDLES: Handle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const CURSOR: Record<Handle, string> = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
 const MIN = 12;
 
+/** One primitive as React SVG: the same markup svgOf writes for the export (lib/studio). */
 export function PrimView({ p, k, uid }: { p: Prim; k: number; uid: string }) {
-  const o = p.opacity < 1 ? p.opacity : undefined;
-  if (p.kind === "rect") {
-    if (p.fill.kind === "solid") return <rect x={p.x} y={p.y} width={p.w} height={p.h} rx={p.radius || undefined} fill={p.fill.color} opacity={o} />;
-    const id = `${uid}g${k}`;
-    const [a, b] = p.fill.stops;
+  const common = {
+    opacity: p.opacity < 1 ? p.opacity : undefined,
+    transform: tfAttr(p.tf),
+    filter: p.shadow ? `url(#${uid}f${k})` : undefined,
+  };
+  const shadow = p.shadow && (
+    <filter id={`${uid}f${k}`} filterUnits="userSpaceOnUse" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx={p.shadow.x} dy={p.shadow.y} stdDeviation={p.shadow.blur / 2} floodColor={p.shadow.color} floodOpacity={Math.min(1, Math.max(0, p.shadow.opacity))} />
+    </filter>
+  );
+  if (p.kind === "rect" || p.kind === "ellipse" || p.kind === "poly") {
+    const gid = `${uid}g${k}`;
+    const grad = p.fill?.kind === "linear" && (
+      <linearGradient id={gid} x1="0" y1="0" x2={p.fill.dir === "diag" ? 1 : 0} y2="1">
+        <stop offset="0" stopColor={p.fill.stops[0].color} stopOpacity={p.fill.stops[0].opacity} />
+        <stop offset="1" stopColor={p.fill.stops[1].color} stopOpacity={p.fill.stops[1].opacity} />
+      </linearGradient>
+    );
+    const paint = {
+      fill: !p.fill ? "none" : p.fill.kind === "solid" ? p.fill.color : `url(#${gid})`,
+      ...(p.stroke
+        ? { stroke: p.stroke.color, strokeWidth: p.stroke.width, strokeLinejoin: "round" as const, strokeDasharray: dashOf(p.stroke), strokeLinecap: p.stroke.dash === "dot" ? ("round" as const) : undefined }
+        : {}),
+      ...common,
+    };
     return (
       <>
-        <defs>
-          <linearGradient id={id} x1="0" y1="0" x2={p.fill.dir === "diag" ? 1 : 0} y2="1">
-            <stop offset="0" stopColor={a.color} stopOpacity={a.opacity} />
-            <stop offset="1" stopColor={b.color} stopOpacity={b.opacity} />
-          </linearGradient>
-        </defs>
-        <rect x={p.x} y={p.y} width={p.w} height={p.h} rx={p.radius || undefined} fill={`url(#${id})`} opacity={o} />
+        {(grad || shadow) && <defs>{grad}{shadow}</defs>}
+        {p.kind === "rect" ? (
+          <rect x={p.x} y={p.y} width={p.w} height={p.h} rx={p.radius || undefined} {...paint} />
+        ) : p.kind === "ellipse" ? (
+          <ellipse cx={p.x + p.w / 2} cy={p.y + p.h / 2} rx={p.w / 2} ry={p.h / 2} {...paint} />
+        ) : p.closed ? (
+          <polygon points={p.pts.map(([x, y]) => `${x},${y}`).join(" ")} {...paint} />
+        ) : (
+          <polyline points={p.pts.map(([x, y]) => `${x},${y}`).join(" ")} {...paint} />
+        )}
       </>
     );
   }
@@ -34,25 +66,36 @@ export function PrimView({ p, k, uid }: { p: Prim; k: number; uid: string }) {
     const id = `${uid}c${k}`;
     return (
       <>
-        {p.clip && (
+        {(p.clip || shadow) && (
           <defs>
-            <clipPath id={id}>
-              <rect x={p.clip.x} y={p.clip.y} width={p.clip.w} height={p.clip.h} rx={p.clip.radius || undefined} />
-            </clipPath>
+            {p.clip && (
+              <clipPath id={id}>
+                <rect x={p.clip.x} y={p.clip.y} width={p.clip.w} height={p.clip.h} rx={p.clip.radius || undefined} />
+              </clipPath>
+            )}
+            {shadow}
           </defs>
         )}
-        <image href={p.pic.src} x={p.x} y={p.y} width={p.w} height={p.h} preserveAspectRatio="xMidYMid meet" clipPath={p.clip ? `url(#${id})` : undefined} opacity={o} />
+        <g {...common}>
+          <image href={p.pic.src} x={p.x} y={p.y} width={p.w} height={p.h} preserveAspectRatio="xMidYMid meet" clipPath={p.clip ? `url(#${id})` : undefined} />
+        </g>
       </>
     );
   }
   return (
-    <text fontSize={p.size} fontWeight={p.weight} fill={p.color} textAnchor={p.anchor === "start" ? undefined : p.anchor} letterSpacing={p.tracking || undefined} opacity={o} style={{ fontFamily: `${FONT_FAMILY}, Arial, sans-serif` }}>
-      {p.lines.map((line, i) => (
-        <tspan key={i} x={p.x} y={p.y + p.size * (0.9 + i * p.leading)}>
-          {line}
-        </tspan>
-      ))}
-    </text>
+    <>
+      {shadow && <defs>{shadow}</defs>}
+      <text
+        fontSize={p.size} fontWeight={p.weight} fill={p.color} textAnchor={p.anchor === "start" ? undefined : p.anchor} letterSpacing={p.tracking || undefined}
+        fontStyle={p.italic ? "italic" : undefined} textDecoration={p.underline ? "underline" : undefined} {...common} style={{ fontFamily: `${FONT_FAMILY}, Arial, sans-serif` }}
+      >
+        {p.lines.map((line, i) => (
+          <tspan key={i} x={p.x} y={p.y + p.size * (0.9 + i * p.leading)}>
+            {line}
+          </tspan>
+        ))}
+      </text>
+    </>
   );
 }
 
@@ -104,15 +147,15 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
     onSelect(el.id);
     if (el.locked || editing === el.id) return;
     const p = point(e);
-    drag.current = { mode, id: el.id, handle, px: p.x, py: p.y, box: { x: el.x, y: el.y, w: el.w, h: el.h }, ratio: el.w / el.h, moved: false };
+    drag.current = { mode, id: el.id, handle, px: p.x, py: p.y, box: { x: el.x, y: el.y, w: el.w, h: el.h }, ratio: el.w / el.h, rot: rotOf(el), moved: false };
   };
 
   const move = (e: RPointerEvent) => {
     const d = drag.current;
     if (!d) return;
     const p = point(e);
-    const dx = p.x - d.px;
-    const dy = p.y - d.py;
+    let dx = p.x - d.px;
+    let dy = p.y - d.py;
     if (!d.moved && Math.hypot(dx, dy) < 2 * scale) return;
     // Captured only once it is a drag: a plain click (and a double click to edit) stays on the element.
     if (!d.moved) svg.current?.setPointerCapture(e.pointerId);
@@ -130,6 +173,18 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
     };
     let b: Box = { ...d.box };
     const g = { v: [] as number[], h: [] as number[] };
+    if (d.mode === "rotate") {
+      // The angle of the pointer around the centre; the handle sits above it (0°). Shift: 15° steps, else 0/90/180/270 catch.
+      const cx = d.box.x + d.box.w / 2;
+      const cy = d.box.y + d.box.h / 2;
+      let deg = (Math.atan2(p.y - cy, p.x - cx) * 180) / Math.PI + 90;
+      deg = ((deg % 360) + 360) % 360;
+      if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+      else for (const q of [0, 90, 180, 270, 360]) if (Math.abs(deg - q) < 3) deg = q;
+      deg %= 360;
+      onChange(live.current.map((x) => (x.id === d.id ? ({ ...x, rotation: deg ? Math.round(deg * 10) / 10 : undefined } as El) : x)), false);
+      return;
+    }
     if (d.mode === "move") {
       b.x += dx;
       b.y += dy;
@@ -150,6 +205,8 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
       // Pictures keep their ratio (a logo is never stretched); text and shapes resize freely, Shift keeps it.
       const keep = el.kind === "image" || e.shiftKey;
       let { x, y, w, h } = d.box;
+      // A turned element resizes along its own axes: the pointer's movement turned back by its angle.
+      ({ x: dx, y: dy } = turn(dx, dy, 0, 0, -d.rot));
       if (hd.includes("e")) w = d.box.w + dx;
       if (hd.includes("w")) {
         w = d.box.w - dx;
@@ -170,6 +227,14 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
       }
       if (w < MIN || h < MIN) return;
       b = { x, y, w, h };
+      if (d.rot) {
+        // The opposite handle stays where it is on screen (the centre, and so the turning point, moved).
+        const ax = (bx: Box) => bx.x + (hd.includes("w") ? bx.w : hd.includes("e") ? 0 : bx.w / 2);
+        const ay = (bx: Box) => bx.y + (hd.includes("n") ? bx.h : hd.includes("s") ? 0 : bx.h / 2);
+        const was = turn(ax(d.box), ay(d.box), d.box.x + d.box.w / 2, d.box.y + d.box.h / 2, d.rot);
+        const now = turn(ax(b), ay(b), b.x + b.w / 2, b.y + b.h / 2, d.rot);
+        b = { ...b, x: b.x + was.x - now.x, y: b.y + was.y - now.y };
+      }
     }
     setGuides(g);
     onChange(live.current.map((x) => (x.id === d.id ? ({ ...x, ...b } as El) : x)), false);
@@ -223,6 +288,7 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
           y={el.y}
           width={el.w}
           height={el.h}
+          transform={rotAttr(el)}
           fill="transparent"
           className={el.locked ? "" : "cursor-move hover:stroke-[#3b82f6]"}
           strokeWidth={stroke}
@@ -247,6 +313,7 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
       {sel && (
         <g
           pointerEvents={sel.locked ? "none" : undefined}
+          transform={rotAttr(sel)}
           onContextMenu={(e) => {
             // A resize handle belongs to the selected element: its menu, not the empty canvas's.
             e.preventDefault();
@@ -276,11 +343,18 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
                 />
               );
             })}
+          {!sel.locked && editing !== sel.id && (
+            <g style={{ cursor: "grab" }} onPointerDown={(e) => start(e, sel, "rotate")}>
+              <title>Döndür (Shift: 15° adım)</title>
+              <line x1={sel.x + sel.w / 2} x2={sel.x + sel.w / 2} y1={sel.y} y2={sel.y - 26 * scale} stroke="#3b82f6" strokeWidth={stroke} pointerEvents="none" />
+              <circle cx={sel.x + sel.w / 2} cy={sel.y - 30 * scale} r={hs * 0.6} fill="#ffffff" stroke="#3b82f6" strokeWidth={stroke} />
+            </g>
+          )}
         </g>
       )}
 
       {editEl && (
-        <foreignObject x={editEl.x} y={editEl.y} width={Math.max(editEl.w, 40)} height={Math.max(editEl.h, editEl.size * editEl.leading)}>
+        <foreignObject x={editEl.x} y={editEl.y} width={Math.max(editEl.w, 40)} height={Math.max(editEl.h, editEl.size * editEl.leading)} transform={rotAttr(editEl)}>
           <textarea
             autoFocus
             aria-label={`${editEl.name} metni`}

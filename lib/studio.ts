@@ -311,24 +311,100 @@ export function layout(d: Design, measure: Measure): Layer[] {
 // so what is on screen is what gets saved.
 
 export type Fill = { kind: "solid"; color: string } | { kind: "linear"; dir: "diag" | "down"; stops: [{ color: string; opacity: number }, { color: string; opacity: number }] };
-type Common = { id: string; name: string; x: number; y: number; w: number; h: number; locked?: boolean; opacity?: number };
+export type Stroke = { color: string; width: number; dash?: "dash" | "dot" };
+export type Shadow = { color: string; blur: number; x: number; y: number; opacity: number };
+type Common = {
+  id: string; name: string; x: number; y: number; w: number; h: number; locked?: boolean; opacity?: number;
+  /** Degrees clockwise around the box centre; flips mirror pictures and shapes (not text). */
+  rotation?: number; flipX?: boolean; flipY?: boolean; shadow?: Shadow;
+};
 export type TextEl = Common & {
   kind: "text"; text: string; role?: Role; size: number; weight: number; color: string; align: "start" | "middle" | "end";
-  leading: number; tracking: number; upper?: boolean;
+  leading: number; tracking: number; upper?: boolean; italic?: boolean; underline?: boolean;
   /** Shrink the size (down to 40%) until the text fits the box; off once the user sets a size. */
   auto: boolean;
   /** A filled, rounded box behind the text (the tag pill). */
   bg?: { fill: string; radius: number };
 };
 export type ImageEl = Common & { kind: "image"; pic: Picture; fit: "cover" | "contain"; logo?: boolean; radius?: number };
-export type ShapeEl = Common & { kind: "shape"; fill: Fill; radius?: number };
+/**
+ * rect (radius rounds the corners, up to a pill), ellipse, poly (points as 0–1 fractions of the box) or line (left to
+ * right through the middle of the box, `arrow` heads). noFill: only the outline is drawn.
+ */
+export type ShapeKind = "rect" | "ellipse" | "poly" | "line";
+export type ShapeEl = Common & { kind: "shape"; fill: Fill; radius?: number; shape?: ShapeKind; points?: [number, number][]; stroke?: Stroke; noFill?: boolean; arrow?: "end" | "both" };
 export type El = TextEl | ImageEl | ShapeEl;
 
+/** Rotation (degrees around cx, cy) and mirroring of one element's primitives. */
+export type Tf = { rot: number; cx: number; cy: number; fx?: boolean; fy?: boolean };
+type PrimBase = { opacity: number; tf?: Tf; shadow?: Shadow };
 /** What gets drawn; the export and the editor both draw exactly these. */
-export type Prim =
-  | { kind: "rect"; x: number; y: number; w: number; h: number; fill: Fill; radius: number; opacity: number }
-  | { kind: "image"; x: number; y: number; w: number; h: number; pic: Picture; clip?: { x: number; y: number; w: number; h: number; radius: number }; opacity: number }
-  | { kind: "text"; x: number; y: number; anchor: "start" | "middle" | "end"; size: number; lines: string[]; weight: number; color: string; leading: number; tracking: number; opacity: number };
+export type Prim = PrimBase &
+  (
+    | { kind: "rect"; x: number; y: number; w: number; h: number; fill: Fill | null; radius: number; stroke?: Stroke }
+    | { kind: "ellipse"; x: number; y: number; w: number; h: number; fill: Fill | null; stroke?: Stroke }
+    | { kind: "poly"; pts: [number, number][]; closed: boolean; fill: Fill | null; stroke?: Stroke }
+    | { kind: "image"; x: number; y: number; w: number; h: number; pic: Picture; clip?: { x: number; y: number; w: number; h: number; radius: number } }
+    | { kind: "text"; x: number; y: number; anchor: "start" | "middle" | "end"; size: number; lines: string[]; weight: number; color: string; leading: number; tracking: number; italic?: boolean; underline?: boolean }
+  );
+
+/** SVG transform for a Tf (numbers only): rotate, then mirror around the same centre. */
+export function tfAttr(t: Tf | undefined) {
+  if (!t) return undefined;
+  const parts: string[] = [];
+  if (t.rot) parts.push(`rotate(${n(t.rot)} ${n(t.cx)} ${n(t.cy)})`);
+  if (t.fx || t.fy) parts.push(`translate(${n(t.cx)} ${n(t.cy)}) scale(${t.fx ? -1 : 1} ${t.fy ? -1 : 1}) translate(${n(-t.cx)} ${n(-t.cy)})`);
+  return parts.join(" ") || undefined;
+}
+/** The SVG stroke attributes of a Stroke. */
+export const dashOf = (s: Stroke) => (s.dash === "dash" ? `${n(s.width * 3)} ${n(s.width * 2)}` : s.dash === "dot" ? `0 ${n(s.width * 2)}` : undefined);
+
+// ---- shape library (the "Şekil" menu): each a kind, points for polygons, a default width:height ----------------
+const regular = (k: number, inner = 0): [number, number][] =>
+  Array.from({ length: inner ? 2 * k : k }, (_, i) => {
+    const r = inner && i % 2 ? inner * 0.5 : 0.5;
+    const a = -Math.PI / 2 + (i * Math.PI * 2) / (inner ? 2 * k : k);
+    return [Math.round((0.5 + r * Math.cos(a)) * 1e4) / 1e4, Math.round((0.5 + r * Math.sin(a)) * 1e4) / 1e4];
+  });
+export const SHAPES = {
+  rect: { label: "Dikdörtgen", shape: "rect", ratio: 1.6 },
+  rounded: { label: "Yuvarlak köşeli", shape: "rect", ratio: 1.6, round: 0.18 },
+  pill: { label: "Hap", shape: "rect", ratio: 3, round: 0.5 },
+  ellipse: { label: "Daire", shape: "ellipse", ratio: 1 },
+  triangle: { label: "Üçgen", shape: "poly", ratio: 1.15, points: [[0.5, 0], [1, 1], [0, 1]] },
+  rtriangle: { label: "Dik üçgen", shape: "poly", ratio: 1, points: [[0, 0], [1, 1], [0, 1]] },
+  diamond: { label: "Eşkenar dörtgen", shape: "poly", ratio: 1, points: [[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]] },
+  pentagon: { label: "Beşgen", shape: "poly", ratio: 1, points: regular(5) },
+  hexagon: { label: "Altıgen", shape: "poly", ratio: 1, points: regular(6) },
+  octagon: { label: "Sekizgen", shape: "poly", ratio: 1, points: regular(8) },
+  star: { label: "Yıldız", shape: "poly", ratio: 1, points: regular(5, 0.45) },
+  burst: { label: "Patlama", shape: "poly", ratio: 1, points: regular(12, 0.72) },
+  arrow: { label: "Ok", shape: "poly", ratio: 1.8, points: [[0, 0.3], [0.62, 0.3], [0.62, 0], [1, 0.5], [0.62, 1], [0.62, 0.7], [0, 0.7]] },
+  chevron: { label: "Köşeli ok", shape: "poly", ratio: 1.4, points: [[0, 0], [0.7, 0], [1, 0.5], [0.7, 1], [0, 1], [0.3, 0.5]] },
+  parallelogram: { label: "Paralelkenar", shape: "poly", ratio: 1.8, points: [[0.25, 0], [1, 0], [0.75, 1], [0, 1]] },
+  trapezoid: { label: "Yamuk", shape: "poly", ratio: 1.6, points: [[0.2, 0], [0.8, 0], [1, 1], [0, 1]] },
+  plus: { label: "Artı", shape: "poly", ratio: 1, points: [[0.35, 0], [0.65, 0], [0.65, 0.35], [1, 0.35], [1, 0.65], [0.65, 0.65], [0.65, 1], [0.35, 1], [0.35, 0.65], [0, 0.65], [0, 0.35], [0.35, 0.35]] },
+  bubble: { label: "Konuşma balonu", shape: "poly", ratio: 1.4, points: [[0, 0], [1, 0], [1, 0.75], [0.4, 0.75], [0.2, 1], [0.22, 0.75], [0, 0.75]] },
+  line: { label: "Çizgi", shape: "line", ratio: 12 },
+  arrowLine: { label: "Oklu çizgi", shape: "line", ratio: 12, arrow: "end" },
+} as const satisfies Record<string, { label: string; shape: ShapeKind; ratio: number; round?: number; points?: [number, number][]; arrow?: "end" | "both" }>;
+export type ShapeId = keyof typeof SHAPES;
+
+/** A new shape from the library, `size` on its longer side, centred on (cx, cy). */
+export function shapeFrom(id: ShapeId, cx: number, cy: number, size: number, color: string): ShapeEl {
+  const d: { label: string; shape: ShapeKind; ratio: number; round?: number; points?: readonly (readonly [number, number])[]; arrow?: "end" | "both" } = SHAPES[id];
+  const isLine = d.shape === "line";
+  const w = d.ratio >= 1 ? size : size * d.ratio;
+  const h = isLine ? Math.max(8, size / 40) * 3 : d.ratio >= 1 ? size / d.ratio : size;
+  return {
+    id: newId(), kind: "shape", name: d.label, x: cx - w / 2, y: cy - h / 2, w, h, fill: { kind: "solid", color },
+    ...(d.shape === "rect" ? {} : { shape: d.shape }),
+    ...(d.round ? { radius: Math.min(w, h) * d.round } : {}),
+    ...(d.points ? { points: d.points.map(([x, y]) => [x, y] as [number, number]) } : {}),
+    ...(isLine ? { stroke: { color, width: Math.max(2, size / 60) }, noFill: true } : {}),
+    ...(d.arrow ? { arrow: d.arrow } : {}),
+  };
+}
 
 let seq = 0;
 export const newId = () => `e${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -384,8 +460,11 @@ export function refit(els: El[], from: FormatId, to: FormatId): El[] {
     const [x, w] = axis(e.x, e.w, a.w, b.w);
     const [y, h] = axis(e.y, e.h, a.h, b.h);
     const box = { ...e, x, y, w, h };
-    if (e.kind === "text") return { ...box, size: e.size * s, tracking: e.tracking * s, ...(e.bg ? { bg: { ...e.bg, radius: e.bg.radius * s } } : {}) } as El;
-    return (e.radius ? { ...box, radius: e.radius * s } : box) as El;
+    // Outline and shadow sizes scale with everything else, so the proportions stay.
+    const fx = { ...(e.shadow ? { shadow: { ...e.shadow, blur: e.shadow.blur * s, x: e.shadow.x * s, y: e.shadow.y * s } } : {}) };
+    if (e.kind === "text") return { ...box, ...fx, size: e.size * s, tracking: e.tracking * s, ...(e.bg ? { bg: { ...e.bg, radius: e.bg.radius * s } } : {}) } as El;
+    if (e.kind === "shape" && e.stroke) Object.assign(fx, { stroke: { ...e.stroke, width: e.stroke.width * s } });
+    return (e.radius ? { ...box, ...fx, radius: e.radius * s } : { ...box, ...fx }) as El;
   });
 }
 
@@ -415,9 +494,34 @@ export function textLines(e: TextEl, measure: Measure) {
 export function draw(els: El[], measure: Measure): Prim[] {
   const out: Prim[] = [];
   for (const e of els) {
-    const opacity = e.opacity ?? 1;
-    if (e.kind === "shape") out.push({ kind: "rect", x: e.x, y: e.y, w: e.w, h: e.h, fill: e.fill, radius: e.radius ?? 0, opacity });
-    else if (e.kind === "image") {
+    const rot = Number.isFinite(e.rotation) ? (e.rotation as number) % 360 : 0;
+    const fx = e.kind !== "text" && e.flipX;
+    const fy = e.kind !== "text" && e.flipY;
+    const base: PrimBase = {
+      opacity: e.opacity ?? 1,
+      ...(rot || fx || fy ? { tf: { rot, cx: e.x + e.w / 2, cy: e.y + e.h / 2, ...(fx ? { fx } : {}), ...(fy ? { fy } : {}) } } : {}),
+      ...(e.shadow ? { shadow: { ...e.shadow, color: safeColor(e.shadow.color, "#000000") } } : {}),
+    };
+    if (e.kind === "shape") {
+      const fill = e.noFill ? null : e.fill;
+      const stroke = e.stroke && e.stroke.width > 0 ? { ...e.stroke, color: safeColor(e.stroke.color, "#14263d") } : undefined;
+      const shape = e.shape ?? "rect";
+      if (shape === "ellipse") out.push({ ...base, kind: "ellipse", x: e.x, y: e.y, w: e.w, h: e.h, fill, stroke });
+      else if (shape === "poly") {
+        const pts = (e.points ?? []).map(([px, py]) => [e.x + px * e.w, e.y + py * e.h] as [number, number]);
+        if (pts.length >= 3) out.push({ ...base, kind: "poly", pts, closed: true, fill, stroke });
+      } else if (shape === "line") {
+        if (!stroke) continue;
+        // Arrow heads are filled triangles at the ends; the line stops at their base so its cap doesn't show.
+        const y = e.y + e.h / 2;
+        const head = Math.min(stroke.width * 3.5, e.w / 2);
+        const [x1, x2] = [e.x + (e.arrow === "both" ? head * 0.9 : 0), e.x + e.w - (e.arrow ? head * 0.9 : 0)];
+        out.push({ ...base, kind: "poly", pts: [[x1, y], [x2, y]], closed: false, fill: null, stroke });
+        const tip = (x: number, dir: number): Prim => ({ ...base, kind: "poly", closed: true, stroke: undefined, fill: { kind: "solid", color: stroke.color }, pts: [[x, y], [x - dir * head, y - head * 0.6], [x - dir * head, y + head * 0.6]] });
+        if (e.arrow) out.push(tip(e.x + e.w, 1));
+        if (e.arrow === "both") out.push(tip(e.x, -1));
+      } else out.push({ ...base, kind: "rect", x: e.x, y: e.y, w: e.w, h: e.h, fill, radius: Math.min(e.radius ?? 0, e.w / 2, e.h / 2), stroke });
+    } else if (e.kind === "image") {
       const pic = safePicture(e.pic);
       if (!pic) continue;
       // cover: fills the box, cut by it; contain: the whole picture inside the box, its ratio kept (the logo).
@@ -426,15 +530,16 @@ export function draw(els: El[], measure: Measure): Prim[] {
       const ih = pic.h * s;
       const x = e.x + (e.w - iw) / 2;
       const y = e.y + (e.h - ih) / 2;
-      out.push({ kind: "image", x, y, w: iw, h: ih, pic, opacity, ...(e.fit === "cover" || e.radius ? { clip: { x: e.x, y: e.y, w: e.w, h: e.h, radius: e.radius ?? 0 } } : {}) });
+      out.push({ ...base, kind: "image", x, y, w: iw, h: ih, pic, ...(e.fit === "cover" || e.radius ? { clip: { x: e.x, y: e.y, w: e.w, h: e.h, radius: Math.min(e.radius ?? 0, e.w / 2, e.h / 2) } } : {}) });
     } else {
       const { size, lines, pad } = textLines(e, measure);
       const scale = size / e.size;
-      if (e.bg) out.push({ kind: "rect", x: e.x, y: e.y, w: e.w, h: e.h, fill: { kind: "solid", color: safeColor(e.bg.fill, "#2e5e8c") }, radius: Math.min(e.bg.radius, e.h / 2), opacity });
+      if (e.bg) out.push({ ...base, kind: "rect", x: e.x, y: e.y, w: e.w, h: e.h, fill: { kind: "solid", color: safeColor(e.bg.fill, "#2e5e8c") }, radius: Math.min(e.bg.radius, e.h / 2) });
       const x = e.align === "middle" ? e.x + e.w / 2 : e.align === "end" ? e.x + e.w - pad : e.x + pad;
       // With a pill the line sits in the middle of the box; otherwise the first line starts at the top.
       const y = e.bg ? e.y + e.h / 2 - size * 0.54 : e.y;
-      out.push({ kind: "text", x, y, anchor: e.align, size, lines, weight: e.weight, color: safeColor(e.color, "#14263d"), leading: e.leading, tracking: e.tracking * scale, opacity });
+      // With a pill, its shadow is the pill's; the letters don't get a second one.
+      out.push({ ...base, ...(e.bg ? { shadow: undefined } : {}), kind: "text", x, y, anchor: e.align, size, lines, weight: e.weight, color: safeColor(e.color, "#14263d"), leading: e.leading, tracking: e.tracking * scale, ...(e.italic ? { italic: true } : {}), ...(e.underline ? { underline: true } : {}) });
     }
   }
   return out;
@@ -444,6 +549,10 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 const n = (v: number) => Math.round(v * 10) / 10;
 export const FONT_FAMILY = "KaiStudio";
 const fillColor = (c: string) => safeColor(c, "#000000");
+const n2 = (v: number) => Math.round(v * 100) / 100; // opacities: 5% steps
+const shadowKey = (s: Shadow) => [s.color, n(s.blur), n(s.x), n(s.y), n2(s.opacity)].join("|");
+/** feDropShadow attributes (blur is the Gaussian's standard deviation, half the visual spread). */
+export const shadowAttrs = (s: Shadow) => `dx="${n(s.x)}" dy="${n(s.y)}" stdDeviation="${n(s.blur / 2)}" flood-color="${fillColor(s.color)}" flood-opacity="${n2(Math.min(1, Math.max(0, s.opacity)))}"`;
 
 /**
  * The design as a standalone SVG. `fontCss` is an @font-face block with the font as a data: URL (an SVG drawn as an
@@ -454,19 +563,46 @@ export function svgOf(format: FormatId, els: El[], measure: Measure, fontCss = "
   const defs: string[] = [];
   const body: string[] = [];
   let id = 0;
-  const op = (o: number) => (o < 1 ? ` opacity="${n(Math.max(0, o))}"` : "");
+  const filters = new Map<string, string>();
+  // Opacity, rotation/mirroring and the drop shadow of a primitive, as attributes.
+  const common = (p: Prim) => {
+    let a = p.opacity < 1 ? ` opacity="${n(Math.max(0, p.opacity))}"` : "";
+    const t = tfAttr(p.tf);
+    if (t) a += ` transform="${t}"`;
+    if (p.shadow) {
+      const key = shadowKey(p.shadow);
+      if (!filters.has(key)) {
+        const f = `f${id++}`;
+        filters.set(key, f);
+        // In canvas units: a straight line has no height, so a region relative to its box would hide it.
+        defs.push(`<filter id="${f}" filterUnits="userSpaceOnUse" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow ${shadowAttrs(p.shadow)}/></filter>`);
+      }
+      a += ` filter="url(#${filters.get(key)})"`;
+    }
+    return a;
+  };
+  const paint = (f: Fill | null) => {
+    if (!f) return "none";
+    if (f.kind === "solid") return fillColor(f.color);
+    const g = `g${id++}`;
+    const [a, b] = f.stops;
+    const dir = f.dir === "diag" ? `x1="0" y1="0" x2="1" y2="1"` : `x1="0" y1="0" x2="0" y2="1"`;
+    defs.push(`<linearGradient id="${g}" ${dir}><stop offset="0" stop-color="${fillColor(a.color)}" stop-opacity="${n(a.opacity)}"/><stop offset="1" stop-color="${fillColor(b.color)}" stop-opacity="${n(b.opacity)}"/></linearGradient>`);
+    return `url(#${g})`;
+  };
+  const line = (s?: Stroke) => {
+    if (!s) return "";
+    const d = dashOf(s);
+    return ` stroke="${fillColor(s.color)}" stroke-width="${n(s.width)}" stroke-linejoin="round"${s.dash === "dot" ? ` stroke-linecap="round"` : ""}${d ? ` stroke-dasharray="${d}"` : ""}`;
+  };
   for (const p of draw(els, measure)) {
     if (p.kind === "rect") {
-      let fill: string;
-      if (p.fill.kind === "solid") fill = fillColor(p.fill.color);
-      else {
-        const g = `g${id++}`;
-        const [a, b] = p.fill.stops;
-        const dir = p.fill.dir === "diag" ? `x1="0" y1="0" x2="1" y2="1"` : `x1="0" y1="0" x2="0" y2="1"`;
-        defs.push(`<linearGradient id="${g}" ${dir}><stop offset="0" stop-color="${fillColor(a.color)}" stop-opacity="${n(a.opacity)}"/><stop offset="1" stop-color="${fillColor(b.color)}" stop-opacity="${n(b.opacity)}"/></linearGradient>`);
-        fill = `url(#${g})`;
-      }
-      body.push(`<rect x="${n(p.x)}" y="${n(p.y)}" width="${n(p.w)}" height="${n(p.h)}"${p.radius ? ` rx="${n(p.radius)}"` : ""} fill="${fill}"${op(p.opacity)}/>`);
+      body.push(`<rect x="${n(p.x)}" y="${n(p.y)}" width="${n(p.w)}" height="${n(p.h)}"${p.radius ? ` rx="${n(p.radius)}"` : ""} fill="${paint(p.fill)}"${line(p.stroke)}${common(p)}/>`);
+    } else if (p.kind === "ellipse") {
+      body.push(`<ellipse cx="${n(p.x + p.w / 2)}" cy="${n(p.y + p.h / 2)}" rx="${n(p.w / 2)}" ry="${n(p.h / 2)}" fill="${paint(p.fill)}"${line(p.stroke)}${common(p)}/>`);
+    } else if (p.kind === "poly") {
+      const pts = p.pts.map(([x, y]) => `${n(x)},${n(y)}`).join(" ");
+      body.push(`<${p.closed ? "polygon" : "polyline"} points="${pts}" fill="${paint(p.fill)}"${line(p.stroke)}${common(p)}/>`);
     } else if (p.kind === "image") {
       let clip = "";
       if (p.clip) {
@@ -474,12 +610,15 @@ export function svgOf(format: FormatId, els: El[], measure: Measure, fontCss = "
         defs.push(`<clipPath id="${c}"><rect x="${n(p.clip.x)}" y="${n(p.clip.y)}" width="${n(p.clip.w)}" height="${n(p.clip.h)}"${p.clip.radius ? ` rx="${n(p.clip.radius)}"` : ""}/></clipPath>`);
         clip = ` clip-path="url(#${c})"`;
       }
-      body.push(`<image href="${p.pic.src}" x="${n(p.x)}" y="${n(p.y)}" width="${n(p.w)}" height="${n(p.h)}" preserveAspectRatio="xMidYMid meet"${clip}${op(p.opacity)}/>`);
+      // The clip goes on a group so a rotated or mirrored picture is cut by its rotated box.
+      const img = `<image href="${p.pic.src}" x="${n(p.x)}" y="${n(p.y)}" width="${n(p.w)}" height="${n(p.h)}" preserveAspectRatio="xMidYMid meet"${clip}/>`;
+      body.push(`<g${common(p)}>${img}</g>`);
     } else {
       // y is the top of the first line; the baseline sits ~0.9 em below it (Geist's ascent).
       const spans = p.lines.map((line, i) => `<tspan x="${n(p.x)}" y="${n(p.y + p.size * (0.9 + i * p.leading))}">${esc(line)}</tspan>`).join("");
       const anchor = p.anchor === "start" ? "" : ` text-anchor="${p.anchor}"`;
-      body.push(`<text font-size="${n(p.size)}" font-weight="${p.weight}" fill="${p.color}"${anchor}${p.tracking ? ` letter-spacing="${n(p.tracking)}"` : ""}${op(p.opacity)}>${spans}</text>`);
+      const deco = `${p.italic ? ` font-style="italic"` : ""}${p.underline ? ` text-decoration="underline"` : ""}`;
+      body.push(`<text font-size="${n(p.size)}" font-weight="${p.weight}" fill="${p.color}"${anchor}${p.tracking ? ` letter-spacing="${n(p.tracking)}"` : ""}${deco}${common(p)}>${spans}</text>`);
     }
   }
   const style = `<style>${fontCss}text{font-family:${FONT_FAMILY},Arial,sans-serif}</style>`;
@@ -504,14 +643,22 @@ export function cleanEls(raw: unknown): El[] {
     let id = typeof r.id === "string" && /^[\w-]{1,40}$/.test(r.id) ? r.id : newId();
     if (ids.has(id)) id = newId();
     ids.add(id);
-    const base = { id, name: typeof r.name === "string" ? r.name.slice(0, 40) : "Öğe", x: num(r.x), y: num(r.y), w: Math.max(1, num(r.w, 100)), h: Math.max(1, num(r.h, 100)), locked: r.locked === true, opacity: Math.min(1, Math.max(0, num(r.opacity, 1))) };
+    const sh = r.shadow as Record<string, unknown> | undefined;
+    const base = {
+      id, name: typeof r.name === "string" ? r.name.slice(0, 40) : "Öğe", x: num(r.x), y: num(r.y), w: Math.max(1, num(r.w, 100)), h: Math.max(1, num(r.h, 100)), locked: r.locked === true, opacity: Math.min(1, Math.max(0, num(r.opacity, 1))),
+      ...(num(r.rotation) % 360 ? { rotation: num(r.rotation) % 360 } : {}),
+      ...(r.flipX === true && r.kind !== "text" ? { flipX: true } : {}),
+      ...(r.flipY === true && r.kind !== "text" ? { flipY: true } : {}),
+      ...(sh && typeof sh === "object" ? { shadow: { color: safeColor(sh.color, "#000000"), blur: Math.min(200, Math.max(0, num(sh.blur, 20))), x: Math.min(200, Math.max(-200, num(sh.x))), y: Math.min(200, Math.max(-200, num(sh.y, 8))), opacity: Math.min(1, Math.max(0, num(sh.opacity, 0.3))) } } : {}),
+    };
     if (r.kind === "text") {
       const bg = r.bg as { fill?: unknown; radius?: unknown } | undefined;
       out.push({
         ...base, kind: "text", text: typeof r.text === "string" ? r.text.slice(0, 2000) : "", role: (["tag", "title", "subtitle", "detail", "deco"] as const).find((x) => x === r.role),
         size: Math.max(4, num(r.size, 40)), weight: [300, 400, 500, 600, 700, 800, 900].includes(r.weight as number) ? (r.weight as number) : 400, color: safeColor(r.color, "#14263d"),
         align: r.align === "middle" || r.align === "end" ? r.align : "start", leading: Math.min(3, Math.max(0.8, num(r.leading, 1.2))), tracking: Math.min(50, Math.max(-10, num(r.tracking))),
-        upper: r.upper === true, auto: r.auto === true, ...(bg && typeof bg === "object" ? { bg: { fill: safeColor(bg.fill, "#2e5e8c"), radius: Math.max(0, num(bg.radius)) } } : {}),
+        upper: r.upper === true, auto: r.auto === true, ...(r.italic === true ? { italic: true } : {}), ...(r.underline === true ? { underline: true } : {}),
+        ...(bg && typeof bg === "object" ? { bg: { fill: safeColor(bg.fill, "#2e5e8c"), radius: Math.max(0, num(bg.radius)) } } : {}),
       });
     } else if (r.kind === "image") {
       const pic = storedPicture(r.pic);
@@ -520,7 +667,19 @@ export function cleanEls(raw: unknown): El[] {
       const f = r.fill as Fill | undefined;
       const stop = (s: unknown) => ({ color: safeColor((s as { color?: unknown })?.color, "#000000"), opacity: Math.min(1, Math.max(0, num((s as { opacity?: unknown })?.opacity, 1))) });
       const fill: Fill = f?.kind === "linear" && Array.isArray(f.stops) ? { kind: "linear", dir: f.dir === "down" ? "down" : "diag", stops: [stop(f.stops[0]), stop(f.stops[1])] } : { kind: "solid", color: safeColor((f as { color?: unknown })?.color, "#14263d") };
-      out.push({ ...base, kind: "shape", fill, radius: Math.max(0, num(r.radius)) });
+      const st = r.stroke as Record<string, unknown> | undefined;
+      const shape = (["ellipse", "poly", "line"] as const).find((x) => x === r.shape);
+      const points = Array.isArray(r.points)
+        ? (r.points as unknown[]).slice(0, 64).filter((q): q is [number, number] => Array.isArray(q) && q.length === 2 && q.every((v) => typeof v === "number" && Number.isFinite(v))).map(([x, y]) => [Math.min(1, Math.max(0, x)), Math.min(1, Math.max(0, y))] as [number, number])
+        : [];
+      if (shape === "poly" && points.length < 3) continue;
+      out.push({
+        ...base, kind: "shape", fill, radius: Math.max(0, num(r.radius)),
+        ...(shape ? { shape } : {}), ...(shape === "poly" ? { points } : {}),
+        ...(st && typeof st === "object" ? { stroke: { color: safeColor(st.color, "#14263d"), width: Math.min(200, Math.max(0, num(st.width, 2))), ...(st.dash === "dash" || st.dash === "dot" ? { dash: st.dash } : {}) } } : {}),
+        ...(r.noFill === true ? { noFill: true } : {}),
+        ...(shape === "line" && (r.arrow === "end" || r.arrow === "both") ? { arrow: r.arrow } : {}),
+      });
     }
   }
   return out;

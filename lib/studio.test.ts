@@ -1,7 +1,7 @@
 // Run: pnpm test. Görsel Stüdyo layers → SVG, text fitting, the model's suggestion parser.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FORMATS, TEMPLATES, fitText, fromTemplate, refit, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type Measure } from "./studio.ts";
+import { FORMATS, SHAPES, TEMPLATES, cleanEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type Measure } from "./studio.ts";
 
 // Monospace stand-in for canvas measureText: every character is 0.55 em.
 const measure: Measure = (t, size) => t.length * size * 0.55;
@@ -167,4 +167,40 @@ test("refit: an edited design keeps its edits in another format", () => {
     for (const e of out) assert.ok(e.x >= -1 && e.y >= -1 && e.x + e.w <= w + 1 && e.y + e.h <= h + 1, `${to}: ${e.name} inside`);
   }
   assert.equal(refit(els, "kare", "kare"), els);
+});
+
+test("shapes: every library shape draws, round-trips through cleanEls, and rotation/flip/shadow reach the SVG", () => {
+  for (const id of Object.keys(SHAPES) as (keyof typeof SHAPES)[]) {
+    const e = { ...shapeFrom(id, 540, 540, 400, "#2e5e8c"), rotation: 30, flipX: true, shadow: { color: "#000000", blur: 20, x: 0, y: 8, opacity: 0.3 } };
+    const svg = svgOf("kare", [e], measure);
+    assert.ok(!/NaN|undefined/.test(svg), `${id}: ${svg}`);
+    assert.match(svg, /transform="rotate\(30 540 540\) translate\(540 540\) scale\(-1 1\) translate\(-540 -540\)"/, id);
+    assert.match(svg, /filterUnits="userSpaceOnUse"/, id);
+    assert.match(svg, /<feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.3"\/>/, id);
+    const [back] = cleanEls(JSON.parse(JSON.stringify([e])));
+    assert.deepEqual(back, { ...e, locked: false, opacity: 1, radius: e.radius ?? 0 }, id);
+  }
+  // a line is drawn by its outline, with a filled head at the end
+  const arrow = svgOf("kare", [shapeFrom("arrowLine", 540, 540, 400, "#ff0000")], measure);
+  assert.match(arrow, /<polyline [^>]*fill="none" stroke="#ff0000"/);
+  assert.match(arrow, /<polygon [^>]*fill="#ff0000"/);
+  // text never mirrors; italic and underline are attributes
+  const t = cleanEls([{ kind: "text", text: "a", x: 0, y: 0, w: 100, h: 40, size: 30, flipX: true, italic: true, underline: true }])[0];
+  assert.ok(t.kind === "text" && !t.flipX && t.italic && t.underline);
+  assert.match(svgOf("kare", [t], measure), /font-style="italic" text-decoration="underline"/);
+  // hostile input: a polygon needs 3 points in 0–1, colours stay #rrggbb
+  assert.equal(cleanEls([{ kind: "shape", shape: "poly", points: [[0, 0], [1, 1]], fill: { kind: "solid", color: "#000000" } }]).length, 0);
+  const odd = cleanEls([{ kind: "shape", shape: "poly", points: [[-5, 0], [9, 1], [0.5, "x"], [0.5, 0.5]], stroke: { color: "red;x", width: 1e9 }, shadow: { color: "url(#x)" }, fill: { kind: "solid", color: "#000000" } }])[0];
+  assert.ok(odd.kind === "shape" && odd.points?.length === 3 && odd.points[0][0] === 0 && odd.points[1][0] === 1 && odd.stroke?.color === "#14263d" && odd.stroke.width === 200 && odd.shadow?.color === "#000000");
+});
+
+test("shapes: a dotted line is valid SVG (one linecap); refit scales outline and shadow", () => {
+  const l = { ...shapeFrom("line", 540, 540, 400, "#000000"), stroke: { color: "#000000", width: 10, dash: "dot" as const }, shadow: { color: "#000000", blur: 20, x: 4, y: 8, opacity: 0.3 } };
+  const svg = svgOf("kare", [l], measure);
+  for (const tag of svg.match(/<[a-z]+ [^>]*>/g) ?? []) {
+    const names = [...tag.matchAll(/ ([a-z-]+)=/g)].map((m) => m[1]);
+    assert.equal(new Set(names).size, names.length, tag);
+  }
+  const [r] = refit([l], "yatay", "kare") as (typeof l)[];
+  assert.ok(r.stroke.width === 10 * 0.5625 && r.shadow.blur === 20 * 0.5625 && r.shadow.y === 8 * 0.5625);
 });
