@@ -960,12 +960,15 @@ export default function Studio({ username }: { username: string }) {
    *  open with a warning; asked again, it tries once more and then leaves (a full disk mustn't trap the user). */
   const flushSave = async () => {
     let ok = true;
-    if (pending.current || saveFailed.current) {
-      if (pending.current) clearTimeout(pending.current);
-      ok = await autosave();
-    } else if (running.current) {
-      ok = await running.current.then(() => true, () => false);
-    }
+    // Until nothing waits: the design can still be edited while a save runs.
+    do {
+      if (pending.current || saveFailed.current) {
+        if (pending.current) clearTimeout(pending.current);
+        ok = await autosave();
+      } else if (running.current) {
+        ok = await running.current.then(() => true, () => false);
+      }
+    } while (ok && (pending.current || running.current));
     if (ok || leaveWarned.current) {
       leaveWarned.current = saveFailed.current = false;
       return true;
