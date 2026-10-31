@@ -30,4 +30,4 @@ export function parseSearchQuery(raw: string): string | null {
 }
 
 /** The answer's opening says the documents don't hold it (the rule in the chat's system message, in the model's wording). */
-export const saysNotInDoc = (answer: string) => /(belge|doküman|döküman)\S*[^]{0,100}?(\byok\b|geçm|bulunm|belirtilm|yer alm)/iu.test(answer.slice(0, 300));
+export const saysNotInDoc = (answer: string) => /(belge|doküman|döküman)\S*[^]{0,100}?(\byok\b|geçmiyor|geçmemekte|bulunmuyor|bulunmamakta|belirtilmemiş|belirtilmiyor|yer almıyor|yer almamakta)/iu.test(answer.slice(0, 300));

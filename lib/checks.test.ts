@@ -150,4 +150,5 @@ test("lostNumbers: OCR with most numbers missing, not a table both readers read"
   assert.equal(lostNumbers("| GİH | Başkan |  |  |\n| TOPLAM |  |  |  |", "| GİH | Başkan | 1 | 1 |\n| TOPLAM | | | 2 |"), true);
   assert.equal(lostNumbers("| A | 1 | 2 |\n| B | 3 | 5 |", "| A | 1 | 2 |\n| B | 3 | 4 |"), false);
   assert.equal(lostNumbers("| A |", "| A | 1 |"), false); // one number says nothing
+  assert.equal(lostNumbers("| A | 100 |", "| A | 900 |\n| B | 200 |\n| T | 1100 |"), false); // what OCR did read disagrees: it stays
 });

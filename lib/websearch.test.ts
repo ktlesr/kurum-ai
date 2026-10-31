@@ -46,5 +46,7 @@ test("saysNotInDoc: the opening says the document doesn't hold it", () => {
   assert.equal(saysNotInDoc("Belgede yok; genel bilgime göre: …"), true);
   assert.equal(saysNotInDoc("Paylaştığınız dokümanın içeriğine göre, 493. madde ile ilgili doğrudan bir kurum ismi belirtilmemiştir."), true);
   assert.equal(saysNotInDoc("Belgenin 4. sayfasına göre tutar 12 milyon TL'dir."), false);
+  assert.equal(saysNotInDoc("Belgede yer almaktadır."), false);
+  assert.equal(saysNotInDoc("Belgede geçmektedir: şart yerine getirilmiştir."), false);
   assert.equal(saysNotInDoc("Tutar 12 milyon TL'dir. " + "x".repeat(300) + " belgede yok"), false);
 });
