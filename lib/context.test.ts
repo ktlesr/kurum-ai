@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { docSections, dropListPositions, linkPages, parseSource, plainNumbering, type ChatMeta, type MdNode } from "./context.ts";
+import { docSections, dropListPositions, linkPages, repairListMarks, parseSource, plainNumbering, type ChatMeta, type MdNode } from "./context.ts";
 
 test("docSections splits on page and sheet markers, keeps the outline", () => {
   const t = "Özet satırı\n--- Sayfa 1 ---\nbir\n--- Sayfa 2 ---\niki\n## Sheet: Bütçe\n| a |";
@@ -60,4 +60,17 @@ test("plainNumbering: a line's own number stays text in any document; real bulle
   const code = "```\n- 1) ayar\n```";
   assert.equal(plainNumbering("~~~text\n- 1) ayar\n~~~"), "~~~text\n- 1) ayar\n~~~");
   assert.equal(plainNumbering(`- 1) önce\n${code}\n- 2) sonra`), `1\\) önce\n${code}\n2\\) sonra`);
+});
+
+test("repairListMarks: only what the list's own order decides", () => {
+  assert.equal(repairListMarks("a) A\nb) B\ne) C\nç) D\nd) E"), "a) A\nb) B\nc) C\nç) D\nd) E");
+  assert.equal(repairListMarks("g) A\n8) B\nh) C"), "g) A\nğ) B\nh) C");
+  assert.equal(repairListMarks("- g) A\n\n- 5) B\n\n- h) C"), "- g) A\n\n- ğ) B\n\n- h) C");
+  assert.equal(repairListMarks("Başlık\nIİ) A\n2) B\n3) C"), "Başlık\n1) A\n2) B\n3) C");
+  assert.equal(repairListMarks("g) A\nğ) B\nh) C\n1) D\n\nParagraf"), "g) A\nğ) B\nh) C\nı) D\n\nParagraf");
+  assert.equal(repairListMarks("1) A\n9) B\n3) C"), "1) A\n2) B\n3) C");
+  assert.equal(repairListMarks("g) A\n&amp;) B\nh) C"), "g) A\nğ) B\nh) C");
+  assert.equal(repairListMarks('"c) Başlık\nIİ) A\n2) B'), '"c) Başlık\n1) A\n2) B');
+  // No neighbours to say otherwise, or a list that may really skip.
+  for (const t of ["a) A\nc) B", "e) Tek satır", "b) A\n1) B\n2) C", "a) A\nx) B\nd) C", "Sayfa 2) gibi"]) assert.equal(repairListMarks(t), t);
 });

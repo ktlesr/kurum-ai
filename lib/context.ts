@@ -127,6 +127,37 @@ export function linkPages(meta: ChatMeta | undefined, nonce: string) {
  */
 export const dropListPositions = (text: string) => text.replace(/^ {0,3}\d{1,3}\. (?="?(?:[^\s()]{1,3}|&amp;)\) )/gmu, "");
 
+const TR_LETTERS = "abcçdefgğhıijklmnoöprsştuüvyz";
+const MARK = /^( {0,3}(?:[-*+] )?"?)(&amp;|[^\s()]{1,3})\)(?= )/;
+
+/**
+ * OCR's misread list marks, mended only where the list itself says what they must be: "b) … / e) … / ç) …" (Turkish order)
+ * makes the middle one "c)", "g) / 8) / h)" makes it "ğ)", "Iİ) / 2)" makes it "1)", "h) / 1)" makes it "ı)". Nothing is
+ * guessed from meaning; a mark with no such neighbours stays as read.
+ */
+export function repairListMarks(text: string): string {
+  const lines = text.split("\n");
+  const near = (i: number, step: number) => {
+    for (let j = i + step; lines[j] !== undefined; j += step) if (lines[j].trim()) return MARK.exec(lines[j])?.[2];
+    return undefined;
+  };
+  const num = (m?: string) => (m && /^\d{1,3}$/.test(m) ? Number(m) : NaN);
+  const at = (m?: string) => (m && m.length === 1 ? TR_LETTERS.indexOf(m) : -1);
+  lines.forEach((line, i) => {
+    const m = MARK.exec(line);
+    if (!m) return;
+    const [p, n] = [near(i, -1), near(i, 1)];
+    let want: string | undefined;
+    if (num(n) - num(p) === 2) want = String(num(p) + 1);
+    else if (at(p) >= 0 && at(n) - at(p) === 2) want = TR_LETTERS[at(p) + 1];
+    else if (Number.isNaN(num(p)) && n === "2") want = "1"; // a numbered list starting, also under a lettered item
+    else if (p === undefined && n === "b") want = "a";
+    else if (p === "h" && n === undefined && /^[1lI]$/.test(m[2])) want = "ı";
+    if (want && want !== m[2]) lines[i] = m[1] + want + line.slice(m[0].length - 1);
+  });
+  return lines.join("\n");
+}
+
 // Up to 3 spaces of indent below: four or more is a code block.
 /** "- x" with no list around it: a line Docling took for a list, like "- MADDE 9- 4 sayılı…" among paragraphs. */
 function dropLoneBullets(text: string): string {
