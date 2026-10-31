@@ -4,6 +4,7 @@
 // resize handles, snapping guides and in-place text editing. Coordinates are design pixels (the SVG viewBox).
 import { useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { FORMATS, aabb, dashOf, draw, familyOf, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl, gradVector } from "@/lib/studio";
+import { spacingSnap, type GapMark } from "@/lib/snap";
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 type Box = { x: number; y: number; w: number; h: number };
@@ -129,7 +130,7 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
   useLayoutEffect(() => {
     live.current = els;
   });
-  const [guides, setGuides] = useState<{ v: number[]; h: number[] }>({ v: [], h: [] });
+  const [guides, setGuides] = useState<{ v: number[]; h: number[]; gaps?: GapMark[] }>({ v: [], h: [] });
   const [scale, setScale] = useState(1); // design pixels per screen pixel
 
   useEffect(() => {
@@ -200,7 +201,15 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
       return best;
     };
     let b: Box = { ...d.box };
-    const g = { v: [] as number[], h: [] as number[] };
+    const g = { v: [] as number[], h: [] as number[], gaps: [] as GapMark[] };
+    // Elements as drawn, without what fills the canvas: a background is nobody's neighbour.
+    const peers = others.map(aabb).filter((o) => o.w < W - 1 || o.h < H - 1);
+    /** Where edges and centres caught nothing, the gap of the row beside it may. */
+    const spaced = (box: Box, axis: "x" | "y") => {
+      const s = spacingSnap(box, peers, axis, thr);
+      if (s) g.gaps.push(...s.marks);
+      return s?.delta ?? 0;
+    };
     if (d.mode === "rotate") {
       // The angle of the pointer around the centre; the handle sits above it (0°). Shift: 15° steps, else 0/90/180/270 catch.
       const cx = d.box.x + d.box.w / 2;
@@ -234,6 +243,8 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
           dy += sy.delta;
           g.h.push(sy.line);
         }
+        if (!sx) dx += spaced({ x: gx, y: gy + (sy?.delta ?? 0), w: gw, h: gh }, "x");
+        if (!sy) dy += spaced({ x: Math.min(...from.map((q) => q.x)) + dx, y: gy, w: gw, h: gh }, "y");
       }
       setGuides(g);
       const at = new Map(d.group.map((q) => [q.id, q]));
@@ -254,6 +265,9 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
           b.y += sy.delta;
           g.h.push(sy.line);
         }
+        // The box as drawn: a turned element's gaps are those of its corners.
+        if (!sx) b.x += spaced(aabb({ ...el, ...b } as El), "x");
+        if (!sy) b.y += spaced(aabb({ ...el, ...b } as El), "y");
       }
     } else {
       const hd = d.handle!;
@@ -378,6 +392,14 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
 
       {guides.v.map((x, i) => <line key={`v${i}`} x1={x} x2={x} y1={0} y2={H} stroke="#e11d48" strokeWidth={stroke} strokeDasharray={`${6 * scale} ${4 * scale}`} pointerEvents="none" />)}
       {guides.h.map((y, i) => <line key={`h${i}`} y1={y} y2={y} x1={0} x2={W} stroke="#e11d48" strokeWidth={stroke} strokeDasharray={`${6 * scale} ${4 * scale}`} pointerEvents="none" />)}
+
+      {guides.gaps?.map((m, i) => {
+        const tick = 7 * scale;
+        const line = (x1: number, y1: number, x2: number, y2: number, k: string) => <line key={k} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#e11d48" strokeWidth={stroke} pointerEvents="none" />;
+        return m.axis === "x"
+          ? <g key={`g${i}`}>{line(m.from, m.at, m.to, m.at, "a")}{line(m.from, m.at - tick, m.from, m.at + tick, "b")}{line(m.to, m.at - tick, m.to, m.at + tick, "c")}</g>
+          : <g key={`g${i}`}>{line(m.at, m.from, m.at, m.to, "a")}{line(m.at - tick, m.from, m.at + tick, m.from, "b")}{line(m.at - tick, m.to, m.at + tick, m.to, "c")}</g>;
+      })}
 
       {chosen.length > 1 && (
         <g pointerEvents="none">

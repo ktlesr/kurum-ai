@@ -61,7 +61,7 @@ const colorsOf = (e: El): string[] => (e.kind === "text" ? [e.color, ...(e.bg ? 
 
 /**
  * A theme over slides: the most used colour with a hue becomes the theme's main colour, other hues its accent (very
- * light tints, card backgrounds, stay as they are); big text gets the heading font. `known`: the colours of the theme
+ * light tints, card backgrounds, stay as they are); titles and big text get the heading font. `known`: the colours of the theme
  * applied before, which count even if they are greys.
  */
 export function rethemeSlides(slides: El[][], t: { primary: string; accent: string; head: string; body: string }, known: string[] = []): El[][] {
@@ -80,9 +80,32 @@ export function rethemeSlides(slides: El[][], t: { primary: string; accent: stri
     const k = x.toLowerCase();
     return !counts.has(k) ? x : k === main ? t.primary : t.accent;
   };
+  const lum = (hex: string) => {
+    const v = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  };
+  const contrast = (x: string, y: string) => (Math.max(lum(x), lum(y)) + 0.05) / (Math.min(lum(x), lum(y)) + 0.05);
+  /** What a text stands on: the nearest filled shape under its middle, as the theme leaves it; a picture or gradient can't be judged. */
+  const under = (els: El[], i: number, e: El): string | null => {
+    const [cx, cy] = [e.x + e.w / 2, e.y + e.h / 2];
+    for (let j = i - 1; j >= 0; j--) {
+      const o = els[j];
+      if (cx < o.x || cx > o.x + o.w || cy < o.y || cy > o.y + o.h) continue;
+      if (o.kind === "image") return null;
+      if (o.kind !== "shape" || o.noFill || o.shape === "line") continue; // text, or nothing filled here
+      // Only a plain opaque box tells for certain; see-through, gradient, round, turned: no judgement, the theme's colour stays.
+      const plain = (o.shape ?? "rect") === "rect" && (o.opacity ?? 1) >= 1 && !o.rotation && o.fill.kind === "solid" && o.fill.color.length === 7;
+      return plain && o.fill.kind === "solid" ? c(o.fill.color) : null;
+    }
+    return "#ffffff";
+  };
+  /** A text the theme would make hard to read on what it stands on gets the first of its colours that reads. */
+  const readable = (color: string, was: string, on: string | null) =>
+    !on ? color : ([color, t.primary, t.accent, was, inkOf(on)].find((k) => contrast(k, on) >= 3) ?? inkOf(on));
+  const inkOf = (bg: string) => (contrast("#111111", bg) >= contrast("#ffffff", bg) ? "#111111" : "#ffffff");
   return slides.map((els) =>
-    els.map((e): El => {
-      if (e.kind === "text") return { ...e, color: c(e.color), font: e.size >= 54 ? t.head : t.body, ...(e.bg ? { bg: { ...e.bg, fill: c(e.bg.fill) } } : {}) };
+    els.map((e, i): El => {
+      if (e.kind === "text") return { ...e, color: readable(c(e.color), e.color, e.bg ? c(e.bg.fill) : under(els, i, e)), font: e.size >= 54 || e.name === "Başlık" || e.role === "title" || e.role === "tag" ? t.head : t.body, ...(e.bg ? { bg: { ...e.bg, fill: c(e.bg.fill) } } : {}) };
       if (e.kind === "shape")
         return { ...e, fill: e.fill.kind === "solid" ? { kind: "solid", color: c(e.fill.color) } : { ...e.fill, stops: [{ ...e.fill.stops[0], color: c(e.fill.stops[0].color) }, { ...e.fill.stops[1], color: c(e.fill.stops[1].color) }] }, ...(e.stroke ? { stroke: { ...e.stroke, color: c(e.stroke.color) } } : {}) };
       return e;

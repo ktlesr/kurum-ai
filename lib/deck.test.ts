@@ -88,3 +88,27 @@ test("rethemeSlides: a known main colour stays main on a slide with more accent"
   assert.deepEqual(colors(rethemeSlides([slide], t, ["#14263d", "#c8553d"])[0]), ["#0f3d2e", "#1a7a50", "#1a7a50", "#1a7a50"]);
   assert.equal(colors(rethemeSlides([slide], t)[0])[1], "#0f3d2e"); // unknown: the most used
 });
+
+test("families: each states its colour roles (a hue, not a tint), and a small title takes the heading font", () => {
+  for (const t of read("index.json") as TemplateInfo[]) {
+    const roles = (read(`${t.id}.json`) as DeckTemplate).roles;
+    if (roles) for (const c of [roles.primary, roles.accent]) assert.match(c, /^#[0-9a-f]{6}$/, t.id);
+  }
+  const title = { id: "t", kind: "text", name: "Başlık", x: 0, y: 0, w: 1, h: 1, text: "x", size: 30, weight: 700, color: "#000000", align: "start", leading: 1, tracking: 0, auto: true } as El;
+  const out = rethemeSlides([[title, { ...title, id: "b", name: "Metin" } as El]], { primary: "#0f3d2e", accent: "#1a7a50", head: "lora", body: "lato" })[0];
+  assert.deepEqual(out.map((e) => (e.kind === "text" ? e.font : "")), ["lora", "lato"]);
+});
+
+test("rethemeSlides: a text stays readable on what it stands on", () => {
+  const txt = (color: string, id = color) => ({ id, kind: "text", name: "Metin", x: 10, y: 10, w: 10, h: 10, text: "x", size: 30, weight: 400, color, align: "start", leading: 1, tracking: 0, auto: true }) as El;
+  const panel = (color: string) => ({ id: `p${color}`, kind: "shape", name: "x", x: 0, y: 0, w: 100, h: 100, fill: { kind: "solid", color } }) as El;
+  const gold = { primary: "#212529", accent: "#fcc419", head: "lora", body: "lato" };
+  const ink = (s: El[]) => s.flatMap((e) => (e.kind === "text" ? [e.color] : []));
+  // Dark brown would become the yellow accent, on a cream card: the theme's dark colour instead.
+  assert.deepEqual(ink(rethemeSlides([[panel("#fffcf8"), txt("#3e2723")]], gold, ["#e1bb80", "#3e2723"])[0]), ["#212529"]);
+  // The same accent on the theme's dark panel reads, and stays.
+  assert.deepEqual(ink(rethemeSlides([[panel("#e1bb80"), txt("#3e2723")]], gold, ["#e1bb80", "#3e2723"])[0]), ["#fcc419"]);
+  // Over a picture nothing can be judged: the theme's colour stays.
+  const pic = { id: "i", kind: "image", name: "x", x: 0, y: 0, w: 100, h: 100, fit: "cover", pic: { src: "data:image/png;base64,AA==", w: 1, h: 1 } } as El;
+  assert.deepEqual(ink(rethemeSlides([[{ ...panel("#e1bb80"), x: 500 }, pic, txt("#3e2723")]], gold, ["#e1bb80", "#3e2723"])[0]), ["#fcc419"]);
+});
