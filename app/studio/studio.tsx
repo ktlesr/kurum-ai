@@ -30,7 +30,7 @@ import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, 
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, SHAPES, TEMPLATES, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type ShapeId, type ShapeStyle,
+  DEFAULT_BRAND, FORMATS, LIMITS, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type ShapeId, type ShapeStyle,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
@@ -79,6 +79,7 @@ function recolor(els: El[], a: Brand, b: Brand): El[] {
     [shade(a.primary, -0.25), shade(b.primary, -0.25)],
     [shade(a.primary, -0.6), shade(b.primary, -0.6)],
     [shade(a.accent, -0.2), shade(b.accent, -0.2)],
+    [shade(a.accent, 0.75), shade(b.accent, 0.75)],
     [a.primary, b.primary],
     [a.accent, b.accent],
   ]);
@@ -109,7 +110,8 @@ export default function Studio({ username }: { username: string }) {
   const [saved, setSaved] = useState<"" | "saving" | "saved" | "error">("");
   const [saveError, setSaveError] = useState("");
   const projectInput = useRef<HTMLInputElement>(null);
-  const [template, setTemplate] = useState<TemplateId>("duyuru");
+  const [template, setTemplate] = useState<TemplateId>("atlas");
+  const [templateFonts, setTemplateFonts] = useState(0); // counts up as the gallery's fonts arrive: they change every measure
   const [format, setFormat] = useState<FormatId>("kare");
   const [content, setContent] = useState<Content>(SAMPLE.duyuru);
   const [ownText, setOwnText] = useState(false); // samples follow the template until the user writes
@@ -216,7 +218,8 @@ export default function Studio({ username }: { username: string }) {
     };
   }, [fontKey, username, font]);
 
-  const generated = useMemo(() => (font ? fromTemplate({ template, format, content, brand, photo }, font.measure) : []), [font, template, format, content, brand, photo]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- templateFonts: the same text measures differently once its font is here
+  const generated = useMemo(() => (font ? fromTemplate({ template, format, content, brand, photo }, font.measure) : []), [font, template, format, content, brand, photo, templateFonts]);
   const view = els ?? generated;
   // The latest committed state for callbacks that run later (a suggestion arriving, undo from the keyboard).
   const now = useRef({ view, els, format, hist, brand, clip: null as El[] | null });
@@ -711,8 +714,20 @@ export default function Studio({ username }: { username: string }) {
             ]),
           )
         : {},
-    [font, content, ownText, brand, small],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- templateFonts: see `generated`
+    [font, content, ownText, brand, small, templateFonts],
   );
+  useEffect(() => {
+    if (!font) return;
+    let live = true;
+    const ids = [...new Set((Object.keys(TEMPLATES) as TemplateId[]).flatMap((t) => TEMPLATES[t].fonts as readonly string[]))];
+    void Promise.allSettled(ids.map((id) => ensureFont(id, username))).then(() => {
+      if (live) setTemplateFonts((n) => n + 1);
+    });
+    return () => {
+      live = false;
+    };
+  }, [font, username]);
 
   async function exportAs(e: (typeof EXPORTS)[number]) {
     if (!font) return;
@@ -1128,9 +1143,12 @@ export default function Studio({ username }: { username: string }) {
     if (open === "deck") return deck ? <p className="px-4 py-4 text-sm text-muted">{deck.template.name} şablonu, {deck.slides.length} slayt. Alttaki şeritten slaytlara geçin ve yeni düzen ekleyin. Renk ve yazı tipi temaları Marka panelinde; tüm slaytlara uygulanır.</p> : null;
     if (open === "templates") return (
       <section className={section}>
+        {([["gorsel", "Özgün şablonlar"], ["klasik", "Klasik"]] as const).map(([group, title]) => (
+        <div key={group}>
+        <h3 className={`${heading} mb-1.5`}>{title}</h3>
         <div className="grid grid-cols-2 gap-2">
-          {(Object.keys(TEMPLATES) as TemplateId[]).map((t) => (
-            <button key={t} onClick={() => chooseTemplate(t)} aria-pressed={template === t} className={`overflow-hidden rounded-xl border text-left transition-all ${template === t ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-accent/60"}`}>
+          {templatesOf(group).map((t) => (
+            <button key={t} title={TEMPLATES[t].hint} onClick={() => chooseTemplate(t)} aria-pressed={template === t} className={`overflow-hidden rounded-xl border text-left transition-all ${template === t ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-accent/60"}`}>
               <span className="block aspect-square bg-subtle">
                 {/* eslint-disable-next-line @next/next/no-img-element -- local data: SVG thumbnail */}
                 {thumbs[t] && <img src={thumbs[t]} alt="" className="size-full object-cover" />}
@@ -1139,6 +1157,8 @@ export default function Studio({ username }: { username: string }) {
             </button>
           ))}
         </div>
+        </div>
+        ))}
         <h3 className={heading}>Boyut</h3>
         <div role="group" aria-label="Format" className="grid grid-cols-4 gap-1 rounded-xl border border-line bg-subtle p-1">
           {(Object.keys(FORMATS) as FormatId[]).map((f) => (

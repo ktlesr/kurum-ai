@@ -5,7 +5,7 @@ import { LIBRARY_FONTS } from "./font-list.ts";
 import { THEMES } from "./themes.ts";
 import { ART_SHAPES } from "./studio-assets.ts";
 import assert from "node:assert/strict";
-import { FORMATS, SHAPES, TEMPLATES, registerFontCss, aabb, alignEls, cleanEls, distributeEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type El, type Measure } from "./studio.ts";
+import { FORMATS, SHAPES, TEMPLATES, registerFontCss, templatesOf, aabb, alignEls, cleanEls, distributeEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type El, type Measure } from "./studio.ts";
 
 // Monospace stand-in for canvas measureText: every character is 0.55 em.
 const measure: Measure = (t, size) => t.length * size * 0.55;
@@ -283,5 +283,26 @@ test("themes: readable, known fonts; art files are plain vector files", () => {
     // every reference points at an id in the same file
     const ids = new Set([...svg.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
     for (const m of svg.matchAll(/url\(#([^)"]*)\)?/g)) assert.ok(ids.has(m[1]) && m[0].endsWith(")"), `${n}: ${m[0]}`);
+  }
+});
+
+const REAL_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+test("families: every element survives cleanEls, polygons stay in their box, fonts are the template's", () => {
+  assert.ok(templatesOf("gorsel").length >= 8);
+  for (const template of templatesOf("gorsel")) {
+    for (const format of Object.keys(FORMATS) as Design["format"][]) {
+      for (const photo of [undefined, { src: REAL_PNG, w: 1, h: 1 }]) {
+        const els = fromTemplate(design({ template, format, photo, brand: { primary: "#14263d", accent: "#c8102e", logo: { src: REAL_PNG, w: 1, h: 1 } } }), measure);
+        const back = cleanEls(JSON.parse(JSON.stringify(els)));
+        assert.equal(back.length, els.length, `${template}/${format}`);
+        assert.ok(els.length <= 200, `${template}/${format}: ${els.length}`);
+        for (const e of els) {
+          if (e.kind === "shape") for (const [px, py] of e.points ?? []) assert.ok(px >= 0 && px <= 1 && py >= 0 && py <= 1, `${template}/${format}/${e.name}: ${px},${py}`);
+          if (e.kind === "text") assert.ok(!e.font || (TEMPLATES[template].fonts as readonly string[]).includes(e.font), `${template}: ${e.font}`);
+        }
+        assert.ok(els.some((e) => e.kind === "text" && e.role === "title"), `${template}/${format} has its title`);
+        assert.ok(!/NaN|undefined/.test(svgOf(format, els, measure)), `${template}/${format}`);
+      }
+    }
   }
 });

@@ -4,9 +4,11 @@
 // the per-user brand kit. Everything stays in this browser.
 import { measurer } from "./fonts";
 import { useEffect, useState } from "react";
+import { FAMILY_SAMPLES } from "@/lib/studio-families";
 import { DEFAULT_BRAND, FONT_FAMILY, MAX_PIXELS, rasterSize, safeColor, storedPicture, type Brand, type Content, type Measure, type Picture, type TemplateId } from "@/lib/studio";
 
 export const SAMPLE: Record<TemplateId, Content> = {
+  ...FAMILY_SAMPLES,
   duyuru: { tag: "Duyuru", title: "Yeni hizmet binamız hizmetinizde", subtitle: "Tüm birimlerimiz 1 Kasım itibarıyla tek adreste hizmet veriyor.", detail: "1 Kasım 2026 · Merkez Bina" },
   etkinlik: { tag: "Etkinlik", title: "Bölgesel Kalkınma Buluşması", subtitle: "Yerel yatırımcılar ve kamu kurumları bir araya geliyor.", detail: "12 Kasım 2026 · 10.00 · Kongre Salonu" },
   bilgi: { tag: "Bilgi", title: "%42", subtitle: "Destek başvurularında geçen yıla göre artış.", detail: "Kaynak: 2026 faaliyet raporu" },

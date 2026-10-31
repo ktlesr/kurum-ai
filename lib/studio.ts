@@ -2,6 +2,8 @@
 // layers become one SVG string, which is both the preview and every export (the browser rasterises it for PNG/JPEG/
 // WebP). The model only suggests text (parseFill); drawing is deterministic. Pure: runs in the browser and node --test.
 
+import { FAMILIES, FAMILY_HINTS, FAMILY_TEMPLATES, type FamilyId } from "./studio-families.ts";
+
 export const FORMATS = {
   kare: { w: 1080, h: 1080, label: "Kare", hint: "1:1 · gönderi" },
   dikey: { w: 1080, h: 1350, label: "Dikey", hint: "4:5 · gönderi" },
@@ -11,12 +13,15 @@ export const FORMATS = {
 export type FormatId = keyof typeof FORMATS;
 
 export const TEMPLATES = {
-  duyuru: { label: "Duyuru", hint: "Başlık, açıklama ve tarih/yer" },
-  etkinlik: { label: "Etkinlik", hint: "Tam sayfa fotoğraf üzerinde metin" },
-  bilgi: { label: "Bilgi / rakam", hint: "Öne çıkan rakam ya da kısa mesaj" },
-  alinti: { label: "Alıntı", hint: "Söz ve söyleyen" },
+  ...FAMILY_TEMPLATES,
+  duyuru: { label: "Duyuru", hint: "Başlık, açıklama ve tarih/yer", kind: "klasik", fonts: [] },
+  etkinlik: { label: "Etkinlik", hint: "Tam sayfa fotoğraf üzerinde metin", kind: "klasik", fonts: [] },
+  bilgi: { label: "Bilgi / rakam", hint: "Öne çıkan rakam ya da kısa mesaj", kind: "klasik", fonts: [] },
+  alinti: { label: "Alıntı", hint: "Söz ve söyleyen", kind: "klasik", fonts: [] },
 } as const;
 export type TemplateId = keyof typeof TEMPLATES;
+/** The templates a library shows, and the fonts they draw in (loaded before the gallery is drawn). */
+export const templatesOf = (kind: "gorsel" | "klasik" | "reels") => (Object.keys(TEMPLATES) as TemplateId[]).filter((t) => (TEMPLATES[t].kind as string) === kind);
 
 /** Field caps: the model's suggestion is cut to these, and the inputs use them as maxLength. */
 export const LIMITS = { tag: 24, title: 90, subtitle: 180, detail: 90 } as const;
@@ -37,12 +42,14 @@ type Layer =
   | (Box & { kind: "rect"; fill: string; radius?: number })
   | (Box & { kind: "fade"; color: string; from: number; to: number })
   | (Box & { kind: "gradient"; a: string; b: string })
-  | (Box & { kind: "image"; pic: Picture; fit: "cover" | "contain"; logo?: boolean })
+  | (Box & { kind: "image"; pic: Picture; fit: "cover" | "contain"; logo?: boolean; radius?: number })
   | {
       kind: "text"; x: number; y: number; w: number; size: number; lines: string[]; weight: number; color: string; leading: number; tracking?: number;
       /** Which content field it shows ("deco": the quote mark); `bg`: a pill behind it (the tag), the box's height. */
-      role?: Role; bg?: { fill: string; h: number };
-    };
+      role?: Role; bg?: { fill: string; h: number }; font?: string; align?: "middle";
+    }
+  /** A shape that is more than a box (outline, ellipse, polygon, see-through). */
+  | (Box & { kind: "el"; name: string; fill: Fill } & Pick<ShapeEl, "shape" | "points" | "noFill" | "stroke" | "opacity" | "radius">);
 export type Role = "tag" | "title" | "subtitle" | "detail" | "deco";
 export type { Layer };
 
@@ -133,10 +140,10 @@ export function fitText(text: string, w: number, h: number, size: number, min: n
 }
 
 /** One item of a vertical stack; `before` is the gap above it, dropped together with an empty item. */
-type Item = { before?: number } & (
-  | { t: "text"; role?: Role; text: string; size: number; min: number; lines: number; weight: number; color: string; leading?: number; flex?: boolean }
-  | { t: "pill"; text: string; size: number; fill: string; color: string }
-  | { t: "bar"; w: number; h: number; fill: string }
+export type Item = { before?: number } & (
+  | { t: "text"; role?: Role; text: string; size: number; min: number; lines: number; weight: number; color: string; leading?: number; flex?: boolean; font?: string; align?: "middle" }
+  | { t: "pill"; text: string; size: number; fill: string; color: string; font?: string; center?: boolean }
+  | { t: "bar"; w: number; h: number; fill: string; center?: boolean }
   | { t: "logo"; pic?: Picture; h: number; plate?: boolean }
 );
 
@@ -150,7 +157,7 @@ function stack(items: Item[], x: number, w: number, y: number, avail: number, di
   type Placed = { h: number; draw: (top: number) => Layer[] };
   const gaps = live.reduce((s, i, k) => s + (k ? (i.before ?? 0) : 0), 0);
   const place = (i: Item, room: number): Placed => {
-    if (i.t === "bar") return { h: i.h, draw: (top) => [{ kind: "rect", fill: i.fill, x, y: top, w: i.w, h: i.h, radius: i.h / 2 }] };
+    if (i.t === "bar") return { h: i.h, draw: (top) => [{ kind: "rect", fill: i.fill, x: i.center ? x + (w - i.w) / 2 : x, y: top, w: i.w, h: i.h, radius: i.h / 2 }] };
     if (i.t === "logo") {
       const pic = i.pic!;
       const pad = i.plate ? i.h * 0.22 : 0;
@@ -168,17 +175,17 @@ function stack(items: Item[], x: number, w: number, y: number, avail: number, di
     if (i.t === "pill") {
       const t = i.text.trim().toLocaleUpperCase("tr");
       const tracking = i.size * 0.08;
-      const tw = Math.min(measure(t, i.size, 700) + tracking * t.length, w - i.size * 1.6);
+      const tw = Math.min(measure(t, i.size, 700, i.font) + tracking * t.length, w - i.size * 1.6);
       const ph = i.size * 1.9;
       return {
         h: ph,
-        draw: (top) => [{ kind: "text", role: "tag", x, y: top, w: tw + i.size * 1.6, size: i.size, lines: [t], weight: 700, color: i.color, leading: 1, tracking, bg: { fill: i.fill, h: ph } }],
+        draw: (top) => [{ kind: "text", role: "tag", font: i.font, x: i.center ? x + (w - tw - i.size * 1.6) / 2 : x, y: top, w: tw + i.size * 1.6, size: i.size, lines: [t], weight: 700, color: i.color, leading: 1, tracking, bg: { fill: i.fill, h: ph } }],
       };
     }
     const leading = i.leading ?? 1.15;
     if (room < i.min * leading) return { h: 0, draw: () => [] };
-    const fit = fitText(i.text.trim(), w, room, i.size, i.min, i.lines, i.weight, measure, leading);
-    return { h: fit.lines.length * fit.size * leading, draw: (top) => [{ kind: "text", role: i.role, x, y: top, w, size: fit.size, lines: fit.lines, weight: i.weight, color: i.color, leading }] };
+    const fit = fitText(i.text.trim(), w, room, i.size, i.min, i.lines, i.weight, i.font ? (t, s, wt) => measure(t, s, wt, i.font) : measure, leading);
+    return { h: fit.lines.length * fit.size * leading, draw: (top) => [{ kind: "text", role: i.role, font: i.font, align: i.align, x, y: top, w, size: fit.size, lines: fit.lines, weight: i.weight, color: i.color, leading }] };
   };
   // Fixed items first, in order, each within what is still free; the flex text then gets the rest. A text with no
   // room for one line is left out, so the column never grows past `avail`.
@@ -207,6 +214,8 @@ function stack(items: Item[], x: number, w: number, y: number, avail: number, di
   return out;
 }
 
+const bottomOf = (l: Layer) => l.y + (l.kind === "text" ? (l.bg ? l.bg.h : l.lines.length * l.size * l.leading) : l.h);
+
 /** The layers of one design, back to front: background, photo, shading, then text and the logo. */
 export function layout(d: Design, measure: Measure): Layer[] {
   const { w, h } = FORMATS[d.format];
@@ -221,6 +230,20 @@ export function layout(d: Design, measure: Measure): Layer[] {
   const c = d.content;
   const col = (x: number, cw: number, y: number, avail: number, dir: "down" | "up", items: Item[]) => stack(items, x, cw, y, avail, dir, measure);
   const pill = (fill: string, color: string, before?: number): Item => ({ t: "pill", text: c.tag, size: 28 * u, fill, color, before });
+
+  if (Object.hasOwn(FAMILIES, d.template)) {
+    return FAMILIES[d.template as FamilyId]({
+      w, h, u, m, wide, tall: h / w > 1.5, primary, accent, photo, logo, c, inkOn, shade,
+      flow: (x, cw, top, bottom, { head = [], body = [], foot = [], gap = 0, footShare = 0.3 }) => {
+        const avail = Math.max(0, bottom - top);
+        const heads = stack(head, x, cw, top, avail * 0.45, "down", measure);
+        const feet = stack(foot, x, cw, bottom, avail * footShare, "up", measure);
+        const headEnd = heads.length ? Math.max(...heads.map(bottomOf)) + gap : top;
+        const footTop = feet.length ? Math.min(...feet.map((l) => l.y)) - gap : bottom;
+        return [...heads, ...stack(body, x, cw, headEnd, Math.max(0, footTop - headEnd), "down", measure), ...feet];
+      },
+    });
+  }
 
   if (d.template === "etkinlik") {
     const L: Layer[] = [{ kind: "gradient", a: shade(primary, -0.25), b: accent, x: 0, y: 0, w, h }];
@@ -457,6 +480,7 @@ export function fromTemplate(d: Design, measure: Measure): El[] {
   const { w: W, h: H } = FORMATS[d.format];
   return layout(d, measure).map((l): El => {
     const id = newId();
+    if (l.kind === "el") return { ...l, id, kind: "shape" };
     if (l.kind === "text") {
       const role = l.role;
       const h = l.bg ? l.bg.h : Math.max(l.lines.length, 1) * l.size * l.leading;
@@ -464,13 +488,13 @@ export function fromTemplate(d: Design, measure: Measure): El[] {
         id, kind: "text", name: role ? NAMES[role] : "Metin", role, x: l.x, y: l.y, w: l.w, h,
         // The tag is drawn in capitals; the element keeps what the user typed.
         text: role === "tag" ? d.content.tag.trim() : role === "deco" ? l.lines.join("") : role ? d.content[role].trim() : l.lines.join("\n"),
-        upper: role === "tag", size: l.size, weight: l.weight, color: l.color, align: "start", leading: l.leading, tracking: l.tracking ?? 0,
+        upper: role === "tag", size: l.size, weight: l.weight, color: l.color, align: l.align ?? "start", ...(l.font ? { font: l.font } : {}), leading: l.leading, tracking: l.tracking ?? 0,
         auto: role !== "deco", ...(l.bg ? { bg: { fill: l.bg.fill, radius: l.bg.h / 2 } } : {}),
       };
     }
     if (l.kind === "image") {
       const isLogo = !!l.logo;
-      return { id, kind: "image", name: isLogo ? "Logo" : "Fotoğraf", x: l.x, y: l.y, w: l.w, h: l.h, pic: l.pic, fit: l.fit, ...(isLogo ? { logo: true } : {}) };
+      return { id, kind: "image", name: isLogo ? "Logo" : "Fotoğraf", x: l.x, y: l.y, w: l.w, h: l.h, pic: l.pic, fit: l.fit, ...(isLogo ? { logo: true } : {}), ...(l.radius ? { radius: l.radius } : {}) };
     }
     const full = l.x <= 0.5 && l.y <= 0.5 && l.w >= W - 0.5 && l.h >= H - 0.5;
     const fill: Fill =
@@ -862,6 +886,7 @@ export const TEMPLATE_HINT: Record<TemplateId, string> = {
   etkinlik: "Şablon: etkinlik (fotoğraf üzerinde kısa başlık, detayda tarih/yer).",
   bilgi: "Şablon: bilgi/rakam. baslik öne çıkan rakam ya da 2-4 kelimelik çok kısa mesaj olsun (ör. \"%42 artış\"), altBaslik rakamın ne anlattığını açıklasın.",
   alinti: "Şablon: alıntı. baslik alıntılanan söz (en fazla 30 kelime, tırnaksız), altBaslik söyleyenin adı, detay unvanı/kurumu.",
+  ...FAMILY_HINTS,
 };
 
 const clip = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max).trim() : "");
