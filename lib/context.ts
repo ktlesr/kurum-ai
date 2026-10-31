@@ -125,16 +125,17 @@ export function linkPages(meta: ChatMeta | undefined, nonce: string) {
  * A list position Docling put before a line's own number: "17. ç) Uluslararası…" is item "ç)", not item 17.
  * Also for what the model reads: it would quote the 17.
  */
-export const dropListPositions = (text: string) => text.replace(/^[ \t]*\d{1,3}\. (?="?(?:[^\s()]{1,3}|&amp;)\) )/gmu, "");
+export const dropListPositions = (text: string) => text.replace(/^ {0,3}\d{1,3}\. (?="?(?:[^\s()]{1,3}|&amp;)\) )/gmu, "");
 
+// Up to 3 spaces of indent below: four or more is a code block.
 /** "- x" with no list around it: a line Docling took for a list, like "- MADDE 9- 4 sayılı…" among paragraphs. */
 function dropLoneBullets(text: string): string {
   const lines = text.split("\n");
   const bullet = (i: number, step: number) => {
-    for (let j = i + step; lines[j] !== undefined; j += step) if (lines[j].trim()) return /^[ \t]*[-*+] /.test(lines[j]);
+    for (let j = i + step; lines[j] !== undefined; j += step) if (lines[j].trim()) return /^ {0,3}[-*+] /.test(lines[j]);
     return false;
   };
-  return lines.map((l, i) => (/^[ \t]*[-*+] /.test(l) && !bullet(i, -1) && !bullet(i, 1) ? l.replace(/^[ \t]*[-*+] /, "") : l)).join("\n");
+  return lines.map((l, i) => (/^ {0,3}[-*+] /.test(l) && !bullet(i, -1) && !bullet(i, 1) ? l.replace(/^ {0,3}[-*+] /, "") : l)).join("\n");
 }
 
 /**
@@ -149,7 +150,7 @@ export const plainNumbering = (text: string) =>
     .map((part, i) =>
       i % 2
         ? part
-        : dropLoneBullets(dropListPositions(part).replace(/^[ \t]*[-*+] (?="?(?:\p{Ll}\)|\(\d{1,3}\)|\(\p{Ll}\)|\d{1,3}[.)])[ \t])/gmu, ""))
+        : dropLoneBullets(dropListPositions(part).replace(/^ {0,3}[-*+] (?="?(?:\p{Ll}\)|\(\d{1,3}\)|\(\p{Ll}\)|\d{1,3}[.)])[ \t])/gmu, ""))
             .replace(/^("?\d{1,3})\)(?=[ \t])/gm, "$1\\)"),
     )
     .join("");

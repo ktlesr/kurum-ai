@@ -56,6 +56,7 @@ test("plainNumbering: a line's own number stays text in any document; real bulle
   assert.equal(dropListPositions('17. ç) Uluslararası\n12. "e) Strateji\n13. Iİ) Kurum\n9. &amp;) Kültürel\n3. Normal madde'), 'ç) Uluslararası\n"e) Strateji\nIİ) Kurum\n&amp;) Kültürel\n3. Normal madde');
   assert.equal(plainNumbering("Paragraf\n\n- MADDE 9- 4 sayılı\n\nParagraf"), "Paragraf\n\nMADDE 9- 4 sayılı\n\nParagraf");
   assert.equal(plainNumbering("- Bir\n- İki"), "- Bir\n- İki");
+  assert.equal(plainNumbering("    env:\n      - name: X\n        value: y"), "    env:\n      - name: X\n        value: y"); // indented code
   const code = "```\n- 1) ayar\n```";
   assert.equal(plainNumbering("~~~text\n- 1) ayar\n~~~"), "~~~text\n- 1) ayar\n~~~");
   assert.equal(plainNumbering(`- 1) önce\n${code}\n- 2) sonra`), `1\\) önce\n${code}\n2\\) sonra`);
