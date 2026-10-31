@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { docSections, linkPages, parseSource, plainNumbering, type ChatMeta, type MdNode } from "./context.ts";
+import { docSections, dropListPositions, linkPages, parseSource, plainNumbering, type ChatMeta, type MdNode } from "./context.ts";
 
 test("docSections splits on page and sheet markers, keeps the outline", () => {
   const t = "Özet satırı\n--- Sayfa 1 ---\nbir\n--- Sayfa 2 ---\niki\n## Sheet: Bütçe\n| a |";
@@ -52,7 +52,10 @@ test("plainNumbering: a line's own number stays text in any document; real bulle
   assert.equal(plainNumbering("- 1) Proje"), "1\\) Proje");
   assert.equal(plainNumbering("* 2. Hedef\n+ (b) Bent\n- a) Orta Asya\n- (2) Birinci\n- \"ç) Kalkınma"), "2. Hedef\n(b) Bent\na) Orta Asya\n(2) Birinci\n\"ç) Kalkınma");
   assert.equal(plainNumbering("2) Satır"), "2\\) Satır");
-  assert.equal(plainNumbering("- Düz madde\n1. Sıralı"), "- Düz madde\n1. Sıralı");
+  assert.equal(plainNumbering("- Düz\n- madde\n1. Sıralı"), "- Düz\n- madde\n1. Sıralı");
+  assert.equal(dropListPositions('17. ç) Uluslararası\n12. "e) Strateji\n13. Iİ) Kurum\n9. &amp;) Kültürel\n3. Normal madde'), 'ç) Uluslararası\n"e) Strateji\nIİ) Kurum\n&amp;) Kültürel\n3. Normal madde');
+  assert.equal(plainNumbering("Paragraf\n\n- MADDE 9- 4 sayılı\n\nParagraf"), "Paragraf\n\nMADDE 9- 4 sayılı\n\nParagraf");
+  assert.equal(plainNumbering("- Bir\n- İki"), "- Bir\n- İki");
   const code = "```\n- 1) ayar\n```";
   assert.equal(plainNumbering("~~~text\n- 1) ayar\n~~~"), "~~~text\n- 1) ayar\n~~~");
   assert.equal(plainNumbering(`- 1) önce\n${code}\n- 2) sonra`), `1\\) önce\n${code}\n2\\) sonra`);

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { dropListPositions } from "./context";
 import { checkCriteria, checkMaxRows, checkTotals, compactTables, markUncertain } from "./checks";
 import { modelConfig, providerOf } from "./model-config";
 import type { ModelConfig } from "./models";
@@ -26,7 +27,7 @@ export async function doclingOffline(): Promise<boolean> {
   const v = await getSetting("docling_offline").catch(() => "true");
   return (v ?? process.env.DOCLING_OFFLINE) !== "false";
 }
-const PIPELINE = "v13"; // bump to invalidate cached extractions
+const PIPELINE = "v14"; // bump to invalidate cached extractions
 /** Page limit for every PDF path: Docling, the unpdf fallback, and cached results. */
 export const MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
 export const tooManyPages = () => `Dosya çok fazla sayfa içeriyor (en fazla ${MAX_PAGES}). Dosyayı bölerek yükleyin.`;
@@ -190,7 +191,7 @@ export async function extractWithDocling(
   let scanFailed = 0;
 
   for (const l of lines) {
-    let md = compactTables(l.markdown);
+    let md = compactTables(dropListPositions(l.markdown));
     // A scan OCR gave nothing for (a bad scan, OCR not working): the vision model reads the page. Only then: it
     // reads smoothly but can change words, which is worse in a legal text than OCR's wrong letter.
     if (l.scan === "") scanFailed++;

@@ -122,6 +122,22 @@ export function linkPages(meta: ChatMeta | undefined, nonce: string) {
 }
 
 /**
+ * A list position Docling put before a line's own number: "17. ç) Uluslararası…" is item "ç)", not item 17.
+ * Also for what the model reads: it would quote the 17.
+ */
+export const dropListPositions = (text: string) => text.replace(/^[ \t]*\d{1,3}\. (?="?(?:[^\s()]{1,3}|&amp;)\) )/gmu, "");
+
+/** "- x" with no list around it: a line Docling took for a list, like "- MADDE 9- 4 sayılı…" among paragraphs. */
+function dropLoneBullets(text: string): string {
+  const lines = text.split("\n");
+  const bullet = (i: number, step: number) => {
+    for (let j = i + step; lines[j] !== undefined; j += step) if (lines[j].trim()) return /^[ \t]*[-*+] /.test(lines[j]);
+    return false;
+  };
+  return lines.map((l, i) => (/^[ \t]*[-*+] /.test(l) && !bullet(i, -1) && !bullet(i, 1) ? l.replace(/^[ \t]*[-*+] /, "") : l)).join("\n");
+}
+
+/**
  * For showing a document's text: its own numbering stays text. Docling marks a line that starts with its own number
  * ("1) Proje…", "a) …", "(2) …", "2. …") as a bullet, and Markdown would make "- 1) Proje…" an empty-looking bullet with
  * a list inside, whose number isn't even copied. The bullet goes wherever a line has its own number; "1)" stays as
@@ -133,8 +149,7 @@ export const plainNumbering = (text: string) =>
     .map((part, i) =>
       i % 2
         ? part
-        : part
-            .replace(/^[ \t]*[-*+] (?="?(?:\p{Ll}\)|\(\d{1,3}\)|\(\p{Ll}\)|\d{1,3}[.)])[ \t])/gmu, "")
+        : dropLoneBullets(dropListPositions(part).replace(/^[ \t]*[-*+] (?="?(?:\p{Ll}\)|\(\d{1,3}\)|\(\p{Ll}\)|\d{1,3}[.)])[ \t])/gmu, ""))
             .replace(/^("?\d{1,3})\)(?=[ \t])/gm, "$1\\)"),
     )
     .join("");
