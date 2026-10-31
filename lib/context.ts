@@ -150,7 +150,7 @@ export function repairListMarks(text: string): string {
     // "1)" and "a)" are how a sublist starts: "c) / 1) / d)" may well be right.
     if (!m || m[2] === "1" || m[2] === "a") return;
     const [p, n] = [near(i, -1), near(i, 1)];
-    const unreadable = at(m[2]) < 0 && Number.isNaN(num(m[2])); // not a mark at all, like "Iİ": a valid one may start a sublist
+    const unreadable = at(m[2]) < 0 && Number.isNaN(num(m[2])) && !/^[ivxIVX]+$/.test(m[2]); // not a mark at all, like "Iİ": a valid one may start a sublist
     let want: string | undefined;
     if (num(n) - num(p) === 2) want = String(num(p) + 1);
     else if (at(p) >= 0 && at(n) - at(p) === 2) want = TR_LETTERS[at(p) + 1];
