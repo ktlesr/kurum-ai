@@ -246,7 +246,10 @@ export async function POST(req: Request) {
           if (!p.pdf) return p;
           const pdf = p.pdf;
           const name = decodeURIComponent(new URL(p.url).pathname.split("/").pop() || "belge").replace(/\.pdf$/i, "").replace(/[^\p{L}\p{N} ._-]/gu, "").slice(0, 120) || "belge";
-          const d = await withJobDir((dir) => parseFile(`${name}.pdf`, pdf, (s) => status(`PDF okunuyor: ${s.stage} ${s.done}/${s.total}`), signal, dir));
+          // The same gates as an upload: this is one, only by address.
+          if (!admission.uploadPerUser.allow(user.id)) throw new UserError("çok fazla belge okuma isteği; biraz sonra tekrar deneyin");
+          if (admission.docling.saturated) throw new UserError("sunucu yoğun; biraz sonra tekrar deneyin");
+          const d = await admission.upload.run(() => withJobDir((dir) => parseFile(`${name}.pdf`, pdf, (s) => status(`PDF okunuyor: ${s.stage} ${s.done}/${s.total}`), signal, dir)), signal);
           if (d.warning) webNotes.push(`${name}.pdf: ${d.warning}`);
           return { url: p.url, title: `${name}.pdf`, text: d.text, links: [] };
         };
