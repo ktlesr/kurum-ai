@@ -26,7 +26,7 @@ export async function doclingOffline(): Promise<boolean> {
   const v = await getSetting("docling_offline").catch(() => "true");
   return (v ?? process.env.DOCLING_OFFLINE) !== "false";
 }
-const PIPELINE = "v11"; // bump to invalidate cached extractions
+const PIPELINE = "v12"; // bump to invalidate cached extractions
 /** Page limit for every PDF path: Docling, the unpdf fallback, and cached results. */
 export const MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
 export const tooManyPages = () => `Dosya çok fazla sayfa içeriyor (en fazla ${MAX_PAGES}). Dosyayı bölerek yükleyin.`;
@@ -51,7 +51,7 @@ interface PageLine {
   total: number;
   markdown: string;
   tables: { markdown: string; strips: string[] }[];
-  /** The whole page, when it's a scan. */
+  /** The whole page, when it's a scan OCR didn't read; empty when the file's scans went over their size limit. */
   scan?: string;
 }
 
@@ -178,34 +178,27 @@ export async function extractWithDocling(
     throw e;
   }
 
-  // A scan's tables are read with its page.
-  const totalTables = lines.reduce((n, l) => n + (l.scan ? 0 : l.tables.length), 0);
+  const totalTables = lines.reduce((n, l) => n + l.tables.length, 0);
   const verify = { tables: totalTables, numbers: 0, uncertain: 0, skipped: undefined as string | undefined };
   let done = 0;
   const parts: string[] = [];
   const headings: string[] = [];
   const outline: string[] = [];
   const findings: string[] = [];
-  const scans = lines.filter((l) => l.scan).length;
+  const scans = lines.filter((l) => l.scan !== undefined).length;
   let scanDone = 0;
   let scanFailed = 0;
 
   for (const l of lines) {
     let md = compactTables(l.markdown);
-    // A scan: the vision model reads the page (OCR confuses Turkish letters and loses lines); OCR's reading, if it has
-    // one, checks the numbers and stays as the page's text when the model fails.
-    let scanChecked = false; // both readings of the scan were compared
-    let scanOcr = "";
+    // A scan OCR gave nothing for (a bad scan, OCR not working): the vision model reads the page. Only then: it
+    // reads smoothly but can change words, which is worse in a legal text than OCR's wrong letter.
+    if (l.scan === "") scanFailed++;
     if (l.scan) {
       signal.throwIfAborted();
       onProgress({ stage: "Taranmış sayfalar okunuyor", done: scanDone + scanFailed + 1, total: scans });
       try {
-        const read = compactTables(await readStrip(l.scan, signal, cacheDir, vision, SCAN_PROMPT));
-        scanChecked = /\d/.test(md);
-        // Each reader loses what the other keeps (OCR whole lines, the model a row): both go in, as with tables.
-        if (scanChecked || md.trim()) scanOcr = `[İkinci okuma — OCR, harf hataları olabilir; (?) = görsel okumayla uyuşmayan sayı]
-${markUncertain(md, read).text}`;
-        md = scanChecked ? markUncertain(read, md).text : read;
+        md = compactTables(await readStrip(l.scan, signal, cacheDir, vision, SCAN_PROMPT));
         scanDone++;
       } catch (e) {
         if (signal.aborted) throw e;
@@ -213,10 +206,9 @@ ${markUncertain(md, read).text}`;
         scanFailed++;
       }
     }
-    const extra: string[] = scanOcr ? [scanOcr] : [];
+    const extra: string[] = [];
     let marked = 0;
-    const tables = l.scan ? [] : l.tables;
-    for (const [k, t] of tables.entries()) {
+    for (const [k, t] of l.tables.entries()) {
       signal.throwIfAborted();
       onProgress({ stage: "Tablolar doğrulanıyor", done: ++done, total: totalTables });
       const primary = compactTables(t.markdown);
@@ -244,7 +236,7 @@ ${markUncertain(md, read).text}`;
       extra.push(`[İkinci okuma — görsel model, tablo ${k + 1}; (?) = ilk okumayla uyuşmayan sayı]\n${b.text}`);
     }
     // Max-row and total checks only where every table on the page is either text-layer or cross-checked.
-    const maxNotes = (l.scan ? scanChecked : marked === tables.length) ? [...checkMaxRows(md), ...checkTotals(md)] : [];
+    const maxNotes = marked === l.tables.length ? [...checkMaxRows(md), ...checkTotals(md)] : [];
     // Criteria rows from both readings (one reader often misses a result cell); same verdict once.
     const seen = new Set<string>();
     const criteria = [md, ...extra].flatMap(checkCriteria).filter((n) => {
@@ -279,7 +271,7 @@ ${markUncertain(md, read).text}`;
     verify: totalTables ? { ...verify, skipped: verify.skipped } : undefined,
     warning: [
       scanDone ? `${scanDone} taranmış sayfa görsel modelle okundu; kesin değerleri asıl belgeden kontrol edin.` : "",
-      scanFailed ? `${scanFailed} taranmış sayfa görsel modelle okunamadı; OCR metni kullanıldı, harf ve satır hataları olabilir. Dosyayı sonra yeniden yükleyin.` : "",
+      scanFailed ? `${scanFailed} taranmış sayfa okunamadı; bu sayfalar cevaplara giremez. Dosyayı sonra yeniden yükleyin.` : "",
     ].filter(Boolean).join(" ") || undefined,
   };
   // Don't cache a run where verification failed midway — retry it next time.

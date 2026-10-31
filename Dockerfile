@@ -32,6 +32,8 @@ FROM runtime AS docling
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv libgl1 libglib2.0-0 \
   && rm -rf /var/lib/apt/lists/* \
   && python3 -m venv /opt/docling && /opt/docling/bin/pip install --no-cache-dir docling==2.130.0
+# Tesseract with its Turkish model is the OCR (scripts/extract.py); rapidocr below is the fallback.
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-tur && rm -rf /var/lib/apt/lists/*
 # Docling 2.130 needs rapidocr's PP_OCRV6_LANGS, gone in 3.10: without the pin OCR silently reads nothing.
 RUN /opt/docling/bin/pip install --no-cache-dir rapidocr==3.9.2
 # OCR's torch models go into the package's own folder, which the app user can't write: fetched here. A failed fetch

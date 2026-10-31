@@ -2,7 +2,7 @@
   {"page": n, "total": N, "markdown": "...", "tables": [{"markdown": "...", "strips": [png_b64, ...]}], "scan": png_b64}
 `tables` holds high-res crops (split into horizontal strips) of tables that sit on pages
 containing bitmap images — i.e. likely screenshots that a second reader should verify.
-`scan` is the whole page when it holds a bitmap and next to no text layer: the vision model reads it, OCR only checks.
+`scan` is the whole page when it holds a bitmap and OCR gave next to no text: the vision model reads it instead.
 DOCX: a single line with "page": null.
 Usage: python scripts/extract.py <file>
 """
@@ -11,6 +11,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import sys
 import warnings
 
@@ -19,7 +20,7 @@ logging.disable(logging.WARNING)
 sys.stdout.reconfigure(encoding="utf-8")
 
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import TableItem
 
@@ -28,12 +29,15 @@ MAX_PAGES = int(os.environ.get("DOCLING_MAX_PAGES", "500"))  # lib/extract.ts ma
 MAX_RENDER_PX = 60_000_000  # exit 4: a forged 10 m x 10 m page would otherwise render into many GB of RAM
 STRIP = 450  # max strip height in px; the vision model downsizes larger images and misreads digits
 OVERLAP = 40
-SCAN_LETTERS = 200  # fewer letters than this in the text layer of a page with a bitmap: a scan
+SCAN_LETTERS = 200  # fewer letters than this on a page with a bitmap: a scan OCR didn't read
 SCAN_SCALE = 2.5
 SCAN_BUDGET = 150_000_000  # base64 bytes of scans per file: a small PDF can repeat one big bitmap on hundreds of pages
 
 path = sys.argv[1]
 opts = PdfPipelineOptions(do_ocr=True, do_table_structure=True)
+# Tesseract's Turkish model keeps ğ, ı, İ and whole lines; Docling's default OCR doesn't. That default stays where it isn't installed.
+if shutil.which("tesseract"):
+    opts.ocr_options = TesseractCliOcrOptions(lang=["tur"])
 # Tables are often pasted screenshots: build cells from OCR, not the (missing) text layer.
 opts.table_structure_options.do_cell_matching = False
 conv = DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)})
@@ -89,12 +93,10 @@ for n in range(1, total + 1):
             crops.append({"markdown": item.export_to_markdown(doc), "strips": strips})
     md = doc.export_to_markdown(image_placeholder="")
     line = {"page": n, "total": total, "markdown": md, "tables": crops}
-    textpage = page.get_textpage()
-    layer = textpage.get_text_range()
-    textpage.close()
-    if has_images and sum(c.isalpha() for c in layer) < SCAN_LETTERS and scan_bytes < SCAN_BUDGET:
-        line["scan"] = png(page.render(scale=SCAN_SCALE).to_pil())  # over the budget: OCR's reading stays
-        scan_bytes += len(line["scan"])
+    if has_images and sum(c.isalpha() for c in md) < SCAN_LETTERS:
+        scan = png(page.render(scale=SCAN_SCALE).to_pil()) if scan_bytes < SCAN_BUDGET else None
+        scan_bytes += len(scan or "")
+        line["scan"] = scan or ""  # empty: over the budget, the caller reports the page as unread
     emit(line)
     page.close()
 pdf.close()
