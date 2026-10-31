@@ -122,3 +122,18 @@ test("htmlToText stays linear on broken HTML (no regex backtracking)", () => {
     assert.ok(performance.now() - t < 1500, `${evil.slice(0, 8)}… took ${Math.round(performance.now() - t)} ms`);
   }
 });
+
+test("readPage: a PDF comes back as the file, by type or by its first bytes", async () => {
+  const pdf = Buffer.from("%PDF-1.7 belge");
+  const srv = createServer((req, res) => {
+    res.setHeader("content-type", req.url === "/a" ? "application/pdf" : "application/octet-stream");
+    res.end(pdf);
+  });
+  await new Promise<void>((ok) => srv.listen(0, "127.0.0.1", ok));
+  const at = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  try {
+    for (const p of ["/a", "/b"]) assert.deepEqual((await readPage(at + p, AbortSignal.timeout(5000), { allowPrivate: true })).pdf, pdf);
+  } finally {
+    srv.close();
+  }
+});

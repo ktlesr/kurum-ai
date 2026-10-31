@@ -26,7 +26,7 @@ export async function doclingOffline(): Promise<boolean> {
   const v = await getSetting("docling_offline").catch(() => "true");
   return (v ?? process.env.DOCLING_OFFLINE) !== "false";
 }
-const PIPELINE = "v9"; // bump to invalidate cached extractions
+const PIPELINE = "v10"; // bump to invalidate cached extractions
 /** Page limit for every PDF path: Docling, the unpdf fallback, and cached results. */
 export const MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
 export const tooManyPages = () => `Dosya çok fazla sayfa içeriyor (en fazla ${MAX_PAGES}). Dosyayı bölerek yükleyin.`;
@@ -43,6 +43,7 @@ export interface Extracted {
   text: string;
   pages?: number;
   verify?: { tables: number; numbers: number; uncertain: number; skipped?: string };
+  warning?: string;
 }
 
 interface PageLine {
@@ -50,6 +51,8 @@ interface PageLine {
   total: number;
   markdown: string;
   tables: { markdown: string; strips: string[] }[];
+  /** The whole page, when it's a scan OCR didn't read. */
+  scan?: string;
 }
 
 const VISION_PROMPT = `Bu görüntü bir teknik rapordaki tablonun bir kesitidir. YALNIZCA görüntüdeki bilgiyi aynen yazıya dök.
@@ -60,17 +63,22 @@ const VISION_PROMPT = `Bu görüntü bir teknik rapordaki tablonun bir kesitidir
 - Yorum ekleme.`;
 
 
+const SCAN_PROMPT = `Bu görüntü taranmış bir belge sayfasıdır. Sayfadaki metni YALNIZCA görüntüde olduğu gibi yazıya dök.
+- Okuma sırasını, madde numaralarını, tarih ve sayıları değiştirme. Tabloları Markdown tablo olarak yaz.
+- Okuyamadığın yere [okunamadı] yaz. Asla tahmin etme, tamamlama ya da özetleme.
+- Yorum ekleme.`;
+
 /** Server + model: the same model name on another server is another reading. */
 const visionId = (v: ModelConfig["vision"]) => `${v.kind}|${v.url}|${v.model}`;
 
 /** One vision read per image strip; cached (in this doc's own cache dir) so pipeline changes don't redo minutes of work. */
-async function readStrip(png: string, signal: AbortSignal, cacheDir: string, vision: ModelConfig["vision"]): Promise<string> {
-  const file = path.join(cacheDir, "strips", `${createHash("sha256").update(visionId(vision) + VISION_PROMPT + png).digest("hex")}.txt`);
+async function readStrip(png: string, signal: AbortSignal, cacheDir: string, vision: ModelConfig["vision"], prompt = VISION_PROMPT): Promise<string> {
+  const file = path.join(cacheDir, "strips", `${createHash("sha256").update(visionId(vision) + prompt + png).digest("hex")}.txt`);
   const hit = await readFile(file, "utf8").catch(() => null);
   if (hit !== null) return hit;
   // The slot covers the whole call, body included: a provider that sends headers early is still "busy".
   const text = await admission.model.run(async () => {
-    const r = await providerOf(vision).chat({ model: vision.model, messages: [{ role: "user", content: VISION_PROMPT, images: [png] }], maxTokens: VISION_MAX_TOKENS, signal });
+    const r = await providerOf(vision).chat({ model: vision.model, messages: [{ role: "user", content: prompt, images: [png] }], maxTokens: VISION_MAX_TOKENS, signal });
     // A cut-off reading is a failed reading: never cached, never compared (the caller marks verification skipped).
     if (r.truncated) throw new Error("vision_truncated");
     return r.text.trim();
@@ -177,9 +185,25 @@ export async function extractWithDocling(
   const headings: string[] = [];
   const outline: string[] = [];
   const findings: string[] = [];
+  const scans = lines.filter((l) => l.scan).length;
+  let scanDone = 0;
+  let scanFailed = 0;
 
   for (const l of lines) {
     let md = compactTables(l.markdown);
+    // A scan OCR gave nothing for (no OCR models on this server, a bad scan): the vision model reads the page.
+    if (l.scan) {
+      signal.throwIfAborted();
+      onProgress({ stage: "Taranmış sayfalar okunuyor", done: scanDone + scanFailed + 1, total: scans });
+      try {
+        md = compactTables(await readStrip(l.scan, signal, cacheDir, vision, SCAN_PROMPT));
+        scanDone++;
+      } catch (e) {
+        if (signal.aborted) throw e;
+        logError(`vision ${vision.model}`, e);
+        scanFailed++;
+      }
+    }
     const extra: string[] = [];
     let marked = 0;
     for (const [k, t] of l.tables.entries()) {
@@ -243,9 +267,13 @@ export async function extractWithDocling(
     text: parts.join("\n\n"),
     pages: lines[0]?.page ? lines.length : undefined,
     verify: totalTables ? { ...verify, skipped: verify.skipped } : undefined,
+    warning: [
+      scanDone ? `${scanDone} taranmış sayfa görsel modelle okundu; kesin değerleri asıl belgeden kontrol edin.` : "",
+      scanFailed ? `${scanFailed} taranmış sayfa okunamadı; bu sayfalar cevaplara giremez. Dosyayı sonra yeniden yükleyin.` : "",
+    ].filter(Boolean).join(" ") || undefined,
   };
   // Don't cache a run where verification failed midway — retry it next time.
-  if (!verify.skipped) {
+  if (!verify.skipped && !scanFailed) {
     writeFileAtomic(cacheFile, JSON.stringify(result));
   }
   return result;

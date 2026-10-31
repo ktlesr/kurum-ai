@@ -9,6 +9,7 @@ export const MAX_URLS = 3;
 /** Page text that reaches the model, all pages together (the caller cuts further to fit the context). */
 export const MAX_CHARS_TOTAL = 60_000;
 const MAX_BYTES = 2 * 1024 * 1024;
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const MAX_CHARS = 30_000;
 const TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 3;
@@ -95,9 +96,10 @@ function get(url: URL, signal: AbortSignal, allowPrivate: boolean): Promise<{ st
     }, (res) => {
       const chunks: Buffer[] = [];
       let size = 0;
+      const cap = /\bpdf\b/i.test(String(res.headers["content-type"])) ? MAX_PDF_BYTES : MAX_BYTES;
       res.on("data", (c: Buffer) => {
         size += c.length;
-        if (size > MAX_BYTES) return req.destroy(new WebError("too_large"));
+        if (size > cap) return req.destroy(new WebError("too_large"));
         chunks.push(c);
       });
       res.on("end", () => resolve({ status: res.statusCode ?? 0, location: res.headers.location, type: String(res.headers["content-type"] ?? ""), body: Buffer.concat(chunks) }));
@@ -221,8 +223,8 @@ export function parsePick(answer: string, count: number): number[] {
   return [...new Set([m[1], m[2]].filter(Boolean).map(Number))].filter((n) => n >= 1 && n <= count).map((n) => n - 1);
 }
 
-/** `html`: an HTML page (lib/browser can render it with its scripts); data files and plain text are final. */
-export interface Page { url: string; title: string; text: string; links: Link[]; html?: boolean }
+/** `html`: an HTML page (lib/browser can render it with its scripts); data files and plain text are final. `pdf`: the file, for the document reader. */
+export interface Page { url: string; title: string; text: string; links: Link[]; html?: boolean; pdf?: Buffer }
 
 /**
  * GET one page: http(s) only, ports 80/443, no credentials in the address, never an internal address (redirects
@@ -259,6 +261,7 @@ export async function readPage(raw: string, signal: AbortSignal, opts: { allowPr
       const refused = !!page && isBlockPage(page.title, page.text);
       throw new WebError(refused ? "blocked" : `http_${r.status}`);
     }
+    if (/\bpdf\b/i.test(r.type) || r.body.subarray(0, 5).toString("latin1") === "%PDF-") return { url: url.href, title: "", text: "", links: [], pdf: r.body };
     const charset = /charset=([\w-]+)/i.exec(r.type)?.[1]?.toLowerCase();
     let body: string;
     try {
@@ -304,7 +307,7 @@ export const webReason = (e: unknown) => {
   const m = e instanceof WebError ? e.message : (e as { name?: string })?.name === "TimeoutError" ? "timeout" : "network";
   const t: Record<string, string> = {
     invalid: "adres geçersiz", scheme: "yalnızca http/https", credentials: "adreste kullanıcı adı/parola var", port: "yalnızca 80/443 portları",
-    private: "iç ağ adresi", offsite: "başka siteye yönlendirdi", redirects: "çok fazla yönlendirme", too_large: "sayfa çok büyük", type: "HTML, metin ya da veri dosyası değil", timeout: "zaman aşımı",
+    private: "iç ağ adresi", offsite: "başka siteye yönlendirdi", redirects: "çok fazla yönlendirme", too_large: "sayfa çok büyük", type: "HTML, PDF, metin ya da veri dosyası değil", timeout: "zaman aşımı",
     blocked: "site otomatik erişimi engelliyor (güvenlik duvarı)",
   };
   return t[m] ?? (m.startsWith("http_") ? `sunucu ${m.slice(5)} döndürdü` : "bağlanılamadı");

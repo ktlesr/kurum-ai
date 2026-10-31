@@ -41,7 +41,7 @@ async function parseRaw(name: string, buf: Buffer, onProgress: (p: Progress) => 
     case "docx": {
       const kind = ext;
       const d = await extractWithDocling(name, buf, onProgress, signal, cacheDir);
-      if (d) return { kind, ...d, warning: d.verify?.skipped };
+      if (d) return { kind, ...d, warning: [d.verify?.skipped, d.warning].filter(Boolean).join(" ") || undefined };
       if (kind === "pdf") {
         const p = await parsePdf(buf);
         return { ...p, warning: p.warning ?? NO_DOCLING };

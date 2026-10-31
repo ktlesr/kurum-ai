@@ -2,7 +2,8 @@ import { requireApiUser } from "@/lib/auth";
 import { cptFor, docsOf, getDoc, recordTokens, type Doc } from "@/lib/server";
 import { isSharedId, sharedDoc, sharedEntry, sharedList, type SharedEntry } from "@/lib/library";
 import { PICK_PROMPT, matchByName, parsePicked, wantsSources, type SourceEntry } from "@/lib/sources";
-import { UserError } from "@/lib/parse";
+import { parseFile, UserError } from "@/lib/parse";
+import { withJobDir } from "@/lib/workspace";
 import type { Msg, Provider } from "@/lib/provider";
 import { modelConfig, NUM_CTX, providerOf } from "@/lib/model-config";
 import { parseChatRequest } from "@/lib/validate";
@@ -238,12 +239,23 @@ export async function POST(req: Request) {
         const pages: Page[] = [];
         const webNotes: string[] = [];
         const failed: { host: string; reason: string; blocked: boolean }[] = [];
+        /** A link's page; a PDF goes through the same reader as an upload, here on this server. */
+        // ponytail: read again each time, kept nowhere; a cache per address if the same link is asked about often.
+        const readLink = async (u: string, opts?: { site?: string }): Promise<Page> => {
+          const p = await admission.web.run(() => readWeb(u, signal, opts), signal);
+          if (!p.pdf) return p;
+          const pdf = p.pdf;
+          const name = decodeURIComponent(new URL(p.url).pathname.split("/").pop() || "belge").replace(/\.pdf$/i, "").replace(/[^\p{L}\p{N} ._-]/gu, "").slice(0, 120) || "belge";
+          const d = await withJobDir((dir) => parseFile(`${name}.pdf`, pdf, (s) => status(`PDF okunuyor: ${s.stage} ${s.done}/${s.total}`), signal, dir));
+          if (d.warning) webNotes.push(`${name}.pdf: ${d.warning}`);
+          return { url: p.url, title: `${name}.pdf`, text: d.text, links: [] };
+        };
         if (urls.length && !webOn) webNotes.push("Bağlantıdan okuma yönetici tarafından kapalı; bağlantılar okunmadı.");
         for (const u of webOn ? urls : []) {
           const host = new URL(u).host;
           status(`Bağlantı okunuyor: ${host}`);
           try {
-            pages.push(await admission.web.run(() => readWeb(u, signal), signal));
+            pages.push(await readLink(u));
           } catch (e) {
             if (signal.aborted) throw e;
             if (e instanceof Busy) {
@@ -252,8 +264,9 @@ export async function POST(req: Request) {
             }
             logError("web", e);
             const blocked = e instanceof WebError && e.message === "blocked";
-            failed.push({ host, reason: webReason(e), blocked });
-            webNotes.push(`${host} okunamadı (${webReason(e)}).${blocked ? " Sayfayı tarayıcınızda açıp PDF ya da HTML olarak kaydederek yükleyebilirsiniz." : ""}`);
+            const reason = e instanceof UserError ? e.message : webReason(e);
+            failed.push({ host, reason, blocked });
+            webNotes.push(`${host} okunamadı (${reason}).${blocked ? " Sayfayı tarayıcınızda açıp PDF ya da HTML olarak kaydederek yükleyebilirsiniz." : ""}`);
           }
         }
         // The answer isn't on the named page (a home page, a menu): let the model pick up to MAX_FOLLOW of its
@@ -281,7 +294,7 @@ export async function POST(req: Request) {
           for (const l of chosen) {
             status(`Bağlantı okunuyor: ${l.text.slice(0, 60)}`);
             try {
-              const page = await admission.web.run(() => readWeb(l.url, signal, { site }), signal);
+              const page = await readLink(l.url, { site });
               pages.push(page.title ? page : { ...page, title: l.text.slice(0, 200) }); // a data file has no title
             } catch (e) {
               if (signal.aborted) throw e;
