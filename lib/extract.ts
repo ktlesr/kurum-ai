@@ -51,7 +51,7 @@ interface PageLine {
   total: number;
   markdown: string;
   tables: { markdown: string; strips: string[] }[];
-  /** The whole page, when it's a scan OCR didn't read. */
+  /** The whole page, when it's a scan OCR didn't read; empty when the file's scans went over their size limit. */
   scan?: string;
 }
 
@@ -140,7 +140,7 @@ export async function extractWithDocling(
 
   // The table-reading model (admin page) is part of the result: another model's reading is another result.
   const { vision } = await modelConfig();
-  const cacheFile = path.join(cacheDir, `result-${PIPELINE}-${VISION_VERIFY ? createHash("sha256").update(visionId(vision)).digest("hex").slice(0, 16) : "noverify"}.json`);
+  const cacheFile = path.join(cacheDir, `result-${PIPELINE}-${createHash("sha256").update(visionId(vision)).digest("hex").slice(0, 16)}${VISION_VERIFY ? "" : "-noverify"}.json`);
   const cached = await readFile(cacheFile, "utf8").catch(() => null);
   if (cached) {
     const hit = JSON.parse(cached) as Extracted;
@@ -185,13 +185,14 @@ export async function extractWithDocling(
   const headings: string[] = [];
   const outline: string[] = [];
   const findings: string[] = [];
-  const scans = lines.filter((l) => l.scan).length;
+  const scans = lines.filter((l) => l.scan !== undefined).length;
   let scanDone = 0;
   let scanFailed = 0;
 
   for (const l of lines) {
     let md = compactTables(l.markdown);
     // A scan OCR gave nothing for (no OCR models on this server, a bad scan): the vision model reads the page.
+    if (l.scan === "") scanFailed++;
     if (l.scan) {
       signal.throwIfAborted();
       onProgress({ stage: "Taranmış sayfalar okunuyor", done: scanDone + scanFailed + 1, total: scans });
@@ -273,7 +274,7 @@ export async function extractWithDocling(
     ].filter(Boolean).join(" ") || undefined,
   };
   // Don't cache a run where verification failed midway — retry it next time.
-  if (!verify.skipped && !scanFailed) {
+  if (!verify.skipped && !scanFailed) { // (a scan over the size limit is rare: read again rather than remembered)
     writeFileAtomic(cacheFile, JSON.stringify(result));
   }
   return result;

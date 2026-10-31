@@ -30,6 +30,7 @@ STRIP = 450  # max strip height in px; the vision model downsizes larger images 
 OVERLAP = 40
 SCAN_LETTERS = 200  # fewer letters than this on a page with a bitmap: a scan OCR didn't read
 SCAN_SCALE = 2.5
+SCAN_BUDGET = 150_000_000  # base64 bytes of scans per file: a small PDF can repeat one big bitmap on hundreds of pages
 
 path = sys.argv[1]
 opts = PdfPipelineOptions(do_ocr=True, do_table_structure=True)
@@ -58,6 +59,7 @@ import pypdfium2.raw as pdfium_c
 
 pdf = pdfium.PdfDocument(path)
 total = len(pdf)
+scan_bytes = 0
 if total > MAX_PAGES:
     sys.exit(3)
 # Before Docling touches any page (it renders them too): a forged giant page would blow up memory.
@@ -86,7 +88,9 @@ for n in range(1, total + 1):
     md = doc.export_to_markdown(image_placeholder="")
     line = {"page": n, "total": total, "markdown": md, "tables": crops}
     if has_images and sum(c.isalpha() for c in md) < SCAN_LETTERS:
-        line["scan"] = png(page.render(scale=SCAN_SCALE).to_pil())
+        scan = png(page.render(scale=SCAN_SCALE).to_pil()) if scan_bytes < SCAN_BUDGET else None
+        scan_bytes += len(scan or "")
+        line["scan"] = scan or ""  # empty: over the budget, the caller reports the page as unread
     emit(line)
     page.close()
 pdf.close()
