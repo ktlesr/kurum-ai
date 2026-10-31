@@ -195,12 +195,16 @@ export async function extractWithDocling(
     // A scan: the vision model reads the page (OCR confuses Turkish letters and loses lines); OCR's reading, if it has
     // one, checks the numbers and stays as the page's text when the model fails.
     let scanChecked = false; // both readings of the scan were compared
+    let scanOcr = "";
     if (l.scan) {
       signal.throwIfAborted();
       onProgress({ stage: "Taranmış sayfalar okunuyor", done: scanDone + scanFailed + 1, total: scans });
       try {
         const read = compactTables(await readStrip(l.scan, signal, cacheDir, vision, SCAN_PROMPT));
         scanChecked = /\d/.test(md);
+        // Each reader loses what the other keeps (OCR whole lines, the model a row): both go in, as with tables.
+        if (scanChecked || md.trim()) scanOcr = `[İkinci okuma — OCR, harf hataları olabilir; (?) = görsel okumayla uyuşmayan sayı]
+${markUncertain(md, read).text}`;
         md = scanChecked ? markUncertain(read, md).text : read;
         scanDone++;
       } catch (e) {
@@ -209,7 +213,7 @@ export async function extractWithDocling(
         scanFailed++;
       }
     }
-    const extra: string[] = [];
+    const extra: string[] = scanOcr ? [scanOcr] : [];
     let marked = 0;
     const tables = l.scan ? [] : l.tables;
     for (const [k, t] of tables.entries()) {
