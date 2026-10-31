@@ -11,6 +11,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.models.stages.page_assemble.page_assemble_model import PageAssembleModel
 from docling_core.types.doc import TableItem
 
 SCALE = 3  # render scale for crops (~216 dpi)
@@ -33,6 +35,19 @@ OVERLAP = 40
 SCAN_CHARS = 30  # fewer letters and digits than this on a page with a bitmap: a scan OCR didn't read (a short page is fine)
 SCAN_SCALE = 2.5
 SCAN_BUDGET = 150_000_000  # base64 bytes of scans per file: a small PDF can repeat one big bitmap on hundreds of pages
+
+# Tesseract's cells are single words and Docling takes each for a line, closing up "word-" + "next" as a word split over
+# a line break. Right for words, wrong for "MADDE 1- 4 sayılı" (it became "MADDE 14") and "MADDE 496/A- (1)": the dash stays.
+KEEP_DASH = "\x00"
+_sanitize = PageAssembleModel.sanitize_text
+
+
+def sanitize_keeping_numbering(self, lines):
+    kept = [re.sub(r"(\d|/[A-ZÇĞİÖŞÜ])-$", lambda m: m.group(1) + KEEP_DASH, line) for line in lines]
+    return _sanitize(self, kept).replace(KEEP_DASH, "-")
+
+
+PageAssembleModel.sanitize_text = sanitize_keeping_numbering
 
 path = sys.argv[1]
 opts = PdfPipelineOptions(do_ocr=True, do_table_structure=True)
