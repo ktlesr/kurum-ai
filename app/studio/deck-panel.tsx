@@ -46,7 +46,7 @@ export function DeckPanel({ docs, onStart, onNote }: {
   onNote: (kind: "ok" | "error", text: string) => void;
 }) {
   const [index, setIndex] = useState<TemplateInfo[]>([]);
-  const [tpl, setTpl] = useState("general");
+  const [tpl, setTpl] = useState("zafer");
   const [brief, setBrief] = useState("");
   const [docId, setDocId] = useState("");
   const [count, setCount] = useState(8);
@@ -138,7 +138,7 @@ export function DeckPanel({ docs, onStart, onNote }: {
       <button onClick={blank} disabled={!info} className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-line text-sm hover:border-accent hover:text-accent disabled:opacity-40">
         <Presentation size={15} /> Boş sunumla başla
       </button>
-      <p className="text-[11px] text-muted">Konu ve seçilen belge yalnızca kurum sunucusundaki modele gider. Şablonlar: presenton (Apache-2.0).</p>
+      <p className="text-[11px] text-muted">Konu ve seçilen belge yalnızca kurum sunucusundaki modele gider. Zafer ailesi kuruma özeldir; diğer şablonlar: presenton (Apache-2.0).</p>
     </div>
   );
 }

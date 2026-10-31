@@ -2,3 +2,4 @@ Slide layouts in this folder are derived from presenton (https://github.com/pres
 https://www.apache.org/licenses/LICENSE-2.0
 Changes: converted by scripts/import-presenton.py to this app's element format and canvas; fonts mapped to the app's
 library; layouts with charts, tables and infographics, raster artwork and the Proxima Nova font were left out.
+zafer.json is this app's own family (scripts/make-deck-zafer.mjs), not derived from presenton.
