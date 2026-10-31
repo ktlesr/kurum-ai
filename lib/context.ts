@@ -147,11 +147,12 @@ export function repairListMarks(text: string): string {
     const m = MARK.exec(line);
     if (!m) return;
     const [p, n] = [near(i, -1), near(i, 1)];
+    const unreadable = at(m[2]) < 0 && Number.isNaN(num(m[2])); // not a mark at all, like "Iİ": a valid one may start a sublist
     let want: string | undefined;
     if (num(n) - num(p) === 2) want = String(num(p) + 1);
     else if (at(p) >= 0 && at(n) - at(p) === 2) want = TR_LETTERS[at(p) + 1];
-    else if (Number.isNaN(num(p)) && n === "2") want = "1"; // a numbered list starting, also under a lettered item
-    else if (p === undefined && n === "b") want = "a";
+    else if (unreadable && Number.isNaN(num(p)) && n === "2") want = "1"; // a numbered list starting, also under a lettered item
+    else if (unreadable && p === undefined && n === "b") want = "a";
     else if (p === "h" && n === undefined && /^[1lI]$/.test(m[2])) want = "ı";
     if (want && want !== m[2]) lines[i] = m[1] + want + line.slice(m[0].length - 1);
   });
