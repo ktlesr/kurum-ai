@@ -13,6 +13,10 @@ export const FAMILY_TEMPLATES = {
   isik: { label: "Işık", hint: "Tam sayfa çift tonlu fotoğraf", kind: "gorsel", fonts: ["montserrat"] },
   pano: { label: "Pano", hint: "Eğik kesimli renk paneli", kind: "gorsel", fonts: ["oswald", "rubik"] },
   takvim: { label: "Takvim", hint: "Önce tarih, sonra konu", kind: "gorsel", fonts: ["bebas-neue", "nunito"] },
+  rapor: { label: "Rapor Kapağı", hint: "Koyu sırt, büyük yıl ya da etiket", kind: "gorsel", fonts: ["merriweather", "inter"] },
+  mozaik: { label: "Mozaik", hint: "Fotoğraf ve renk karoları", kind: "gorsel", fonts: ["raleway"] },
+  ilke: { label: "İlke", hint: "Çizgiler arasında tek cümle", kind: "gorsel", fonts: ["playfair-display", "lato"] },
+  sahne: { label: "Sahne", hint: "Dev etiket, kemer biçimli fotoğraf", kind: "gorsel", fonts: ["anton", "open-sans"] },
   kanca: { label: "Kanca", hint: "İlk 3 saniye: dev başlık", kind: "reels", fonts: ["anton", "rubik"] },
   perde: { label: "Perde", hint: "Tam ekran fotoğraf, alt yazı", kind: "reels", fonts: ["oswald", "rubik"] },
   adim: { label: "Adım", hint: "Numara ve kısa açıklama", kind: "reels", fonts: ["bebas-neue", "manrope"] },
@@ -31,6 +35,10 @@ export const FAMILY_SAMPLES: Record<FamilyId, Content> = {
   isik: { tag: "Fotoğraf", title: "Bölgenin geleceğine birlikte bakıyoruz", subtitle: "Genç girişimciler kalkınma buluşmasında bir araya geldi.", detail: "12 Kasım 2026" },
   pano: { tag: "Çağrı", title: "Başvurular açıldı", subtitle: "Proje fikrinizi son başvuru tarihine kadar çevrim içi olarak iletebilirsiniz.", detail: "Son gün: 30 Kasım" },
   takvim: { tag: "Takvim", title: "Yatırım Danışma Günü", subtitle: "Uzmanlarımızla birebir görüşme için yerinizi ayırtın.", detail: "12 Kasım 2026" },
+  rapor: { tag: "2026", title: "Faaliyet Raporu", subtitle: "Bölgesel kalkınma çalışmalarının bir yıllık özeti.", detail: "Yayın: Kasım 2026" },
+  mozaik: { tag: "Galeri", title: "Bölgemizden kareler", subtitle: "Bir yılın saha çalışmaları, buluşmaları ve üretim hikâyeleri.", detail: "Sergi: 20-30 Kasım" },
+  ilke: { tag: "İlkemiz", title: "Kalkınma, herkesin katıldığı bir çalışmadır.", subtitle: "", detail: "Kurumsal değerlerimiz" },
+  sahne: { tag: "Canlı", title: "Gençlik Zirvesi", subtitle: "Girişimciler, kamu kurumları ve üniversiteler aynı sahnede.", detail: "22 Kasım · Kongre Merkezi" },
   kanca: { tag: "Duyuru", title: "Bunu kaçırmayın", subtitle: "30 saniyede öğrenin", detail: "" },
   perde: { tag: "Bölgemiz", title: "Başvurular artık tek adresten", subtitle: "Süreç 45 günden 20 güne iniyor.", detail: "" },
   adim: { tag: "1", title: "Hesabınızı açın", subtitle: "Kimlik bilgilerinizle giriş yapın.", detail: "" },
@@ -48,6 +56,10 @@ export const FAMILY_HINTS: Record<FamilyId, string> = {
   isik: "Şablon: tam sayfa fotoğraf. baslik kısa ve etkileyici, en fazla 6 kelime.",
   pano: "Şablon: çağrı panosu. baslik 2-3 kelimelik güçlü bir çağrı, altBaslik yapılacak işi söylesin.",
   takvim: "Şablon: takvim. detay tarih olsun ve kullanıcı vermediyse boş kalsın, baslik etkinliğin ya da işin adı.",
+  rapor: "Şablon: rapor kapağı. etiket yıl ya da dönem olsun, baslik raporun adı.",
+  mozaik: "Şablon: fotoğraf galerisi. baslik en fazla 4 kelime.",
+  ilke: "Şablon: tek cümlelik ilke. baslik en fazla 10 kelimelik cümle, altBaslik boş kalabilir.",
+  sahne: "Şablon: sahne etkinliği. etiket tek kelime, baslik etkinliğin adı, detay tarih ve yer.",
   kanca: "Şablon: Reels açılışı. baslik en fazla 4 kelime, merak uyandıran; altBaslik en fazla 5 kelime.",
   perde: "Şablon: Reels fotoğraf sahnesi. baslik en fazla 6 kelime, altBaslik tek kısa cümle.",
   adim: "Şablon: Reels adımı. etiket adımın numarası, baslik en fazla 3 kelime, altBaslik tek kısa cümle.",
@@ -340,6 +352,111 @@ function takvim(x: Ctx): Layer[] {
   return [...L, ...blockFlow, ...below];
 }
 
+/** A printed report's cover: a dark spine down one side, the year or period large on it, a serif title on paper. */
+function rapor(x: Ctx): Layer[] {
+  const { w, h, u, m, wide, primary, accent, photo } = x;
+  const safe = x.tall ? 150 * u : 0;
+  const spine = wide ? w * 0.34 : w * 0.3;
+  const L: Layer[] = [rect(0, 0, w, h, PAPER), rect(0, 0, spine, h, primary), rect(spine, 0, 10 * u, h, accent)];
+  const px = spine + 10 * u;
+  if (photo) L.push({ kind: "image", pic: photo, fit: "cover", x: px, y: 0, w: w - px, h: h * 0.42 });
+  const ink = x.inkOn(primary);
+  return [
+    ...L,
+    ...x.flow(m * 0.6, spine - m * 1.1, m + safe, h - m - safe, {
+      head: [{ t: "logo", pic: x.logo, h: 76 * u, plate: true }],
+      foot: [{ t: "text", role: "tag", text: x.c.tag.trim(), size: 92 * u, min: 34 * u, lines: 2, weight: 800, color: ink, font: "inter", leading: 1.05 }],
+    }),
+    ...x.flow(px + m * 0.7, w - px - m * 1.4, (photo ? h * 0.42 : safe) + m, h - m - safe, {
+      body: [
+        title(x, { size: 104 * u, min: 44 * u, lines: 5, weight: 700, color: primary, font: "merriweather", leading: 1.16 }),
+        { t: "bar", w: 110 * u, h: 8 * u, fill: accent, before: 34 * u },
+        sub(x, { color: "#3a4048", font: "inter", size: 34 * u, before: 30 * u }),
+      ],
+      foot: [detail(x, { color: primary, font: "inter", size: 26 * u })],
+      gap: 24 * u,
+    }),
+  ];
+}
+
+/** Tiles of colour with the photo running through them; the words on a clean band. */
+function mozaik(x: Ctx): Layer[] {
+  const { w, h, u, m, wide, primary, accent, photo, shade } = x;
+  const font = "raleway";
+  const pale = shade(accent, 0.75);
+  const safe = x.tall ? 130 * u : 0;
+  const cols = wide ? 3 : 3, rows = wide ? 3 : 2;
+  const gap = 12 * u;
+  const areaW = wide ? w * 0.56 : w - 2 * m;
+  const cell = wide ? (h - 2 * m - 2 * gap) / rows : (areaW - (cols - 1) * gap) / cols;
+  const ox = wide ? w - m - cols * cell - (cols - 1) * gap : m, oy = wide ? m : m + safe;
+  const L: Layer[] = [rect(0, 0, w, h, WHITE)];
+  const tones = [primary, accent, pale, pale, primary, accent, accent, pale, primary];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) L.push(rect(ox + c * (cell + gap), oy + r * (cell + gap), cell, cell, tones[r * cols + c], 14 * u));
+  const big = cell * 2 + gap;
+  if (photo) L.push({ kind: "image", pic: photo, fit: "cover", x: ox + cell + gap, y: oy, w: big, h: rows > 1 ? big : cell, radius: 14 * u });
+  else L.push(disc(ox + cell + gap + big * 0.14, oy + big * 0.14, big * 0.72, "Daire", WHITE, 0.9), ring(ox + cell + gap + big * 0.27, oy + big * 0.27, big * 0.46, "Halka", accent, 12 * u));
+  const top = wide ? m : oy + rows * cell + (rows - 1) * gap + m * 0.6;
+  return [
+    ...L,
+    ...x.flow(m, (wide ? ox : w) - 2 * m + (wide ? m * 0.5 : 0), top, h - m * 0.8 - safe * 0.8, {
+      head: wide ? [logoOf(x), pill(x, accent, x.inkOn(accent), font, 30 * u)] : [pill(x, accent, x.inkOn(accent), font)],
+      body: [title(x, { size: 92 * u, min: 42 * u, weight: 800, color: primary, font, leading: 1.1 }), sub(x, { color: "#3f4c58", font, size: 32 * u, lines: 4, before: 18 * u })],
+      foot: [detail(x, { color: primary, font, weight: 700 })],
+      gap: 20 * u,
+    }),
+  ];
+}
+
+/** A sentence between two rules, as on a wall: nothing else competes with it. */
+function ilke(x: Ctx): Layer[] {
+  const { w, h, u, m, primary, accent } = x;
+  const safe = x.tall ? 170 * u : 0;
+  const cw = Math.min(w - 2 * m, 1500 * u);
+  const lx = (w - cw) / 2;
+  return [
+    rect(0, 0, w, h, primary),
+    rect(lx, m + safe, cw, 2 * u, accent), rect(lx, h - m - safe, cw, 2 * u, accent),
+    ...x.flow(lx, cw, m + safe + 34 * u, h - m - safe - 34 * u, {
+      head: [{ ...pill(x, accent, x.inkOn(accent), "lato"), center: true } as Item],
+      body: [
+        title(x, { size: 112 * u, min: 48 * u, lines: 7, weight: 500, color: WHITE, font: "playfair-display", leading: 1.2, align: "middle", before: 0 }),
+        sub(x, { color: "#d5dce4", font: "lato", size: 36 * u, lines: 3, before: 26 * u, align: "middle" }),
+      ],
+      foot: [{ ...logoOf(x, 70), center: true } as Item, detail(x, { color: "#d5dce4", font: "lato", size: 26 * u, weight: 400, before: 14 * u, align: "middle" })],
+      gap: Math.max(50 * u, h * 0.1),
+    }),
+  ];
+}
+
+/** A stage: the photo in an arch, the tag enormous behind the title. */
+function sahne(x: Ctx): Layer[] {
+  const { w, h, u, m, wide, primary, accent, photo } = x;
+  const safe = x.tall ? 150 * u : 0;
+  const aw = wide ? h * 0.82 : w * 0.62;
+  const ah = wide ? h * 0.94 : h * (x.tall ? 0.44 : 0.46); // short of the edge: arch and photo then refit alike
+  const ax = wide ? w - m - aw : w - m - aw, ay = 0;
+  const L: Layer[] = [rect(0, 0, w, h, accent)];
+  L.push(el(ax, ay - aw * 0.5, aw, ah + aw * 0.5, "Kemer", primary, { radius: aw / 2 }));
+  if (photo) L.push({ kind: "image", pic: photo, fit: "cover", x: ax + 18 * u, y: -aw * 0.5, w: aw - 36 * u, h: ah + aw * 0.5 - 18 * u, radius: (aw - 36 * u) / 2 });
+  else L.push(ring(ax + aw * 0.2, ah - aw * 0.62, aw * 0.6, "Halka", accent, 10 * u));
+  const ink = x.inkOn(accent);
+  const top = wide ? m : ah + m * 0.5;
+  return [
+    ...L,
+    ...x.flow(m, (wide ? ax : w) - m - (wide ? 40 * u : m), top + (wide ? safe : 0), h - m - safe, {
+      head: wide ? [logoOf(x, 76)] : [],
+      body: [
+        { t: "text", role: "tag", text: x.c.tag.trim(), size: 150 * u, min: 60 * u, lines: 1, weight: 400, color: primary, font: "anton", leading: 1.08 },
+        title(x, { size: 90 * u, min: 42 * u, lines: 3, weight: 800, color: ink, font: "open-sans", leading: 1.1, before: 10 * u }),
+        sub(x, { color: ink, font: "open-sans", size: 32 * u, lines: 3, before: 18 * u }),
+      ],
+      foot: [detail(x, { color: ink, font: "open-sans", weight: 700 }), ...(wide ? [] : [{ ...logoOf(x, 62), before: 14 * u } as Item])],
+      gap: 18 * u,
+    }),
+  ];
+}
+
 // ---- Reels: a phone's interface covers the top and the bottom, so the text keeps out of both on tall canvases --------
 const safeOf = (x: Ctx) => (x.tall ? { top: x.h * 0.13, bottom: x.h * 0.2 } : { top: x.m, bottom: x.m });
 
@@ -479,4 +596,4 @@ function kapanis(x: Ctx): Layer[] {
   ];
 }
 
-export const FAMILIES: Record<FamilyId, (x: Ctx) => Layer[]> = { atlas, manset, etki, muhur, ajanda, isik, pano, takvim, kanca, perde, adim, rakamr, soz, kapanis };
+export const FAMILIES: Record<FamilyId, (x: Ctx) => Layer[]> = { atlas, manset, etki, muhur, ajanda, isik, pano, takvim, rapor, mozaik, ilke, sahne, kanca, perde, adim, rakamr, soz, kapanis };

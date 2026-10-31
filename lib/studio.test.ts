@@ -98,8 +98,12 @@ test("layout: with the longest texts no two text blocks overlap and all stay on 
         .filter((l) => l.kind === "text" && l.lines[0] !== "“")
         .map((l) => (l.kind === "text" ? { top: l.y, bottom: l.y + l.lines.length * l.size * l.leading, l } : null)!);
       for (const t of texts) assert.ok(t.top >= 0 && t.bottom <= h + 1 && t.l.x >= 0 && t.l.x < w, `${template}/${format} off canvas`);
+      // Texts side by side (a report's spine and its page) share heights, not space.
+      const side = (a: (typeof texts)[number], b: (typeof texts)[number]) => a.l.kind === "text" && b.l.kind === "text" && (a.l.x + a.l.w <= b.l.x + 1 || b.l.x + b.l.w <= a.l.x + 1);
       const sorted = texts.sort((a, b) => a.top - b.top);
-      for (let i = 1; i < sorted.length; i++) assert.ok(sorted[i].top >= sorted[i - 1].bottom - 1, `${template}/${format}: "${sorted[i - 1].l.lines[0]}" overlaps "${sorted[i].l.lines[0]}"`);
+      for (let i = 0; i < sorted.length; i++) for (let j = i + 1; j < sorted.length; j++) {
+        if (!side(sorted[i], sorted[j])) assert.ok(sorted[j].top >= sorted[i].bottom - 1, `${template}/${format}: "${sorted[i].l.lines[0]}" overlaps "${sorted[j].l.lines[0]}"`);
+      }
     }
   }
 });
