@@ -336,6 +336,7 @@ export async function POST(req: Request) {
             if (!query) return [];
             status(`İnternette aranıyor: ${query.slice(0, 60)}`);
             const results = await admission.web.run(() => searchWeb(SEARCH_URL!, query, signal), signal);
+            status(`Sonuçlar okunuyor (${results.length})…`);
             const size = Math.floor(Math.min(MAX_CHARS_TOTAL, contextBudget(NUM_CTX, cptFor(model)) * 0.4) / SEARCH_KEEP);
             const read = await Promise.all(results.map(async (r) => {
               const text = await admission.web.run(async () => {
@@ -449,6 +450,8 @@ export async function POST(req: Request) {
         const claims = traceClaims(answer, selected.map((d) => ({ name: d.name, text: d.text })));
         if (claims.length) meta.claims = claims;
         // The documents don't hold it: the web may, as a clearly separate second part (the model reads no document here).
+        // Searching only now, not ahead of every answer: a question the documents answer never leaves the institution.
+        if (SEARCH_URL && !pages.length && !urls.length) status("Cevap kontrol ediliyor…");
         const notInDoc = SEARCH_URL && !pages.length && !urls.length
           ? await chatOnce(chat, model, [{ role: "system", content: NOT_IN_DOC }, { role: "user", content: `Soru: ${asked0.slice(0, 2000)}\n\nCevap: ${answer.slice(0, 3000)}` }], signal, DECISION_TOKENS).catch((e) => {
               if (signal.aborted) throw e;
@@ -456,9 +459,12 @@ export async function POST(req: Request) {
             })
           : "";
         if (/^\W*evet/i.test(notInDoc)) {
+          // The heading comes first: the search takes a while, and the reader should see it has started.
+          send("\n\n---\n\n**Belgede değil, internetten:**\n\n");
           const found = await search(SEARCH_QUERY);
-          if (found.length) {
-            send("\n\n---\n\n**Belgede değil, internetten:**\n\n");
+          if (!found.length) send("İnternette kullanılabilir sonuç bulunamadı.");
+          else {
+            status("İnternet sonuçlarından cevap yazılıyor…");
             const asked = messages.findLast((m) => m.role === "user")?.content ?? "";
             await streamChat(chat, model, [{ role: "system", content: `${GENERAL}\n\n${WEB}` }, { role: "user", content: `${asked}\n\n${webBlocks(found)}` }], false, signal, send).catch((e) => {
               if (signal.aborted) throw e;

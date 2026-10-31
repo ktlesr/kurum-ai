@@ -340,10 +340,12 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         // Progress lines (STATUS_SEP…STATUS_SEP) are shown while waiting and never become part of the answer.
         const body = raw.split(META_SEP)[0].split(ERROR_SEP)[0];
         const statuses = body.match(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"));
-        const content = body.replace(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"), "");
+        // The split: a status line cut in two by the network, its other half not here yet.
+        const content = body.replace(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"), "").split(STATUS_SEP)[0];
         const status = statuses ? statuses[statuses.length - 1].slice(1, -1) : undefined;
         if (first === undefined && content.trim()) first = secs();
-        setLast((m) => ({ ...m, content, status }));
+        // After text has begun, a status counts only while nothing has followed it: work between two parts of the answer.
+        setLast((m) => ({ ...m, content, status, waiting: body.endsWith(STATUS_SEP) }));
       }
       // A failure mid-answer: show it as an error turn, which also keeps it out of the next request's history.
       const failure = raw.split(ERROR_SEP)[1];
@@ -978,6 +980,12 @@ function Bubble({ m, live, busy, onEdit, onSource }: { m: Message; live: boolean
       <div className={`md ${live ? "streaming" : ""}`}>
         <ReactMarkdown remarkPlugins={live ? [remarkGfm] : pagePlugins} components={live ? mdComponents : components}>{m.content}</ReactMarkdown>
       </div>
+      {live && m.content.trim() && m.waiting && m.status && (
+        <p className="mt-2 flex items-center gap-2 text-sm text-muted" role="status">
+          <span className="size-3 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-hidden />
+          {m.status}
+        </p>
+      )}
       {!live && m.meta && <MetaNotes meta={m.meta} onSource={onSource} />}
       {!live && m.content && (
         <div className="mt-2 flex items-center gap-3">

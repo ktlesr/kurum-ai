@@ -17,6 +17,7 @@ export interface Message {
   error?: boolean;
   meta?: ChatMeta;
   status?: string;
+  waiting?: boolean;
   /** Live answer only: when the question was sent (ms), for the waiting counter. */
   startedAt?: number;
   /** Seconds until the first word and until the answer was complete. */
