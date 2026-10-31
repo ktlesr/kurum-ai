@@ -95,6 +95,16 @@ function headingBefore(text: string, end: number): { at: number; text: string } 
   return null;
 }
 
+/** The answer says outright that the document doesn't state it, or that it inferred. A shortcut: wording varies, the model judges the rest. */
+export function saysNotWritten(answer: string): boolean {
+  return /belgede yok|açıkça\s+(belirtilme[mz]|belirtilmiyor|yazma[mz]|yazmıyor|geçme[mz]|geçmiyor|zikredilme[mz]|zikredilmiyor)|çıkarım\s+yapıl/iu.test(answer);
+}
+
+/** "HAYIR" with its capital I, which /hayır/i doesn't match. */
+export function isClearNo(said: string): boolean {
+  return /^[\s*_"'`]*hay[ıi]r[\s*_"'`.!]*$/iu.test(said);
+}
+
 /** The model's one-line query; null when it says no search is needed or wrote something else than a query. */
 export function parseSearchQuery(raw: string): string | null {
   const q = raw.trim().split("\n")[0].trim().replace(/^["'“”]+|["'“”.]+$/g, "");

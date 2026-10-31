@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { parseSearchQuery, passage, searchWeb } from "./websearch.ts";
+import { isClearNo, parseSearchQuery, passage, saysNotWritten, searchWeb } from "./websearch.ts";
 
 let asked = "";
 const server = createServer((req, res) => {
@@ -74,4 +74,19 @@ test("passage: a short page stays whole; no term found means the start, scored z
 test("passage: a page with the asked number outranks one with only the words", () => {
   const q = "kararname 493. madde";
   assert.ok(passage("kararname madde 493 kurum", q, 100).score > passage("kararname madde 12 kurum", q, 100).score);
+});
+
+test("saysNotWritten: the answers that went without a search", () => {
+  assert.ok(saysNotWritten("doğrudan bir kurum ismi metin içerisinde açıkça belirtilmemiştir. Ancak bir çıkarım yapılabilir:"));
+  assert.ok(saysNotWritten("Belgede yok."));
+  assert.ok(saysNotWritten("bilgi açıkça yazmamaktadır"));
+  assert.ok(!saysNotWritten("Belgenin 4. sayfasına göre tutar açıkça belirtilmiştir: 12 milyon TL."));
+  assert.ok(!saysNotWritten("Süre açıkça yazmaktadır ve açıkça geçmektedir."));
+  assert.ok(!saysNotWritten("Süre açıkça belirtilmektedir ve açıkça zikredilmektedir."));
+  assert.ok(saysNotWritten("Süre açıkça zikredilmemiştir."));
+});
+
+test("isClearNo: only a plain no skips the search; empty or unclear doesn't", () => {
+  for (const no of ["HAYIR", "Hayır.", "**hayır**", "HAYIR\n"]) assert.ok(isClearNo(no), no);
+  for (const other of ["", "EVET", "Bence hayır", "Hayırlı", "HAYIR,EVET", "HAYIRı", "ıHAYIR"]) assert.ok(!isClearNo(other), other);
 });

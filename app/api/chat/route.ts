@@ -17,7 +17,7 @@ import { retrieve, TOP_K, windows } from "@/lib/rag";
 import { getSetting } from "@/lib/db";
 import { findUrls, MAX_CHARS_TOTAL, onSite, parsePick, siteOf, WebError, webReason, type Page } from "@/lib/web";
 import { readWeb } from "@/lib/browser";
-import { parseSearchQuery, passage, searchWeb } from "@/lib/websearch";
+import { isClearNo, parseSearchQuery, passage, saysNotWritten, searchWeb } from "@/lib/websearch";
 
 export const runtime = "nodejs";
 
@@ -48,7 +48,7 @@ const SEARCH_QUERY = `Kullanıcının mesajları verilecek. Son mesajı cevaplam
 /** A reasoning model (gpt-oss) spends some of these before its one-word answer. */
 const DECISION_TOKENS = 300;
 // The model's own wording varies too much for a word list ("zikredilmemiştir", "açıkça yazmamaktadır"…).
-const NOT_IN_DOC = `Bir soru ve bir belgeye dayanarak verilmiş cevap verilecek. Cevap, sorulan bilginin belgede bulunmadığını ya da açıkça yazmadığını söylüyorsa yalnızca EVET, sorulanı belgeden cevaplıyorsa yalnızca HAYIR yaz.`;
+const NOT_IN_DOC = `Bir soru ve bir belgeye dayanarak verilmiş cevap verilecek. Cevap, sorulan bilgiyi belgede açıkça yazılı olarak veriyorsa yalnızca HAYIR yaz. Cevap bilginin belgede olmadığını ya da açıkça yazmadığını söylüyorsa, ya da onu çıkarım, yorum veya tahminle veriyorsa, sonunda bir sonuca varmış olsa bile yalnızca EVET yaz.`;
 const SEARCH_URL = process.env.SEARCH_URL;
 /** Results that reach the model per search: those that hold most of what was asked, of all that were read. */
 const SEARCH_KEEP = 3;
@@ -452,13 +452,18 @@ export async function POST(req: Request) {
         // The documents don't hold it: the web may, as a clearly separate second part (the model reads no document here).
         // Searching only now, not ahead of every answer: a question the documents answer never leaves the institution.
         if (SEARCH_URL && !pages.length && !urls.length) status("Cevap kontrol ediliyor…");
-        const notInDoc = SEARCH_URL && !pages.length && !urls.length
-          ? await chatOnce(chat, model, [{ role: "system", content: NOT_IN_DOC }, { role: "user", content: `Soru: ${asked0.slice(0, 2000)}\n\nCevap: ${answer.slice(0, 3000)}` }], signal, DECISION_TOKENS).catch((e) => {
-              if (signal.aborted) throw e;
-              return "";
-            })
-          : "";
-        if (/^\W*evet/i.test(notInDoc)) {
+        // The answer's own words settle it when they can; otherwise the model. Only its clear no skips the search: a missed
+        // search is an answer left wrong, an extra one is a second part under its own heading.
+        const judge = async () => {
+          const said = await chatOnce(chat, model, [{ role: "system", content: NOT_IN_DOC }, { role: "user", content: `Soru: ${asked0.slice(0, 2000)}\n\nCevap: ${answer.slice(0, 3000)}` }], signal, DECISION_TOKENS).catch((e) => {
+            if (signal.aborted) throw e;
+            logError("search", e);
+            return "";
+          });
+          console.info(`web search judge: ${JSON.stringify(said.slice(0, 20))}`);
+          return !isClearNo(said);
+        };
+        if (SEARCH_URL && !pages.length && !urls.length && (saysNotWritten(answer) || (await judge()))) {
           // The heading comes first: the search takes a while, and the reader should see it has started.
           send("\n\n---\n\n**Belgede değil, internetten:**\n\n");
           const found = await search(SEARCH_QUERY);
