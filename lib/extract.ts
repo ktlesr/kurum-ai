@@ -194,12 +194,14 @@ export async function extractWithDocling(
     let md = compactTables(l.markdown);
     // A scan: the vision model reads the page (OCR confuses Turkish letters and loses lines); OCR's reading, if it has
     // one, checks the numbers and stays as the page's text when the model fails.
+    let scanChecked = false; // both readings of the scan were compared
     if (l.scan) {
       signal.throwIfAborted();
       onProgress({ stage: "Taranmış sayfalar okunuyor", done: scanDone + scanFailed + 1, total: scans });
       try {
         const read = compactTables(await readStrip(l.scan, signal, cacheDir, vision, SCAN_PROMPT));
-        md = md.replace(/\P{L}/gu, "").length >= 50 ? markUncertain(read, md).text : read;
+        scanChecked = /\d/.test(md);
+        md = scanChecked ? markUncertain(read, md).text : read;
         scanDone++;
       } catch (e) {
         if (signal.aborted) throw e;
@@ -238,7 +240,7 @@ export async function extractWithDocling(
       extra.push(`[İkinci okuma — görsel model, tablo ${k + 1}; (?) = ilk okumayla uyuşmayan sayı]\n${b.text}`);
     }
     // Max-row and total checks only where every table on the page is either text-layer or cross-checked.
-    const maxNotes = marked === tables.length ? [...checkMaxRows(md), ...checkTotals(md)] : [];
+    const maxNotes = (l.scan ? scanChecked : marked === tables.length) ? [...checkMaxRows(md), ...checkTotals(md)] : [];
     // Criteria rows from both readings (one reader often misses a result cell); same verdict once.
     const seen = new Set<string>();
     const criteria = [md, ...extra].flatMap(checkCriteria).filter((n) => {
