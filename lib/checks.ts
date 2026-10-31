@@ -21,6 +21,12 @@ const toFloat = (s: string) => parseFloat(normNum(s));
  * Two independent readings of the same image → numbers in `a` that `b` doesn't confirm get "(?)".
  * LCS over the number sequences, so an extra/missing row doesn't shift everything.
  */
+/** OCR kept the table's words but lost its numbers (at most half of what the other reader saw): nothing to compare with. */
+export function lostNumbers(ocr: string, other: string): boolean {
+  const n = (t: string) => [...t.matchAll(NUM)].length;
+  return n(other) >= 2 && n(ocr) * 2 <= n(other);
+}
+
 export function markUncertain(a: string, b: string): { text: string; uncertain: number; total: number } {
   const ta = [...a.matchAll(NUM)];
   const tb = [...b.matchAll(NUM)].map((m) => normNum(m[0]));

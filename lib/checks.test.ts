@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkColumns, checkCriteria, checkMaxRows, checkPages, compactTables, isLooping, markUncertain, normNum, verifyNumbers } from "./checks.ts";
+import { checkColumns, checkCriteria, checkMaxRows, checkPages, compactTables, isLooping, lostNumbers, markUncertain, normNum, verifyNumbers } from "./checks.ts";
 
 test("normNum handles Turkish thousands and decimal comma", () => {
   assert.equal(normNum("698.264.164"), "698264164");
@@ -144,4 +144,10 @@ test("isLooping: a repeating answer stops, real text doesn't", () => {
   assert.equal(isLooping("| 0 | 0 | 0 |\n".repeat(30)), false); // a zero matrix can be asked for
   const table = Array.from({ length: 80 }, (_, i) => `| Satır ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + (i >> 2))} | Evet | Hayır |`).join("\n");
   assert.equal(isLooping(table), false);
+});
+
+test("lostNumbers: OCR with most numbers missing, not a table both readers read", () => {
+  assert.equal(lostNumbers("| GİH | Başkan |  |  |\n| TOPLAM |  |  |  |", "| GİH | Başkan | 1 | 1 |\n| TOPLAM | | | 2 |"), true);
+  assert.equal(lostNumbers("| A | 1 | 2 |\n| B | 3 | 5 |", "| A | 1 | 2 |\n| B | 3 | 4 |"), false);
+  assert.equal(lostNumbers("| A |", "| A | 1 |"), false); // one number says nothing
 });

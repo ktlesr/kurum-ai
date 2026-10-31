@@ -46,6 +46,8 @@ services:
       # app's guard proxy at WEB_PROXY_URL. WEB_BROWSER=off: pages are read without running their scripts.
       WEB_BROWSER: ${WEB_BROWSER:-ws://browser:3100/kai}
       WEB_PROXY_URL: http://app:3101
+      # Web search (lib/search). Empty: the app answers without searching.
+      SEARCH_URL: ${SEARCH_URL-http://search:8080}
     # "default" is what this stack always had (db, vLLM); "browsing" adds the browser container.
     networks: [default, browsing]
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -158,6 +160,21 @@ services:
     security_opt: ["no-new-privileges:true"]
     mem_limit: ${BROWSER_MEM_LIMIT:-2g}
     pids_limit: 512
+
+  # Web search: no documents, keys or database next to it; it only gets the query, and asks public search engines.
+  search:
+    build:
+      context: ..
+      target: search
+    restart: unless-stopped
+    environment:
+      # Required to start; it guards SearXNG's image proxy and limiter, both off, and nothing else reaches this service.
+      SEARXNG_SECRET: ${SEARCH_SECRET:-zafer-ai-internal-search}
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID, DAC_OVERRIDE]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: ${SEARCH_MEM_LIMIT:-1g}
+    pids_limit: 256
 
   db:
     image: postgres:17-alpine

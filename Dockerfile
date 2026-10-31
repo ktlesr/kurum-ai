@@ -74,6 +74,10 @@ USER browser
 EXPOSE 3100
 CMD ["node", "browser-server.mjs"]
 
+# The stack's web search (deploy/compose.yml), with its JSON output on.
+FROM searxng/searxng:2026.10.30-ffa88e3ba AS search
+COPY deploy/searxng.yml /etc/searxng/settings.yml
+
 FROM docling AS app-docling
 COPY --from=files /app ./
 USER app

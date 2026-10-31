@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { dropListPositions, repairListMarks } from "./context";
-import { checkCriteria, checkMaxRows, checkTotals, compactTables, markUncertain } from "./checks";
+import { checkCriteria, checkMaxRows, checkTotals, compactTables, lostNumbers, markUncertain } from "./checks";
 import { modelConfig, providerOf } from "./model-config";
 import type { ModelConfig } from "./models";
 import { logError } from "./log";
@@ -27,7 +27,7 @@ export async function doclingOffline(): Promise<boolean> {
   const v = await getSetting("docling_offline").catch(() => "true");
   return (v ?? process.env.DOCLING_OFFLINE) !== "false";
 }
-const PIPELINE = "v15"; // bump to invalidate cached extractions
+const PIPELINE = "v16"; // bump to invalidate cached extractions
 /** Page limit for every PDF path: Docling, the unpdf fallback, and cached results. */
 export const MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
 export const tooManyPages = () => `Dosya çok fazla sayfa içeriyor (en fazla ${MAX_PAGES}). Dosyayı bölerek yükleyin.`;
@@ -225,6 +225,14 @@ export async function extractWithDocling(
         continue;
       }
       const second = reads.map((r) => (r as PromiseFulfilledResult<string>).value).join("\n\n");
+      // OCR read no numbers here: the vision model's table is the table, without a (?) on every number nothing disagrees with.
+      if (lostNumbers(primary, second)) {
+        const table = compactTables(second);
+        if (md.includes(primary)) md = md.replace(primary, table);
+        else extra.push(table);
+        extra.push(`[Tablo ${k + 1}: sayılar OCR ile okunamadı, yalnızca görsel model okudu; kesin değerleri asıl belgeden kontrol edin.]`);
+        continue;
+      }
       const a = markUncertain(primary, second);
       const b = markUncertain(second, primary);
       verify.numbers += a.total;

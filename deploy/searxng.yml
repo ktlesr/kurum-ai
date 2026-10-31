@@ -1,0 +1,10 @@
+# The stack's own web search (lib/search.ts). Reachable only inside this stack; asks public search engines.
+use_default_settings: true
+general:
+  instance_name: "Zafer AI"
+search:
+  safe_search: 1
+  formats: [html, json]
+server:
+  limiter: false
+  image_proxy: false
