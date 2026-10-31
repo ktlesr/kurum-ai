@@ -137,15 +137,18 @@ const MARK = /^( {0,3}(?:[-*+] )?"?)(&amp;|[^\s()]{1,3})\)(?= )/;
  */
 export function repairListMarks(text: string): string {
   const lines = text.split("\n");
+  const indent = (l: string) => /^ */.exec(l)![0].length;
   const near = (i: number, step: number) => {
-    for (let j = i + step; lines[j] !== undefined; j += step) if (lines[j].trim()) return MARK.exec(lines[j])?.[2];
+    for (let j = i + step; lines[j] !== undefined; j += step)
+      if (lines[j].trim()) return indent(lines[j]) === indent(lines[i]) ? MARK.exec(lines[j])?.[2] : undefined; // another level
     return undefined;
   };
   const num = (m?: string) => (m && /^\d{1,3}$/.test(m) ? Number(m) : NaN);
   const at = (m?: string) => (m && m.length === 1 ? TR_LETTERS.indexOf(m) : -1);
   lines.forEach((line, i) => {
     const m = MARK.exec(line);
-    if (!m) return;
+    // "1)" and "a)" are how a sublist starts: "c) / 1) / d)" may well be right.
+    if (!m || m[2] === "1" || m[2] === "a") return;
     const [p, n] = [near(i, -1), near(i, 1)];
     const unreadable = at(m[2]) < 0 && Number.isNaN(num(m[2])); // not a mark at all, like "Iİ": a valid one may start a sublist
     let want: string | undefined;
