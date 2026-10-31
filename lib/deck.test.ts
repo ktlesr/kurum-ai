@@ -79,3 +79,12 @@ test("slideFrom keeps pictures and the parents of filled nested items, drops emp
   const l = { id: "x", desc: "", slots: [], els: [shape("parent", "a.0"), text("inner", "a.0.b.0"), shape("pic", "c.0"), shape("gone", "d.0"), text("empty", "d.0")] };
   assert.deepEqual(slideFrom(l, { inner: "dolu" }).map((e) => e.name).sort(), ["Metin", "parent", "pic"]);
 });
+
+test("rethemeSlides: a known main colour stays main on a slide with more accent", () => {
+  const box = (color: string) => ({ id: `b${color}`, kind: "shape", name: "x", x: 0, y: 0, w: 1, h: 1, fill: { kind: "solid", color } }) as El;
+  const slide = [box("#14263d"), box("#c8553d"), { ...box("#c8553d"), id: "c" }, { ...box("#c8553d"), id: "d" }];
+  const t = { primary: "#0f3d2e", accent: "#1a7a50", head: "lora", body: "lato" };
+  const colors = (s: El[]) => s.map((e) => (e.kind === "shape" && e.fill.kind === "solid" ? e.fill.color : ""));
+  assert.deepEqual(colors(rethemeSlides([slide], t, ["#14263d", "#c8553d"])[0]), ["#0f3d2e", "#1a7a50", "#1a7a50", "#1a7a50"]);
+  assert.equal(colors(rethemeSlides([slide], t)[0])[1], "#0f3d2e"); // unknown: the most used
+});

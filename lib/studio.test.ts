@@ -306,3 +306,13 @@ test("families: every element survives cleanEls, polygons stay in their box, fon
     }
   }
 });
+
+test("gradient directions reach the SVG and survive cleanEls; an unknown one falls back", () => {
+  for (const [dir, attrs] of [["right", 'x1="0" y1="0" x2="1" y2="0"'], ["rise", 'x1="0" y1="1" x2="1" y2="0"']] as const) {
+    const e = { ...shapeFrom("rect", 100, 100, 100, "#000000"), fill: { kind: "linear", dir, stops: [{ color: "#000000", opacity: 1 }, { color: "#ffffff", opacity: 1 }] } } as El;
+    assert.ok(svgOf("kare", [e], measure).includes(attrs), dir);
+    assert.equal((cleanEls(JSON.parse(JSON.stringify([e])))[0] as { fill: { dir: string } }).fill.dir, dir);
+  }
+  const bad = JSON.parse(JSON.stringify([{ ...shapeFrom("rect", 100, 100, 100, "#000000"), fill: { kind: "linear", dir: "x", stops: [{ color: "#000000", opacity: 1 }, { color: "#ffffff", opacity: 1 }] } }]));
+  assert.equal((cleanEls(bad)[0] as unknown as { fill: { dir: string } }).fill.dir, "diag");
+});

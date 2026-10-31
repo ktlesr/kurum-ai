@@ -26,12 +26,14 @@ import { OPEN_COLOR } from "@/lib/studio-assets";
 import { familyNames, ensureFont } from "./fonts";
 import type { Claim } from "@/lib/trace";
 import { recorderType, renderVideo, type Scene } from "./video";
+import { MAX_LOGOS, listLogos, putLogo, removeLogo, type SavedLogo } from "./logos";
+import { tintSvg } from "@/lib/studio-assets";
 import { BACKDROPS, ENTRANCES, MAX_SCENES, REELS_PACKS, SCENE_SECONDS, TRANSITIONS, cleanVideo, type Backdrop, type Entrance, type ReelsPack, type SavedVideo, type Transition } from "@/lib/studio-video";
 import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, type Work, patchVideo } from "./works";
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type ShapeId, type ShapeStyle,
+  DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type GradientDir, type ShapeId, type ShapeStyle,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
@@ -77,6 +79,9 @@ const MAX_PROJECT_BYTES = 60 * 1024 * 1024;
 const MAX_SCENE_CHARS = 50 * 1024 * 1024;
 const scenesTooBig = (lists: unknown[]) => lists.reduce<number>((n, l) => n + JSON.stringify(l).length, 0) > MAX_SCENE_CHARS;
 const SCENES_TOO_BIG = "Sahnelerdeki görseller çok büyük (toplam 50 MB sınırı). Daha küçük görsel kullanın ya da sahne sayısını azaltın.";
+/** A deck's colours by role: the theme on it, or the ones its template states; none: lib/deck goes by how much each is used. */
+const deckRoles = (d: { theme?: Theme; template: DeckTemplate }) =>
+  d.theme ? [d.theme.primary, d.theme.accent] : d.template.roles ? [d.template.roles.primary, d.template.roles.accent] : [];
 /** Every colour in the design that was the old brand colour becomes the new one. */
 const stamp = () => Date.now();
 /** Brand colours changed: everything drawn in them follows (and the shades the templates derive from them). */
@@ -187,6 +192,28 @@ export default function Studio({ username }: { username: string }) {
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is only readable after mount
   useEffect(() => setBrand(loadBrand(username)), [username]);
+  const [logos, setLogos] = useState<SavedLogo[]>([]);
+  const brandNow = useRef(brand); // for what finishes after an await: the brand as it is by then
+  useLayoutEffect(() => {
+    brandNow.current = brand;
+  });
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const list = await listLogos(username);
+      // The logo kept before there was a library comes in as its first one.
+      const old = loadBrand(username).logo;
+      if (old && !list.some((l) => l.pic.src === old.src)) {
+        const logo = { id: newId(), name: "Logo", pic: old, addedAt: 0 };
+        await putLogo(username, logo);
+        list.unshift(logo);
+      }
+      if (live) setLogos(list);
+    })().catch(() => {}); // no storage: the panel still takes one logo through the brand kit
+    return () => {
+      live = false;
+    };
+  }, [username]);
   useEffect(() => {
     let live = true;
     fetch("/api/upload")
@@ -309,7 +336,7 @@ export default function Studio({ username }: { username: string }) {
     const next = { ...brand, primary: t.primary, accent: t.accent };
     if (deck) {
       // Every slide (lib/deck rethemeSlides); fonts were loaded above.
-      const all = rethemeSlides(slidesNow(), t, deck.theme ? [deck.theme.primary, deck.theme.accent] : []);
+      const all = rethemeSlides(slidesNow(), t, deckRoles(deck));
       setDeck({ ...deck, slides: all, primary: t.primary, theme: t });
       setEls(all[deck.at]);
       setHist({ past: [], future: [] });
@@ -416,12 +443,13 @@ export default function Studio({ username }: { username: string }) {
     });
   };
   /** A gallery shape as a picture (a data: URL like every picture: the design stays one file). */
-  const addArt = async (name: string) => {
+  const addArt = async (name: string, tinted = false) => {
     setArtOpen(false);
     try {
       const r = await fetch(`/shapes/${name}.svg`);
       if (!r.ok) throw new Error();
-      const src = `data:image/svg+xml;base64,${btoa(await r.text())}`; // the files are ASCII
+      const file = await r.text();
+      const src = `data:image/svg+xml;base64,${btoa(tinted ? tintSvg(file, brand.primary, brand.accent) : file)}`; // the files are ASCII
       // Onto the design as it is now (and its format): it may have changed while the file loaded.
       const { w: cw, h: ch } = FORMATS[now.current.format];
       const size = Math.min(cw, ch) / 3;
@@ -432,10 +460,54 @@ export default function Studio({ username }: { username: string }) {
       setNote({ kind: "error", text: "Şekil yüklenemedi." });
     }
   };
-  const addLogo = () => {
-    if (!brand.logo) return setNote({ kind: "error", text: "Önce marka kitine logo ekleyin." });
-    const b = boxOf(brand.logo, 220 * u);
-    add({ id: newId(), kind: "image", name: "Logo", x: 72 * u, y: 72 * u, ...b, pic: brand.logo, fit: "contain", logo: true } satisfies ImageEl);
+  /** A logo onto the design, next to the others: several can stand together (a joint project's partners). */
+  const addLogo = (pic = brand.logo) => {
+    if (!pic) return setNote({ kind: "error", text: "Önce marka kitine logo ekleyin." });
+    const b = boxOf(pic, 220 * u);
+    const others = now.current.view.filter((e) => e.kind === "image" && e.logo);
+    const x = Math.min(W - b.w - 24 * u, Math.max(72 * u, ...others.map((e) => e.x + e.w + 32 * u)));
+    add({ id: newId(), kind: "image", name: "Logo", x, y: 72 * u, ...b, pic, fit: "contain", logo: true } satisfies ImageEl);
+  };
+  /** The logo the templates use; an edited design's logos follow, keeping their width and the logo's own ratio. */
+  const chooseLogo = (p: Picture) => {
+    const was = brandNow.current;
+    saveBrand({ ...was, logo: p });
+    // Only the logo being replaced: a partner's logo added beside it stays.
+    const cur = now.current.els;
+    if (cur && was.logo) change(cur.map((e) => (e.kind === "image" && e.logo && e.pic.src === was.logo?.src ? { ...e, pic: p, h: (e.w * p.h) / p.w } : e)));
+  };
+  const addToLogos = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setNote(null);
+    let first: Picture | undefined;
+    const added: SavedLogo[] = [];
+    for (const file of Array.from(files)) {
+      if (logos.length + added.length >= MAX_LOGOS) {
+        setNote({ kind: "error", text: `Kütüphanede en fazla ${MAX_LOGOS} logo olabilir.` });
+        break;
+      }
+      try {
+        const pic = await readPicture(file, "logo");
+        first ??= pic;
+        if (logos.some((l) => l.pic.src === pic.src) || added.some((l) => l.pic.src === pic.src)) continue;
+        const logo = { id: newId(), name: file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "Logo", pic, addedAt: stamp() };
+        await putLogo(username, logo);
+        added.push(logo);
+      } catch (e) {
+        setNote({ kind: "error", text: `${file.name}: ${(e as Error).message}` });
+      }
+    }
+    if (added.length) setLogos((l) => [...l, ...added]);
+    if (first && !brandNow.current.logo) chooseLogo(first);
+  };
+  const dropLogo = async (l: SavedLogo) => {
+    try {
+      await removeLogo(username, l.id);
+      setLogos((x) => x.filter((y) => y.id !== l.id));
+      if (brandNow.current.logo?.src === l.pic.src) saveBrand({ ...brandNow.current, logo: undefined });
+    } catch {
+      setNote({ kind: "error", text: "Logo silinemedi (tarayıcı depolaması)." });
+    }
   };
 
   async function pick(kind: "photo" | "logo" | "image", file: File | undefined) {
@@ -452,9 +524,7 @@ export default function Studio({ username }: { username: string }) {
         // An edited design keeps its layout: the photo element gets the new picture.
         if (els) change(els.map((e) => (e.kind === "image" && !e.logo && e.name === "Fotoğraf" ? { ...e, pic: p } : e)));
       } else {
-        saveBrand({ ...brand, logo: p });
-        // The logo keeps its width; the height follows its own ratio (never stretched).
-        if (els) change(els.map((e) => (e.kind === "image" && e.logo ? { ...e, pic: p, h: (e.w * p.h) / p.w } : e)));
+        chooseLogo(p);
       }
     } catch (e) {
       setNote({ kind: "error", text: (e as Error).message });
@@ -615,7 +685,7 @@ export default function Studio({ username }: { username: string }) {
         "-",
         { label: "Metin ekle", icon: <Type size={14} />, run: () => addText() },
         { label: "Şekil ekle", icon: <Shapes size={14} />, run: () => addShape() },
-        { label: "Logo ekle", icon: <Stamp size={14} />, run: addLogo, disabled: !brand.logo },
+        { label: "Logo ekle", icon: <Stamp size={14} />, run: () => addLogo(), disabled: !brand.logo },
         "-",
         { label: "Geri al", icon: <Undo2 size={14} />, keys: "Ctrl+Z", run: undo, disabled: !hist.past.length },
         { label: "Yinele", icon: <Redo2 size={14} />, keys: "Ctrl+Y", run: redo, disabled: !hist.future.length },
@@ -813,7 +883,7 @@ export default function Studio({ username }: { username: string }) {
     if (!deck || !slideRoom()) return;
     // A new slide wears the theme the deck has.
     const fresh = slideFrom(l, undefined, deck.primary);
-    const slide = deck.theme ? rethemeSlides([fresh], deck.theme)[0] : fresh;
+    const slide = deck.theme ? rethemeSlides([fresh], deck.theme, deck.template.roles ? [deck.template.roles.primary, deck.template.roles.accent] : [])[0] : fresh;
     setSlides([...s.slice(0, deck.at + 1), slide, ...s.slice(deck.at + 1)], deck.at + 1);
   };
   const duplicateSlide = () => {
@@ -1376,7 +1446,7 @@ export default function Studio({ username }: { username: string }) {
     if (open === "images") return (
       <section className={section}>
         <Picker label="Görsel yükle" accept=".png,.jpg,.jpeg,.webp" onPick={(f) => pick("image", f)} />
-        <button onClick={addLogo} disabled={!brand.logo} title={brand.logo ? undefined : "Önce Marka panelinden logo ekleyin"} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm hover:border-accent hover:text-accent disabled:opacity-40">
+        <button onClick={() => addLogo()} disabled={!brand.logo} title={brand.logo ? undefined : "Önce Marka panelinden logo ekleyin"} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm hover:border-accent hover:text-accent disabled:opacity-40">
           <Stamp size={15} /> Logoyu tasarıma ekle
         </button>
         {!deck && (
@@ -1414,8 +1484,32 @@ export default function Studio({ username }: { username: string }) {
           ))}
         </div>
         <h3 className={heading}>Logo</h3>
-        <Picker label={brand.logo ? "Logoyu değiştir" : "Logo ekle"} accept=".png,.jpg,.jpeg,.webp,.svg" onPick={(f) => pick("logo", f)} preview={brand.logo?.src} contain onClear={brand.logo ? () => saveBrand({ ...brand, logo: undefined }) : undefined} />
-        <p className="text-xs text-muted">Logo olduğu gibi kullanılır: kırpılmaz, renklendirilmez, oranı korunur. Marka kiti yalnızca bu tarayıcıda saklanır.</p>
+        <h3 className={heading}>Logo kütüphanesi</h3>
+        {logos.length > 0 && (
+          <ul className="grid grid-cols-2 gap-2">
+            {logos.map((l) => {
+              const active = brand.logo?.src === l.pic.src;
+              return (
+                <li key={l.id} className={`overflow-hidden rounded-lg border ${active ? "border-accent ring-2 ring-accent/30" : "border-line"}`}>
+                  <button onClick={() => chooseLogo(l.pic)} aria-pressed={active} title={`${l.name}: şablonlarda bunu kullan`} aria-label={`${l.name}: şablonlarda bunu kullan`} className="block h-16 w-full bg-white p-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- the user's own logo, a local data: URL */}
+                    <img src={l.pic.src} alt="" className="size-full object-contain" />
+                  </button>
+                  <span className="flex items-center gap-1 border-t border-line px-1 py-0.5">
+                    <span className="min-w-0 flex-1 truncate px-1 text-[11px] text-muted">{active ? "Kullanımda" : l.name}</span>
+                    <button className={iconBtn} onClick={() => addLogo(l.pic)} aria-label={`${l.name}: tasarıma ekle`} title="Tasarıma ekle"><Plus size={14} /></button>
+                    <button className={`${iconBtn} hover:text-danger`} onClick={() => void dropLogo(l)} aria-label={`${l.name}: kütüphaneden sil`} title="Kütüphaneden sil"><Trash2 size={14} /></button>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <label className="flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-line text-sm font-medium hover:border-accent hover:text-accent focus-within:ring-2 focus-within:ring-accent/40">
+          <Plus size={15} /> Logo ekle
+          <input type="file" multiple accept=".png,.jpg,.jpeg,.webp,.svg" className="sr-only" onChange={(e) => { void addToLogos(e.target.files); e.target.value = ""; }} />
+        </label>
+        <p className="text-xs text-muted">Seçili logoyu şablonlar kullanır; + ile tasarıma birden çok logo ekleyebilirsiniz. Logolar olduğu gibi kullanılır ve yalnızca bu tarayıcıda saklanır.</p>
       </section>
     );
     if (open === "layers") return (
@@ -1727,7 +1821,7 @@ export default function Studio({ username }: { username: string }) {
       />
 
       {layoutsOpen && deck && font && <LayoutPicker template={deck.template} accent={deck.primary} measure={font.measure} onPick={addSlide} onClose={() => setLayoutsOpen(false)} />}
-      {artOpen && <ArtPicker onPick={addArt} onClose={() => setArtOpen(false)} />}
+      {artOpen && <ArtPicker colors={brand} onPick={addArt} onClose={() => setArtOpen(false)} />}
       {library && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onPointerDown={closeLibrary}>
           <div
@@ -1985,6 +2079,12 @@ function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove
             <Swatches swatches={swatches} value={el.fill.color} set={(color) => now({ fill: { kind: "solid", color } })} />
           ) : (
             <div className="space-y-2">
+              <label className="flex items-center gap-2 text-xs text-muted">
+                Yön
+                <select value={el.fill.dir} onChange={(e) => { if (el.fill.kind === "linear") now({ fill: { ...el.fill, dir: e.target.value as GradientDir } }); }} className="h-7 min-w-0 flex-1 rounded-md border border-line bg-panel px-1 text-xs text-fg">
+                  {(Object.keys(GRADIENT_DIRS) as GradientDir[]).map((k) => <option key={k} value={k}>{GRADIENT_DIRS[k]}</option>)}
+                </select>
+              </label>
               {el.fill.stops.map((s, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs text-muted">
                   {i ? "Bitiş" : "Başlangıç"}

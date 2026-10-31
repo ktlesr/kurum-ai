@@ -159,3 +159,29 @@ export const OPEN_COLOR: Record<string, readonly string[]> = {
 "#d9480f"
 ]
 };
+
+const hexRgb = (h: string) => {
+  const x = h.length === 4 ? `#${h[1]}${h[1]}${h[2]}${h[2]}${h[3]}${h[3]}` : h;
+  return [1, 3, 5].map((i) => parseInt(x.slice(i, i + 2), 16));
+};
+const mix = (a: number[], b: number[], t: number) => `#${a.map((v, i) => Math.round(v + (b[i] - v) * t).toString(16).padStart(2, "0")).join("")}`;
+
+/**
+ * A ready-made shape in brand colours: its colours are placed by lightness on a ramp from the main colour through the
+ * accent to a pale accent, so its light and dark parts, and with them its depth, stay where they were.
+ */
+export function tintSvg(svg: string, primary: string, accent: string): string {
+  const a = hexRgb(primary), b = hexRgb(accent), pale = b.map((v) => Math.round(v + (255 - v) * 0.8));
+  const COLOR = /\b(fill|stop-color|flood-color)="(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})"/g;
+  const light = (hex: string) => {
+    const [r, g, bl] = hexRgb(hex);
+    return (0.2126 * r + 0.7152 * g + 0.0722 * bl) / 255;
+  };
+  // Within this file's own range, so a file of only bright colours still reaches the dark end. White is a mask's, not a colour.
+  const all = [...svg.matchAll(COLOR)].map((m) => light(m[2])).filter((l) => l < 0.99);
+  const lo = Math.min(...all), hi = Math.max(...all);
+  return svg.replace(COLOR, (_m, attr: string, hex: string) => {
+    const t = hi > lo ? Math.min(1, Math.max(0, (light(hex) - lo) / (hi - lo))) : 0.5;
+    return `${attr}="${t < 0.5 ? mix(a, b, t * 2) : mix(b, pale, (t - 0.5) * 2)}"`;
+  });
+}

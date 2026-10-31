@@ -3,7 +3,7 @@
 // The studio canvas: the same primitives the export draws (lib/studio draw), as React SVG, plus selection, move,
 // resize handles, snapping guides and in-place text editing. Coordinates are design pixels (the SVG viewBox).
 import { useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { FORMATS, aabb, dashOf, draw, familyOf, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl } from "@/lib/studio";
+import { FORMATS, aabb, dashOf, draw, familyOf, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl, gradVector } from "@/lib/studio";
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 type Box = { x: number; y: number; w: number; h: number };
@@ -41,7 +41,7 @@ export function PrimView({ p, k, uid }: { p: Prim; k: number; uid: string }) {
   if (p.kind === "rect" || p.kind === "ellipse" || p.kind === "poly") {
     const gid = `${uid}g${k}`;
     const grad = p.fill?.kind === "linear" && (
-      <linearGradient id={gid} x1="0" y1="0" x2={p.fill.dir === "diag" ? 1 : 0} y2="1">
+      <linearGradient id={gid} x1={gradVector(p.fill.dir)[0]} y1={gradVector(p.fill.dir)[1]} x2={gradVector(p.fill.dir)[2]} y2={gradVector(p.fill.dir)[3]}>
         <stop offset="0" stopColor={p.fill.stops[0].color} stopOpacity={p.fill.stops[0].opacity} />
         <stop offset="1" stopColor={p.fill.stops[1].color} stopOpacity={p.fill.stops[1].opacity} />
       </linearGradient>

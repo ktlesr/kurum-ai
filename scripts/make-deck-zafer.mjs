@@ -183,7 +183,7 @@ const built = layouts.map((l) => {
   return { id: l.id, desc: l.desc, els, slots };
 });
 
-const family = { id: "zafer", name: "Zafer", desc: "Kuruma özel aile: sıcak kâğıt zemin, tırnaklı başlık, ince çizgiler ve tek vurgu rengi. Resmî raporlar ve kurumsal sunumlar için.", layouts: built };
+const family = { id: "zafer", name: "Zafer", desc: "Kuruma özel aile: sıcak kâğıt zemin, tırnaklı başlık, ince çizgiler ve tek vurgu rengi. Resmî raporlar ve kurumsal sunumlar için.", roles: { primary: NAVY, accent: ACCENT }, layouts: built };
 fs.writeFileSync(new URL("../public/slides/zafer.json", import.meta.url), JSON.stringify(family));
 const indexUrl = new URL("../public/slides/index.json", import.meta.url);
 const index = JSON.parse(fs.readFileSync(indexUrl, "utf8")).filter((t) => t.id !== "zafer");

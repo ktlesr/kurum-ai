@@ -7,7 +7,8 @@ export const MAX_SLIDES = 100;
 export interface LayoutSlot { key: string; max: number }
 /** As stored: elements with `slot`, `grp` (one item of a repeating list), `accentMark`, `pic.placeholder`. */
 export interface Layout { id: string; desc: string; els: Record<string, unknown>[]; slots: LayoutSlot[] }
-export interface DeckTemplate { id: string; name: string; desc: string; layouts: Layout[] }
+/** `roles`: which of its colours is the main one and which the accent (a theme then needs no guessing). */
+export interface DeckTemplate { id: string; name: string; desc: string; layouts: Layout[]; roles?: { primary: string; accent: string } }
 export interface TemplateInfo { id: string; name: string; desc: string; layouts: number; primary: string; background: string }
 
 const PLACEHOLDER = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#e5e9ef"/><path d="M120 210l60-70 45 50 30-30 45 50z" fill="#b4bfcc"/><circle cx="255" cy="105" r="20" fill="#b4bfcc"/></svg>`;
@@ -72,7 +73,9 @@ export function rethemeSlides(slides: El[][], t: { primary: string; accent: stri
       const k = col.toLowerCase();
       if ((tinted(k) && !light(k)) || lower.has(k)) counts.set(k, (counts.get(k) ?? 0) + 1);
     }
-  const main = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+  // The theme's main colour stays the main one when known; a slide with more accent than anything else doesn't swap them.
+  const known0 = known[0]?.toLowerCase();
+  const main = known0 && counts.has(known0) ? known0 : [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
   const c = (x: string) => {
     const k = x.toLowerCase();
     return !counts.has(k) ? x : k === main ? t.primary : t.accent;

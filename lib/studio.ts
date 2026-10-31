@@ -334,7 +334,11 @@ export function layout(d: Design, measure: Measure): Layer[] {
 // Elements → primitives (draw) → the SVG string (svgOf) for export and the same primitives as React SVG in the editor,
 // so what is on screen is what gets saved.
 
-export type Fill = { kind: "solid"; color: string } | { kind: "linear"; dir: "diag" | "down"; stops: [{ color: string; opacity: number }, { color: string; opacity: number }] };
+export const GRADIENT_DIRS = { diag: "Çapraz", rise: "Ters çapraz", down: "Yukarıdan aşağı", right: "Soldan sağa" } as const;
+export type GradientDir = keyof typeof GRADIENT_DIRS;
+/** The gradient's vector in its box (0-1), for SVG. */
+export const gradVector = (dir: GradientDir) => ({ diag: [0, 0, 1, 1], rise: [0, 1, 1, 0], down: [0, 0, 0, 1], right: [0, 0, 1, 0] })[dir] ?? [0, 0, 1, 1];
+export type Fill = { kind: "solid"; color: string } | { kind: "linear"; dir: GradientDir; stops: [{ color: string; opacity: number }, { color: string; opacity: number }] };
 export type Stroke = { color: string; width: number; dash?: "dash" | "dot" };
 export type Shadow = { color: string; blur: number; x: number; y: number; opacity: number };
 type Common = {
@@ -731,7 +735,8 @@ export function svgOf(format: FormatId, els: El[], measure: Measure, css = ""): 
     if (f.kind === "solid") return fillColor(f.color);
     const g = `g${id++}`;
     const [a, b] = f.stops;
-    const dir = f.dir === "diag" ? `x1="0" y1="0" x2="1" y2="1"` : `x1="0" y1="0" x2="0" y2="1"`;
+    const [gx1, gy1, gx2, gy2] = gradVector(f.dir);
+    const dir = `x1="${gx1}" y1="${gy1}" x2="${gx2}" y2="${gy2}"`;
     defs.push(`<linearGradient id="${g}" ${dir}><stop offset="0" stop-color="${fillColor(a.color)}" stop-opacity="${n(a.opacity)}"/><stop offset="1" stop-color="${fillColor(b.color)}" stop-opacity="${n(b.opacity)}"/></linearGradient>`);
     return `url(#${g})`;
   };
@@ -812,7 +817,7 @@ export function cleanEls(raw: unknown): El[] {
     } else if (r.kind === "shape") {
       const f = r.fill as Fill | undefined;
       const stop = (s: unknown) => ({ color: safeColor((s as { color?: unknown })?.color, "#000000"), opacity: Math.min(1, Math.max(0, num((s as { opacity?: unknown })?.opacity, 1))) });
-      const fill: Fill = f?.kind === "linear" && Array.isArray(f.stops) ? { kind: "linear", dir: f.dir === "down" ? "down" : "diag", stops: [stop(f.stops[0]), stop(f.stops[1])] } : { kind: "solid", color: safeColor((f as { color?: unknown })?.color, "#14263d") };
+      const fill: Fill = f?.kind === "linear" && Array.isArray(f.stops) ? { kind: "linear", dir: typeof f.dir === "string" && Object.hasOwn(GRADIENT_DIRS, f.dir) ? (f.dir as GradientDir) : "diag", stops: [stop(f.stops[0]), stop(f.stops[1])] } : { kind: "solid", color: safeColor((f as { color?: unknown })?.color, "#14263d") };
       const st = r.stroke as Record<string, unknown> | undefined;
       const shape = (["ellipse", "poly", "line"] as const).find((x) => x === r.shape);
       const points = Array.isArray(r.points)
