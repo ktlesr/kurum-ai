@@ -129,7 +129,7 @@ export function linkPages(meta: ChatMeta | undefined, nonce: string) {
  */
 export const plainNumbering = (text: string) =>
   text
-    .split(/(^```[^\n]*\n[\s\S]*?^```[ \t]*$)/m)
+    .split(/(^ {0,3}(?:```+|~~~+)[^\n]*\n[\s\S]*?^ {0,3}(?:```+|~~~+)[ \t]*$)/m)
     .map((part, i) =>
       i % 2
         ? part

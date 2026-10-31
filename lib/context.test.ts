@@ -54,5 +54,6 @@ test("plainNumbering: a line's own number stays text in any document; real bulle
   assert.equal(plainNumbering("2) Satır"), "2\\) Satır");
   assert.equal(plainNumbering("- Düz madde\n1. Sıralı"), "- Düz madde\n1. Sıralı");
   const code = "```\n- 1) ayar\n```";
+  assert.equal(plainNumbering("~~~text\n- 1) ayar\n~~~"), "~~~text\n- 1) ayar\n~~~");
   assert.equal(plainNumbering(`- 1) önce\n${code}\n- 2) sonra`), `1\\) önce\n${code}\n2\\) sonra`);
 });
