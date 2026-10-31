@@ -26,7 +26,7 @@ export async function doclingOffline(): Promise<boolean> {
   const v = await getSetting("docling_offline").catch(() => "true");
   return (v ?? process.env.DOCLING_OFFLINE) !== "false";
 }
-const PIPELINE = "v10"; // bump to invalidate cached extractions
+const PIPELINE = "v11"; // bump to invalidate cached extractions
 /** Page limit for every PDF path: Docling, the unpdf fallback, and cached results. */
 export const MAX_PAGES = Number(process.env.DOCLING_MAX_PAGES) || 500;
 export const tooManyPages = () => `Dosya çok fazla sayfa içeriyor (en fazla ${MAX_PAGES}). Dosyayı bölerek yükleyin.`;
@@ -51,7 +51,7 @@ interface PageLine {
   total: number;
   markdown: string;
   tables: { markdown: string; strips: string[] }[];
-  /** The whole page, when it's a scan OCR didn't read; empty when the file's scans went over their size limit. */
+  /** The whole page, when it's a scan. */
   scan?: string;
 }
 
@@ -178,26 +178,28 @@ export async function extractWithDocling(
     throw e;
   }
 
-  const totalTables = lines.reduce((n, l) => n + l.tables.length, 0);
+  // A scan's tables are read with its page.
+  const totalTables = lines.reduce((n, l) => n + (l.scan ? 0 : l.tables.length), 0);
   const verify = { tables: totalTables, numbers: 0, uncertain: 0, skipped: undefined as string | undefined };
   let done = 0;
   const parts: string[] = [];
   const headings: string[] = [];
   const outline: string[] = [];
   const findings: string[] = [];
-  const scans = lines.filter((l) => l.scan !== undefined).length;
+  const scans = lines.filter((l) => l.scan).length;
   let scanDone = 0;
   let scanFailed = 0;
 
   for (const l of lines) {
     let md = compactTables(l.markdown);
-    // A scan OCR gave nothing for (no OCR models on this server, a bad scan): the vision model reads the page.
-    if (l.scan === "") scanFailed++;
+    // A scan: the vision model reads the page (OCR confuses Turkish letters and loses lines); OCR's reading, if it has
+    // one, checks the numbers and stays as the page's text when the model fails.
     if (l.scan) {
       signal.throwIfAborted();
       onProgress({ stage: "Taranmış sayfalar okunuyor", done: scanDone + scanFailed + 1, total: scans });
       try {
-        md = compactTables(await readStrip(l.scan, signal, cacheDir, vision, SCAN_PROMPT));
+        const read = compactTables(await readStrip(l.scan, signal, cacheDir, vision, SCAN_PROMPT));
+        md = md.replace(/\P{L}/gu, "").length >= 50 ? markUncertain(read, md).text : read;
         scanDone++;
       } catch (e) {
         if (signal.aborted) throw e;
@@ -207,7 +209,8 @@ export async function extractWithDocling(
     }
     const extra: string[] = [];
     let marked = 0;
-    for (const [k, t] of l.tables.entries()) {
+    const tables = l.scan ? [] : l.tables;
+    for (const [k, t] of tables.entries()) {
       signal.throwIfAborted();
       onProgress({ stage: "Tablolar doğrulanıyor", done: ++done, total: totalTables });
       const primary = compactTables(t.markdown);
@@ -235,7 +238,7 @@ export async function extractWithDocling(
       extra.push(`[İkinci okuma — görsel model, tablo ${k + 1}; (?) = ilk okumayla uyuşmayan sayı]\n${b.text}`);
     }
     // Max-row and total checks only where every table on the page is either text-layer or cross-checked.
-    const maxNotes = marked === l.tables.length ? [...checkMaxRows(md), ...checkTotals(md)] : [];
+    const maxNotes = marked === tables.length ? [...checkMaxRows(md), ...checkTotals(md)] : [];
     // Criteria rows from both readings (one reader often misses a result cell); same verdict once.
     const seen = new Set<string>();
     const criteria = [md, ...extra].flatMap(checkCriteria).filter((n) => {
@@ -270,7 +273,7 @@ export async function extractWithDocling(
     verify: totalTables ? { ...verify, skipped: verify.skipped } : undefined,
     warning: [
       scanDone ? `${scanDone} taranmış sayfa görsel modelle okundu; kesin değerleri asıl belgeden kontrol edin.` : "",
-      scanFailed ? `${scanFailed} taranmış sayfa okunamadı; bu sayfalar cevaplara giremez. Dosyayı sonra yeniden yükleyin.` : "",
+      scanFailed ? `${scanFailed} taranmış sayfa görsel modelle okunamadı; OCR metni kullanıldı, harf ve satır hataları olabilir. Dosyayı sonra yeniden yükleyin.` : "",
     ].filter(Boolean).join(" ") || undefined,
   };
   // Don't cache a run where verification failed midway — retry it next time.
