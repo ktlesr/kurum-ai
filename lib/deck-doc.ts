@@ -15,7 +15,7 @@ export type Block =
 export interface SectionContent { title: string; source: string; blocks: Block[]; dropped: string[]; cut?: boolean }
 
 export const MAX_SECTIONS = 16;
-const MAX_ROWS = 400, MAX_ITEMS = 1000;
+const MAX_ROWS = 400, MAX_ITEMS = 1000, MAX_LISTS = 500;
 
 export const PLAN_PROMPT = `Kullanıcı bir sunum istiyor. İsteğinden sunumun bölümlerini çıkar. YALNIZCA şu JSON'u döndür:
 {"baslik":"sunumun adı","altbaslik":"tek cümle","bolumler":[{"baslik":"bölüm adı","sorgu":"belgede aranacak anahtar kelimeler"}]}
@@ -209,11 +209,16 @@ export function pickSource(text: string, query: string, budget: number): string 
   };
   const ranked = [...scored].filter((x) => x.score > 0).sort((a, b) => b.score - a.score || a.i - b.i);
   // The best part first, then the annexes it refers to: the rule says "ek-3", the list itself is there.
+  const annexes = new Map<string, number>();
+  parts.forEach((p, i) => {
+    const n = /^EK[-\s]*(\d+)\b/iu.exec(p.head)?.[1];
+    if (n && !annexes.has(n)) annexes.set(n, i);
+  });
   for (const r of ranked.slice(0, 3)) {
     take(r.i);
     for (const m of parts[r.i].body.matchAll(/\bek[-\s]*(\d+)/giu)) {
-      const annex = parts.findIndex((p) => new RegExp(`^EK[-\\s]*${m[1]}\\b`, "iu").test(p.head));
-      if (annex >= 0) take(annex);
+      const annex = annexes.get(m[1]);
+      if (annex !== undefined) take(annex);
     }
   }
   // Then the others, only those near the best: a word that happens to appear elsewhere isn't the subject.
@@ -236,6 +241,7 @@ function namedLists(source: string): { name: string; items: string[] }[] {
     while (lines[i + 1] && !lines[i + 1].includes(":") && !lines[i + 1].startsWith("#") && /^[\p{Lu}][\p{L} ,.'’-]{1,200}$/u.test(lines[i + 1]) && !/\.$/.test(lines[i + 1]) && rest.includes(",")) rest += `, ${lines[++i]}`;
     const items = rest.split(",").map((x) => x.trim().replace(/[.;]$/, "")).filter(Boolean);
     if (items.length >= 3 && items.every((x) => x.length <= 40)) out.push({ name: m[1], items });
+    if (out.length >= MAX_LISTS) break;
   }
   return out;
 }
@@ -258,7 +264,12 @@ export function completeGroups(blocks: Block[], source: string, query = ""): Blo
   // The model passed over the list this section is about: it comes straight from the document.
   const terms = (low(query).match(/\p{L}{4,}/gu) ?? []).filter((w) => !STOP.has(w)).map((w) => w.slice(0, 5));
   // Not on a word every list here shares ("bölge"): it must tell these lists from the document's others.
-  const wanted = lists.filter((l) => terms.some((t) => low(l.name).includes(t) && lists.filter((o) => low(o.name).includes(t)).length < lists.length));
+  const names = lists.map((l) => low(l.name));
+  const telling = terms.filter((t) => {
+    const n = names.filter((x) => x.includes(t)).length;
+    return n > 0 && n < names.length;
+  });
+  const wanted = lists.filter((_, i) => telling.some((t) => names[i].includes(t)));
   return wanted.length >= 2 ? [...done, { kind: "groups", title: "", groups: wanted }] : done;
 }
 
