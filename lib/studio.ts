@@ -362,12 +362,14 @@ export type ImageEl = Common & { kind: "image"; pic: Picture; fit: "cover" | "co
  * right through the middle of the box, `arrow` heads). noFill: only the outline is drawn.
  */
 export type ShapeKind = "rect" | "ellipse" | "poly" | "line";
-export type ShapeEl = Common & { kind: "shape"; fill: Fill; radius?: number; shape?: ShapeKind; points?: [number, number][]; stroke?: Stroke; noFill?: boolean; arrow?: "end" | "both" };
+export type ShapeEl = Common & { kind: "shape"; fill: Fill; radius?: number; shape?: ShapeKind; points?: [number, number][]; stroke?: Stroke; noFill?: boolean; arrow?: "end" | "both";
+  /** A picture filling the shape, cut to its outline and covering its box; it takes the fill's place while set. */
+  picFill?: Picture };
 export type El = TextEl | ImageEl | ShapeEl;
 
 /** Rotation (degrees around cx, cy) and mirroring of one element's primitives. */
 export type Tf = { rot: number; cx: number; cy: number; fx?: boolean; fy?: boolean };
-type PrimBase = { opacity: number; tf?: Tf; shadow?: Shadow };
+type PrimBase = { opacity: number; tf?: Tf; shadow?: Shadow; picFill?: { pic: Picture; x: number; y: number; w: number; h: number } };
 /** What gets drawn; the export and the editor both draw exactly these. */
 export type Prim = PrimBase &
   (
@@ -456,7 +458,13 @@ export const SHAPES = {
 } as const satisfies Record<string, { label: string; shape: ShapeKind; ratio: number; round?: number; points?: [number, number][]; arrow?: "end" | "both" }>;
 export type ShapeId = keyof typeof SHAPES;
 /** How a library shape starts: filled, or only its outline, plain or dashed. */
-export type ShapeStyle = "fill" | "outline" | "dash";
+export type ShapeStyle = "fill" | "outline" | "dash" | "holder";
+/** What a picture holder shows until it gets its picture: a pale field with a small picture sign, covering any outline. */
+export const HOLDER_PIC: Picture = {
+  src: `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice"><rect x="-4000" y="-4000" width="8400" height="8400" fill="#e5e9ef"/><circle cx="240" cy="165" r="24" fill="#a9b6c5"/><path d="M125 265l60-80 45 55 30-30 55 55z" fill="#a9b6c5"/></svg>`)}`,
+  w: 400, h: 400,
+};
+export const isHolder = (e: El) => e.kind === "shape" && e.picFill?.src === HOLDER_PIC.src;
 
 /** A new shape from the library, `size` on its longer side, centred on (cx, cy). */
 export function shapeFrom(id: ShapeId, cx: number, cy: number, size: number, color: string, style: ShapeStyle = "fill"): ShapeEl {
@@ -471,7 +479,8 @@ export function shapeFrom(id: ShapeId, cx: number, cy: number, size: number, col
     ...(d.points ? { points: d.points.map(([x, y]) => [x, y] as [number, number]) } : {}),
     ...(isLine ? { stroke: { color, width: Math.max(2, size / 60), ...(style === "dash" ? { dash: "dash" as const } : {}) }, noFill: true } : {}),
     // The fill colour stays underneath, so "Dolgu" brings it back.
-    ...(!isLine && style !== "fill" ? { stroke: { color, width: Math.max(3, size / 50), ...(style === "dash" ? { dash: "dash" as const } : {}) }, noFill: true } : {}),
+    ...(!isLine && style === "holder" ? { picFill: HOLDER_PIC } : {}),
+    ...(!isLine && (style === "outline" || style === "dash") ? { stroke: { color, width: Math.max(3, size / 50), ...(style === "dash" ? { dash: "dash" as const } : {}) }, noFill: true } : {}),
     ...(d.arrow ? { arrow: d.arrow } : {}),
   };
 }
@@ -646,6 +655,8 @@ export function draw(els: El[], measure: Measure): Prim[] {
     };
     if (e.kind === "shape") {
       const fill = e.noFill ? null : e.fill;
+      const picture = e.noFill || e.shape === "line" ? undefined : safePicture(e.picFill);
+      if (picture) base.picFill = { pic: picture, x: e.x, y: e.y, w: e.w, h: e.h };
       const stroke = e.stroke && e.stroke.width > 0 ? { ...e.stroke, color: safeColor(e.stroke.color, "#14263d") } : undefined;
       const shape = e.shape ?? "rect";
       if (shape === "ellipse") out.push({ ...base, kind: "ellipse", x: e.x, y: e.y, w: e.w, h: e.h, fill, stroke });
@@ -745,8 +756,24 @@ export function svgOf(format: FormatId, els: El[], measure: Measure, css = ""): 
     const d = dashOf(s);
     return ` stroke="${fillColor(s.color)}" stroke-width="${n(s.width)}" stroke-linejoin="round"${s.dash === "dot" ? ` stroke-linecap="round"` : ""}${d ? ` stroke-dasharray="${d}"` : ""}`;
   };
+  /** A shape holding a picture: the picture cut by the shape's own geometry, then the outline over it. */
+  const filled = (p: Prim, geometry: string, outline: string) => {
+    const f = p.picFill!;
+    const c = `c${id++}`;
+    defs.push(`<clipPath id="${c}">${geometry}</clipPath>`);
+    body.push(`<g${common(p)}><image href="${f.pic.src}" x="${n(f.x)}" y="${n(f.y)}" width="${n(f.w)}" height="${n(f.h)}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${c})"/>${outline}</g>`);
+  };
   for (const p of draw(els, measure)) {
-    if (p.kind === "rect") {
+    if (p.picFill && p.kind === "rect") {
+      const g = `x="${n(p.x)}" y="${n(p.y)}" width="${n(p.w)}" height="${n(p.h)}"${p.radius ? ` rx="${n(p.radius)}"` : ""}`;
+      filled(p, `<rect ${g}/>`, p.stroke ? `<rect ${g} fill="none"${line(p.stroke)}/>` : "");
+    } else if (p.picFill && p.kind === "ellipse") {
+      const g = `cx="${n(p.x + p.w / 2)}" cy="${n(p.y + p.h / 2)}" rx="${n(p.w / 2)}" ry="${n(p.h / 2)}"`;
+      filled(p, `<ellipse ${g}/>`, p.stroke ? `<ellipse ${g} fill="none"${line(p.stroke)}/>` : "");
+    } else if (p.picFill && p.kind === "poly") {
+      const g = `points="${p.pts.map(([x, y]) => `${n(x)},${n(y)}`).join(" ")}"`;
+      filled(p, `<polygon ${g}/>`, p.stroke ? `<polygon ${g} fill="none"${line(p.stroke)}/>` : "");
+    } else if (p.kind === "rect") {
       body.push(`<rect x="${n(p.x)}" y="${n(p.y)}" width="${n(p.w)}" height="${n(p.h)}"${p.radius ? ` rx="${n(p.radius)}"` : ""} fill="${paint(p.fill)}"${line(p.stroke)}${common(p)}/>`);
     } else if (p.kind === "ellipse") {
       body.push(`<ellipse cx="${n(p.x + p.w / 2)}" cy="${n(p.y + p.h / 2)}" rx="${n(p.w / 2)}" ry="${n(p.h / 2)}" fill="${paint(p.fill)}"${line(p.stroke)}${common(p)}/>`);
@@ -829,6 +856,7 @@ export function cleanEls(raw: unknown): El[] {
         ...(shape ? { shape } : {}), ...(shape === "poly" ? { points } : {}),
         ...(st && typeof st === "object" ? { stroke: { color: safeColor(st.color, "#14263d"), width: Math.min(200, Math.max(0, num(st.width, 2))), ...(st.dash === "dash" || st.dash === "dot" ? { dash: st.dash } : {}) } } : {}),
         ...(r.noFill === true ? { noFill: true } : {}),
+        ...(storedPicture(r.picFill) ? { picFill: storedPicture(r.picFill) } : {}),
         ...(shape === "line" && (r.arrow === "end" || r.arrow === "both") ? { arrow: r.arrow } : {}),
       });
     }

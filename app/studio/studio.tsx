@@ -33,7 +33,7 @@ import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, 
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type GradientDir, type ShapeId, type ShapeStyle,
+  DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, isHolder, type GradientDir, type ShapeId, type ShapeStyle,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
@@ -530,10 +530,26 @@ export default function Studio({ username }: { username: string }) {
       setNote({ kind: "error", text: (e as Error).message });
     }
   }
+  /** The file dialog for a shape's picture. */
+  const fillPicture = (id: string) => {
+    replaceTarget.current = id;
+    const input = replaceInput.current;
+    if (!input) return;
+    input.accept = ".png,.jpg,.jpeg,.webp";
+    input.click();
+  };
   const replacePicture = async (id: string, file: File | undefined) => {
     if (!file) return;
     try {
-      const target = view.find((e) => e.id === id) as ImageEl | undefined;
+      const found = view.find((e) => e.id === id);
+      if (found?.kind === "shape") {
+        const picFill = await readPicture(file, "photo");
+        // Onto the design as it is by now: reading a large picture takes a moment, and on another slide the id isn't there.
+        const cur = now.current.view;
+        if (cur.some((x) => x.id === id && x.kind === "shape")) change(cur.map((x) => (x.id === id && x.kind === "shape" ? { ...x, picFill, noFill: undefined } : x)));
+        return;
+      }
+      const target = found as ImageEl | undefined;
       const p = await readPicture(file, target?.logo ? "logo" : "photo");
       if (target) patch(id, target.fit === "contain" ? { pic: p, h: (target.w * p.h) / p.w } : { pic: p });
     } catch (e) {
@@ -738,6 +754,18 @@ export default function Studio({ username }: { username: string }) {
                 input.click();
               }, disabled: L },
             ...(e.logo ? [] : [{ label: e.fit === "cover" ? "Tamamını göster (sığdır)" : "Kutuyu doldur (kırp)", icon: <ImageIcon size={14} />, run: () => patch(e.id, { fit: e.fit === "cover" ? "contain" : "cover" }), disabled: L } as MenuItem]),
+          ] as MenuItem[])
+        : []),
+      ...(e.kind === "shape" && e.shape !== "line"
+        ? (["-",
+            { label: e.picFill && !isHolder(e) ? "Resmi değiştir…" : "Resimle doldur…", icon: <ImagePlus size={14} />, run: () => {
+                replaceTarget.current = e.id;
+                const input = replaceInput.current;
+                if (!input) return;
+                input.accept = ".png,.jpg,.jpeg,.webp";
+                input.click();
+              }, disabled: L },
+            ...(e.picFill && !isHolder(e) ? [{ label: "Resmi kaldır", icon: <ImageIcon size={14} />, run: () => patch(e.id, { picFill: undefined }), disabled: L }] : []),
           ] as MenuItem[])
         : []),
       "-",
@@ -1426,13 +1454,14 @@ export default function Studio({ username }: { username: string }) {
     if (open === "elements") return (
       <section className={section}>
         <h3 className={heading}>Şekiller</h3>
-        <div role="group" aria-label="Şekil biçimi" className="grid grid-cols-3 gap-1 rounded-lg bg-subtle p-1">
-          {([["fill", "Dolu"], ["outline", "Kontur"], ["dash", "Kesikli"]] as const).map(([s, label]) => (
+        <div role="group" aria-label="Şekil biçimi" className="grid grid-cols-4 gap-1 rounded-lg bg-subtle p-1">
+          {([["fill", "Dolu"], ["outline", "Kontur"], ["dash", "Kesikli"], ["holder", "Resim"]] as const).map(([s, label]) => (
             <button key={s} onClick={() => setShapeStyle(s)} aria-pressed={shapeStyle === s} className={`h-7 rounded-md text-xs font-medium ${shapeStyle === s ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"}`}>{label}</button>
           ))}
         </div>
+        {shapeStyle === "holder" && <p className="text-xs text-muted">Resim tutucu ekler: resmi çift tıklayarak seçin, resim şeklin biçimine göre kırpılır. Çizgiler resim tutamaz.</p>}
         <div className="grid grid-cols-4 gap-1.5">
-          {(Object.keys(SHAPES) as ShapeId[]).map((id) => (
+          {(Object.keys(SHAPES) as ShapeId[]).filter((id) => shapeStyle !== "holder" || SHAPES[id].shape !== "line").map((id) => (
             <button key={id} onClick={() => addShape(id, shapeStyle)} aria-label={`${SHAPES[id].label} ekle`} title={SHAPES[id].label} className="grid aspect-square place-items-center rounded-lg border border-line text-muted hover:border-accent hover:text-accent [&_svg]:size-7">
               <ShapeIcon id={id} style={shapeStyle} />
             </button>
@@ -1753,7 +1782,7 @@ export default function Studio({ username }: { username: string }) {
               <div className="flex min-h-0 flex-1 overflow-auto p-4 md:p-8" style={{ containerType: "size", backgroundImage: "radial-gradient(var(--line) 1px, transparent 1px)", backgroundSize: "18px 18px" }} onPointerDown={() => { setSelected(null); setEditing(null); }}>
                 {font ? (
                   <div className="m-auto shrink-0 [&>svg]:size-full" style={{ aspectRatio: `${W} / ${H}`, width: `calc(min(100cqw, 100cqh * ${W / H}) * ${zoom})` }} onPointerDown={(e) => e.stopPropagation()}>
-                    <Editor format={format} els={view} measure={font.measure} selected={picked} onSelect={setPicked} onChange={change} editing={editing} onEditing={setEditing} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
+                    <Editor onFillPicture={fillPicture} format={format} els={view} measure={font.measure} selected={picked} onSelect={setPicked} onChange={change} editing={editing} onEditing={setEditing} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
                   </div>
                 ) : (
                   <p className="m-auto flex items-center gap-2 text-sm text-muted">{fontError || <><Loader2 size={16} className="animate-spin" /> Hazırlanıyor…</>}</p>
@@ -2075,7 +2104,16 @@ function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove
               <input type="checkbox" checked={!el.noFill} onChange={(e) => now({ noFill: !e.target.checked || undefined, ...(!e.target.checked && !el.stroke ? { stroke: { color: swatches[0], width: Math.max(2, 4 * u) } } : {}) })} /> Dolgu
             </label>
           )}
-          {el.shape === "line" || el.noFill ? null : el.fill.kind === "solid" ? (
+          {el.shape !== "line" && (
+            <div className="flex gap-1.5">
+              <label className="flex h-9 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-line text-sm text-muted hover:border-accent hover:text-accent focus-within:ring-2 focus-within:ring-accent/40">
+                <ImagePlus size={15} /> {el.picFill && !isHolder(el) ? "Resmi değiştir" : "Resimle doldur"}
+                <input type="file" accept=".png,.jpg,.jpeg,.webp" className="sr-only" onChange={(e) => { onReplace(e.target.files?.[0]); e.target.value = ""; }} />
+              </label>
+              {el.picFill && <button className="h-9 rounded-lg border border-line px-2 text-sm text-muted hover:border-accent hover:text-accent" onClick={() => now({ picFill: undefined })}>Kaldır</button>}
+            </div>
+          )}
+          {el.shape === "line" || el.noFill || el.picFill ? null : el.fill.kind === "solid" ? (
             <Swatches swatches={swatches} value={el.fill.color} set={(color) => now({ fill: { kind: "solid", color } })} />
           ) : (
             <div className="space-y-2">
@@ -2151,7 +2189,7 @@ function swapShape(e: ShapeEl, id: ShapeId): Partial<ShapeEl> {
 
 /** A small preview of a library shape for the menu. */
 function ShapeIcon({ id, style }: { id: ShapeId; style: ShapeStyle }) {
-  const ink = style === "fill" ? { fill: "currentColor" } : { fill: "none", stroke: "currentColor", strokeWidth: 1.1, strokeLinejoin: "round" as const, ...(style === "dash" ? { strokeDasharray: "2 1.3" } : {}) };
+  const ink = style === "fill" ? { fill: "currentColor" } : style === "holder" ? { fill: "currentColor", fillOpacity: 0.3, stroke: "currentColor", strokeWidth: 0.8, strokeLinejoin: "round" as const } : { fill: "none", stroke: "currentColor", strokeWidth: 1.1, strokeLinejoin: "round" as const, ...(style === "dash" ? { strokeDasharray: "2 1.3" } : {}) };
   const d = SHAPES[id] as { shape: string; ratio: number; round?: number; points?: readonly (readonly [number, number])[] };
   const [w, h] = d.shape === "line" ? [14, 2] : d.ratio >= 1 ? [14, 14 / d.ratio] : [14 * d.ratio, 14];
   const [x, y] = [(16 - w) / 2, (16 - h) / 2];

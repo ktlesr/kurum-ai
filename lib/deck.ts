@@ -93,6 +93,7 @@ export function rethemeSlides(slides: El[][], t: { primary: string; accent: stri
       if (cx < o.x || cx > o.x + o.w || cy < o.y || cy > o.y + o.h) continue;
       if (o.kind === "image") return null;
       if (o.kind !== "shape" || o.noFill || o.shape === "line") continue; // text, or nothing filled here
+      if (o.picFill) return null;
       // Only a plain opaque box tells for certain; see-through, gradient, round, turned: no judgement, the theme's colour stays.
       const plain = (o.shape ?? "rect") === "rect" && (o.opacity ?? 1) >= 1 && !o.rotation && o.fill.kind === "solid" && o.fill.color.length === 7;
       return plain && o.fill.kind === "solid" ? c(o.fill.color) : null;

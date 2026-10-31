@@ -30,6 +30,43 @@ async function pictureBox(e: Extract<El, { kind: "image" }>): Promise<string> {
   return c.toDataURL("image/png");
 }
 
+/** A shape filled with a picture: PowerPoint gets it as one PNG, cut to the shape, outline included. */
+async function pictureShape(e: Extract<El, { kind: "shape" }>): Promise<{ data: string; pad: number }> {
+  const pic = e.picFill!;
+  const img = new Image();
+  img.src = pic.src;
+  await img.decode();
+  const scale = Math.min(2, 3000 / Math.max(e.w, e.h));
+  const line = e.stroke?.width ?? 0;
+  const pad = line ? line / 2 + 1 : 0; // half of an outline lies outside the shape
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round((e.w + 2 * pad) * scale));
+  c.height = Math.max(1, Math.round((e.h + 2 * pad) * scale));
+  const ctx = c.getContext("2d")!;
+  ctx.scale(scale, scale);
+  ctx.translate(pad, pad);
+  const path = new Path2D();
+  if (e.shape === "ellipse") path.ellipse(e.w / 2, e.h / 2, e.w / 2, e.h / 2, 0, 0, Math.PI * 2);
+  else if (e.shape === "poly") {
+    (e.points ?? []).forEach(([x, y], i) => (i ? path.lineTo(x * e.w, y * e.h) : path.moveTo(x * e.w, y * e.h)));
+    path.closePath();
+  } else path.roundRect(0, 0, e.w, e.h, Math.min(e.radius ?? 0, e.w / 2, e.h / 2));
+  ctx.save();
+  ctx.clip(path);
+  const s = Math.max(e.w / img.naturalWidth, e.h / img.naturalHeight);
+  ctx.drawImage(img, (e.w - img.naturalWidth * s) / 2, (e.h - img.naturalHeight * s) / 2, img.naturalWidth * s, img.naturalHeight * s);
+  ctx.restore();
+  if (e.stroke && line > 0) {
+    ctx.strokeStyle = e.stroke.color;
+    ctx.lineWidth = line;
+    ctx.lineJoin = "round";
+    if (e.stroke.dash) ctx.setLineDash(e.stroke.dash === "dot" ? [0, line * 2] : [line * 3, line * 2]);
+    if (e.stroke.dash === "dot") ctx.lineCap = "round";
+    ctx.stroke(path);
+  }
+  return { data: c.toDataURL("image/png"), pad };
+}
+
 const solid = (f: Extract<Prim, { kind: "rect" }>["fill"]) => (!f ? undefined : f.kind === "solid" ? f.color : f.stops[0].color);
 
 export async function downloadPptx(slides: El[][], measure: Measure, name: string, families: ReadonlyMap<string, string>) {
@@ -59,6 +96,10 @@ export async function downloadPptx(slides: El[][], measure: Measure, name: strin
           align: e.align === "middle" ? "center" : e.align === "end" ? "right" : "left", valign: e.bg ? "middle" : "top", lineSpacingMultiple: e.leading, charSpacing: (p.tracking ?? 0) * 0.5 || undefined, transparency,
           ...(e.bg ? { fill: { color: hex(e.bg.fill), transparency }, shape: pptx.ShapeType.roundRect, rectRadius: Math.min(e.bg.radius, e.h / 2) * PX } : {}), shadow,
         });
+      } else if (e.picFill && !e.noFill && e.shape !== "line") {
+        const { data, pad } = await pictureShape(e);
+        const out = pad * PX;
+        slide.addImage({ data, ...box, x: box.x - out, y: box.y - out, w: box.w + 2 * out, h: box.h + 2 * out, flipH: !!e.flipX, flipV: !!e.flipY, transparency, shadow });
       } else {
         const fillC = e.noFill || e.shape === "line" ? undefined : solid(e.fill);
         const opts = {

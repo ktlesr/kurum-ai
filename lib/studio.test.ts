@@ -5,7 +5,7 @@ import { LIBRARY_FONTS } from "./font-list.ts";
 import { THEMES } from "./themes.ts";
 import { ART_SHAPES } from "./studio-assets.ts";
 import assert from "node:assert/strict";
-import { FORMATS, SHAPES, TEMPLATES, registerFontCss, templatesOf, aabb, alignEls, cleanEls, distributeEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type El, type Measure } from "./studio.ts";
+import { FORMATS, SHAPES, TEMPLATES, registerFontCss, templatesOf, isHolder, aabb, alignEls, cleanEls, distributeEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type El, type Measure } from "./studio.ts";
 
 // Monospace stand-in for canvas measureText: every character is 0.55 em.
 const measure: Measure = (t, size) => t.length * size * 0.55;
@@ -319,4 +319,36 @@ test("gradient directions reach the SVG and survive cleanEls; an unknown one fal
   }
   const bad = JSON.parse(JSON.stringify([{ ...shapeFrom("rect", 100, 100, 100, "#000000"), fill: { kind: "linear", dir: "x", stops: [{ color: "#000000", opacity: 1 }, { color: "#ffffff", opacity: 1 }] } }]));
   assert.equal((cleanEls(bad)[0] as unknown as { fill: { dir: string } }).fill.dir, "diag");
+});
+
+test("picture fill: cut to each shape, covering its box, outline over it; survives cleanEls; bad sources never reach the SVG", () => {
+  const pic = { src: REAL_PNG, w: 1, h: 1 };
+  for (const id of ["rect", "ellipse", "star", "heart"] as const) {
+    const e = { ...shapeFrom(id, 300, 300, 200, "#2e5e8c"), picFill: pic, stroke: { color: "#ff0000", width: 4 } };
+    const svg = svgOf("kare", [e], measure);
+    assert.match(svg, /<clipPath id="c\d+"><(rect|ellipse|polygon) /, id);
+    assert.match(svg, /preserveAspectRatio="xMidYMid slice" clip-path="url\(#c\d+\)"/, id);
+    assert.match(svg, /fill="none" stroke="#ff0000"/, id);
+    assert.equal(cleanEls(JSON.parse(JSON.stringify([e])))[0].kind, "shape");
+    assert.deepEqual((cleanEls(JSON.parse(JSON.stringify([e])))[0] as typeof e).picFill, pic, id);
+  }
+  const bad = { ...shapeFrom("rect", 100, 100, 100, "#000000"), picFill: { src: `https://evil.example/x.png" onload="x`, w: 1, h: 1 } };
+  assert.ok(!svgOf("kare", [bad], measure).includes("evil"));
+  assert.equal((cleanEls(JSON.parse(JSON.stringify([bad])))[0] as typeof bad).picFill, undefined);
+  // An outline-only shape and a line draw no picture.
+  const hollow = { ...shapeFrom("rect", 100, 100, 100, "#000000", "outline"), picFill: pic };
+  assert.ok(!svgOf("kare", [hollow], measure).includes("<image"));
+});
+
+test("picture holder: every library shape but a line can be one, and it stays one through a save", () => {
+  for (const id of Object.keys(SHAPES) as (keyof typeof SHAPES)[]) {
+    const e = shapeFrom(id, 300, 300, 200, "#2e5e8c", "holder");
+    if (SHAPES[id].shape === "line") {
+      assert.equal(e.picFill, undefined, id);
+      continue;
+    }
+    assert.ok(isHolder(e), id);
+    assert.ok(isHolder(cleanEls(JSON.parse(JSON.stringify([e])))[0]), id);
+    assert.match(svgOf("kare", [e], measure), /<clipPath id="c\d+"><(rect|ellipse|polygon) /, id);
+  }
 });

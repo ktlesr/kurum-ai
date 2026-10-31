@@ -54,6 +54,23 @@ export function PrimView({ p, k, uid }: { p: Prim; k: number; uid: string }) {
         : {}),
       ...common,
     };
+    if (p.picFill) {
+      const f = p.picFill;
+      const cut = `${uid}p${k}`;
+      const geometry = (rest: { fill?: string; stroke?: string; strokeWidth?: number; strokeLinejoin?: "round"; strokeDasharray?: string; strokeLinecap?: "round" }) =>
+        p.kind === "rect" ? <rect x={p.x} y={p.y} width={p.w} height={p.h} rx={p.radius || undefined} {...rest} />
+        : p.kind === "ellipse" ? <ellipse cx={p.x + p.w / 2} cy={p.y + p.h / 2} rx={p.w / 2} ry={p.h / 2} {...rest} />
+        : <polygon points={p.pts.map(([x, y]) => `${x},${y}`).join(" ")} {...rest} />;
+      return (
+        <>
+          <defs><clipPath id={cut}>{geometry({})}</clipPath>{shadow}</defs>
+          <g {...common}>
+            <image href={f.pic.src} x={f.x} y={f.y} width={f.w} height={f.h} preserveAspectRatio="xMidYMid slice" clipPath={`url(#${cut})`} />
+            {p.stroke && geometry({ fill: "none", stroke: p.stroke.color, strokeWidth: p.stroke.width, strokeLinejoin: "round", strokeDasharray: dashOf(p.stroke), ...(p.stroke.dash === "dot" ? { strokeLinecap: "round" as const } : {}) })}
+          </g>
+        </>
+      );
+    }
     return (
       <>
         {(grad || shadow) && <defs>{grad}{shadow}</defs>}
@@ -117,11 +134,13 @@ interface Props {
   onChange: (els: El[], commit: boolean) => void;
   editing: string | null;
   onEditing: (id: string | null) => void;
+  /** Double click on a picture holder: choose its picture. */
+  onFillPicture?: (id: string) => void;
   /** Right click: the element under the pointer (null: the empty canvas) and the screen point for the menu. */
   onMenu?: (id: string | null, x: number, y: number) => void;
 }
 
-export default function Editor({ format, els, measure, selected, onSelect, onChange, editing, onEditing, onMenu }: Props) {
+export default function Editor({ format, els, measure, selected, onSelect, onChange, editing, onEditing, onFillPicture, onMenu }: Props) {
   const { w: W, h: H } = FORMATS[format];
   const uid = useId().replace(/:/g, "");
   const svg = useRef<SVGSVGElement>(null);
@@ -386,6 +405,7 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
           onDoubleClick={(e) => {
             e.stopPropagation();
             if (el.kind === "text" && !el.locked) onEditing(el.id);
+            if (el.kind === "shape" && el.picFill && el.shape !== "line" && !el.locked) onFillPicture?.(el.id);
           }}
         />
       ))}
