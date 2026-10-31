@@ -29,7 +29,7 @@ MAX_PAGES = int(os.environ.get("DOCLING_MAX_PAGES", "500"))  # lib/extract.ts ma
 MAX_RENDER_PX = 60_000_000  # exit 4: a forged 10 m x 10 m page would otherwise render into many GB of RAM
 STRIP = 450  # max strip height in px; the vision model downsizes larger images and misreads digits
 OVERLAP = 40
-SCAN_LETTERS = 200  # fewer letters than this on a page with a bitmap: a scan OCR didn't read
+SCAN_CHARS = 30  # fewer letters and digits than this on a page with a bitmap: a scan OCR didn't read (a short page is fine)
 SCAN_SCALE = 2.5
 SCAN_BUDGET = 150_000_000  # base64 bytes of scans per file: a small PDF can repeat one big bitmap on hundreds of pages
 
@@ -93,7 +93,7 @@ for n in range(1, total + 1):
             crops.append({"markdown": item.export_to_markdown(doc), "strips": strips})
     md = doc.export_to_markdown(image_placeholder="")
     line = {"page": n, "total": total, "markdown": md, "tables": crops}
-    if has_images and sum(c.isalpha() for c in md) < SCAN_LETTERS:
+    if has_images and sum(c.isalnum() for c in md) < SCAN_CHARS:
         scan = png(page.render(scale=SCAN_SCALE).to_pil()) if scan_bytes < SCAN_BUDGET else None
         scan_bytes += len(scan or "")
         line["scan"] = scan or ""  # empty: over the budget, the caller reports the page as unread
