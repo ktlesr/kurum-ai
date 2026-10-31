@@ -122,10 +122,19 @@ export function linkPages(meta: ChatMeta | undefined, nonce: string) {
 }
 
 /**
- * For showing a document's text: its own numbering stays text. OCR marks lines like "1) Proje…" as bullets, and Markdown
- * would make "- 1) Proje…" an empty-looking bullet with a list inside, whose number isn't even copied.
+ * For showing a document's text: its own numbering stays text. Docling marks a line that starts with its own number
+ * ("1) Proje…", "a) …", "(2) …", "2. …") as a bullet, and Markdown would make "- 1) Proje…" an empty-looking bullet with
+ * a list inside, whose number isn't even copied. The bullet goes wherever a line has its own number; "1)" stays as
+ * written instead of becoming "1.". Code blocks are left alone.
  */
 export const plainNumbering = (text: string) =>
   text
-    .replace(/^[ 	]*[-*] (?=[a-zçğıöşü]\) |\(\d{1,3}\) |\d{1,3}\) |"|MADDE )/gmu, "")
-    .replace(/^(\d{1,3})\)(?= )/gm, "$1\\)");
+    .split(/(^```[^\n]*\n[\s\S]*?^```[ \t]*$)/m)
+    .map((part, i) =>
+      i % 2
+        ? part
+        : part
+            .replace(/^[ \t]*[-*+] (?="?(?:\p{Ll}\)|\(\d{1,3}\)|\(\p{Ll}\)|\d{1,3}[.)])[ \t])/gmu, "")
+            .replace(/^("?\d{1,3})\)(?=[ \t])/gm, "$1\\)"),
+    )
+    .join("");

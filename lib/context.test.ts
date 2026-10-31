@@ -48,9 +48,11 @@ test("linkPages links single-doc page refs in text only; only existing pages; sk
   assert.deepEqual(run(para(t("Sayfa 4")), { ...meta, pages: undefined }), para(t("Sayfa 4")));
 });
 
-test("plainNumbering: a document's own numbers stay text, real bullets stay bullets", () => {
+test("plainNumbering: a line's own number stays text in any document; real bullets and code stay", () => {
   assert.equal(plainNumbering("- 1) Proje"), "1\\) Proje");
-  assert.equal(plainNumbering("- a) Orta Asya\n- (2) Birinci\n- MADDE 9- 4 sayılı\n- \"ç) Kalkınma"), "a) Orta Asya\n(2) Birinci\nMADDE 9- 4 sayılı\n\"ç) Kalkınma");
+  assert.equal(plainNumbering("* 2. Hedef\n+ (b) Bent\n- a) Orta Asya\n- (2) Birinci\n- \"ç) Kalkınma"), "2. Hedef\n(b) Bent\na) Orta Asya\n(2) Birinci\n\"ç) Kalkınma");
   assert.equal(plainNumbering("2) Satır"), "2\\) Satır");
   assert.equal(plainNumbering("- Düz madde\n1. Sıralı"), "- Düz madde\n1. Sıralı");
+  const code = "```\n- 1) ayar\n```";
+  assert.equal(plainNumbering(`- 1) önce\n${code}\n- 2) sonra`), `1\\) önce\n${code}\n2\\) sonra`);
 });
