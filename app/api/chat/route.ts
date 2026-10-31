@@ -45,6 +45,8 @@ const NO_WEB = "\nBu soru için internet sonucu yok; güncel bilgi gerekiyorsa b
 const SEARCH_DECIDE = `Kullanıcının mesajları verilecek. Son mesajı cevaplamak için internette aramak gerekiyor mu? Güncel bilgi (kur, haber, tarih, fiyat, mevzuatın son hali) ya da senin kesin bilemeyeceğin belirli bir bilgi (kişi, kurum, madde numarası) soruluyorsa gerekir; selamlaşma, yazma, çeviri, kod, genel açıklama için gerekmez.
 Gerekmiyorsa yalnızca YOK yaz. Gerekiyorsa yalnızca kısa bir Türkçe arama sorgusu yaz; başka hiçbir şey yazma.`;
 const SEARCH_QUERY = `Kullanıcının mesajları verilecek. Son mesajı cevaplamak için kısa bir Türkçe internet arama sorgusu yaz. Yalnızca sorguyu yaz.`;
+/** A reasoning model (gpt-oss) spends some of these before its one-word answer. */
+const DECISION_TOKENS = 300;
 // The model's own wording varies too much for a word list ("zikredilmemiştir", "açıkça yazmamaktadır"…).
 const NOT_IN_DOC = `Bir soru ve bir belgeye dayanarak verilmiş cevap verilecek. Cevap, sorulan bilginin belgede bulunmadığını ya da açıkça yazmadığını söylüyorsa yalnızca EVET, sorulanı belgeden cevaplıyorsa yalnızca HAYIR yaz.`;
 const SEARCH_URL = process.env.SEARCH_URL;
@@ -328,7 +330,7 @@ export async function POST(req: Request) {
         const search = async (system: string): Promise<Page[]> => {
           try {
             const typed = messages.filter((m) => m.role === "user").slice(-3).map((m) => m.content.slice(0, 2000)).join("\n\n");
-            const query = parseSearchQuery(await chatOnce(chat, model, [{ role: "system", content: system }, { role: "user", content: typed }], signal, 60));
+            const query = parseSearchQuery(await chatOnce(chat, model, [{ role: "system", content: system }, { role: "user", content: typed }], signal, DECISION_TOKENS));
             if (!query) return [];
             status(`İnternette aranıyor: ${query.slice(0, 60)}`);
             const results = await admission.web.run(() => searchWeb(SEARCH_URL!, query, signal), signal);
@@ -442,7 +444,7 @@ export async function POST(req: Request) {
         if (claims.length) meta.claims = claims;
         // The documents don't hold it: the web may, as a clearly separate second part (the model reads no document here).
         const notInDoc = SEARCH_URL && !pages.length && !urls.length
-          ? await chatOnce(chat, model, [{ role: "system", content: NOT_IN_DOC }, { role: "user", content: `Soru: ${asked0.slice(0, 2000)}\n\nCevap: ${answer.slice(0, 3000)}` }], signal, 5).catch((e) => {
+          ? await chatOnce(chat, model, [{ role: "system", content: NOT_IN_DOC }, { role: "user", content: `Soru: ${asked0.slice(0, 2000)}\n\nCevap: ${answer.slice(0, 3000)}` }], signal, DECISION_TOKENS).catch((e) => {
               if (signal.aborted) throw e;
               return "";
             })
