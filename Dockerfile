@@ -32,6 +32,10 @@ FROM runtime AS docling
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv libgl1 libglib2.0-0 \
   && rm -rf /var/lib/apt/lists/* \
   && python3 -m venv /opt/docling && /opt/docling/bin/pip install --no-cache-dir docling==2.130.0
+# OCR's torch models go into the package's own folder, which the app user can't write: fetched here, or OCR silently
+# reads nothing at runtime. A failed fetch mustn't fail the deploy: lib/extract.ts then reads scans with the vision model.
+RUN /opt/docling/bin/python -c "from docling.datamodel.accelerator_options import AcceleratorOptions; from docling.datamodel.pipeline_options import RapidOcrOptions; from docling.models.stages.ocr.rapid_ocr_model import RapidOcrModel; RapidOcrModel(True, None, RapidOcrOptions(backend='torch'), AcceleratorOptions(device='cpu'))" \
+  || echo "OCR models not fetched"
 # Models live in the data volume: fetch once with DOCLING_OFFLINE=false, then keep it offline.
 ENV DOCLING_PYTHON=/opt/docling/bin/python HF_HOME=/app/.cache/hf
 
