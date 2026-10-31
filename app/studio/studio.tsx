@@ -33,7 +33,7 @@ import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, 
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, isHolder, type GradientDir, type ShapeId, type ShapeStyle,
+  DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, MAX_PIC_ZOOM, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, isHolder, type GradientDir, type ShapeId, type ShapeStyle,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
@@ -282,6 +282,7 @@ export default function Studio({ username }: { username: string }) {
   };
   const restore = (s: Snap) => {
     setMenu(null);
+    gesture.current = null; // an unfinished live change belongs to the design that is going away
     // The brand colours go back with the design: later recolouring looks for the colours it is really drawn in.
     if (s.primary !== brand.primary || s.accent !== brand.accent) saveBrand({ ...brand, primary: s.primary, accent: s.accent });
     setActiveTheme("");
@@ -530,6 +531,13 @@ export default function Studio({ username }: { username: string }) {
       setNote({ kind: "error", text: (e as Error).message });
     }
   }
+  const [placing, setPlacing] = useState<string | null>(null);
+  // Only while it is the one chosen thing: choosing anything else ends it by itself.
+  const placingNow = placing && picked.length === 1 && picked[0] === placing && view.some((e) => e.id === placing && e.kind === "shape" && e.picFill && !isHolder(e)) ? placing : null;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- choosing it again must not resume placing by itself
+    if (placing && !placingNow) setPlacing(null);
+  }, [placing, placingNow]);
   /** The file dialog for a shape's picture. */
   const fillPicture = (id: string) => {
     replaceTarget.current = id;
@@ -546,7 +554,7 @@ export default function Studio({ username }: { username: string }) {
         const picFill = await readPicture(file, "photo");
         // Onto the design as it is by now: reading a large picture takes a moment, and on another slide the id isn't there.
         const cur = now.current.view;
-        if (cur.some((x) => x.id === id && x.kind === "shape")) change(cur.map((x) => (x.id === id && x.kind === "shape" ? { ...x, picFill, noFill: undefined } : x)));
+        if (cur.some((x) => x.id === id && x.kind === "shape")) change(cur.map((x) => (x.id === id && x.kind === "shape" ? { ...x, picFill, picView: undefined, noFill: undefined } : x)));
         return;
       }
       const target = found as ImageEl | undefined;
@@ -765,7 +773,10 @@ export default function Studio({ username }: { username: string }) {
                 input.accept = ".png,.jpg,.jpeg,.webp";
                 input.click();
               }, disabled: L },
-            ...(e.picFill && !isHolder(e) ? [{ label: "Resmi kaldır", icon: <ImageIcon size={14} />, run: () => patch(e.id, { picFill: undefined }), disabled: L }] : []),
+            ...(e.picFill && !isHolder(e) ? [
+              { label: "Resmi konumla", icon: <ImageIcon size={14} />, run: () => { setPicked([e.id]); setPlacing(e.id); }, disabled: L },
+              { label: "Resmi kaldır", icon: <ImageIcon size={14} />, run: () => patch(e.id, { picFill: undefined, picView: undefined }), disabled: L },
+            ] : []),
           ] as MenuItem[])
         : []),
       "-",
@@ -790,6 +801,7 @@ export default function Studio({ username }: { username: string }) {
     if (!ids.length) return;
     if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) return e.preventDefault(), openMenuFor(ids[ids.length - 1]);
     if (mod && e.key.toLowerCase() === "c") return e.preventDefault(), copyEl(ids);
+    if (e.key === "Escape" && placingNow) return setPlacing(null);
     if (e.key === "Escape") return setPicked([]);
     if (mod && e.key.toLowerCase() === "d") return e.preventDefault(), duplicate(ids);
     if (mod && e.key.toLowerCase() === "x") return e.preventDefault(), cut(ids);
@@ -1600,7 +1612,7 @@ export default function Studio({ username }: { username: string }) {
         <p className="text-xs text-muted">Shift ya da Ctrl ile tıklayarak seçime ekleyip çıkarın; boş alanda sürükleyerek kutu içindekileri seçin. Aynı boyut ilk seçilene göre yapılır.</p>
       </section>
     ) : sel ? (
-      <Inspector key={sel.id} el={sel} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={(p, commit) => patch(sel.id, p, commit)} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onAlign={(how) => alignMany([sel.id], how, true)} />
+      <Inspector key={sel.id} placing={placingNow === sel.id} onPlace={setPlacing} el={sel} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={(p, commit) => patch(sel.id, p, commit)} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onAlign={(how) => alignMany([sel.id], how, true)} />
     ) : (
       <section className={section}>
         <p className="text-sm text-muted">Tuvalde bir öğeye tıklayın: konumunu, boyutunu, gölgesini ve diğer ayarlarını buradan değiştirebilirsiniz.</p>
@@ -1782,7 +1794,7 @@ export default function Studio({ username }: { username: string }) {
               <div className="flex min-h-0 flex-1 overflow-auto p-4 md:p-8" style={{ containerType: "size", backgroundImage: "radial-gradient(var(--line) 1px, transparent 1px)", backgroundSize: "18px 18px" }} onPointerDown={() => { setSelected(null); setEditing(null); }}>
                 {font ? (
                   <div className="m-auto shrink-0 [&>svg]:size-full" style={{ aspectRatio: `${W} / ${H}`, width: `calc(min(100cqw, 100cqh * ${W / H}) * ${zoom})` }} onPointerDown={(e) => e.stopPropagation()}>
-                    <Editor onFillPicture={fillPicture} format={format} els={view} measure={font.measure} selected={picked} onSelect={setPicked} onChange={change} editing={editing} onEditing={setEditing} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
+                    <Editor placing={placingNow} onFillPicture={(id) => { const t = view.find((e) => e.id === id); if (t && isHolder(t)) fillPicture(id); else setPlacing(id); }} format={format} els={view} measure={font.measure} selected={picked} onSelect={setPicked} onChange={change} editing={editing} onEditing={setEditing} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
                   </div>
                 ) : (
                   <p className="m-auto flex items-center gap-2 text-sm text-muted">{fontError || <><Loader2 size={16} className="animate-spin" /> Hazırlanıyor…</>}</p>
@@ -1946,11 +1958,13 @@ interface InspectorProps {
   onDuplicate: () => void;
   onOrder: (to: "front" | "back" | "up" | "down") => void;
   onReplace: (f: File | undefined) => void;
+  placing: boolean;
+  onPlace: (id: string | null) => void;
   /** To the canvas, by what is drawn (a turned element's outer box). */
   onAlign: (how: AlignTo) => void;
 }
 
-function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove, onDuplicate, onOrder, onReplace, onAlign }: InspectorProps) {
+function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove, onDuplicate, onOrder, onReplace, placing, onPlace, onAlign }: InspectorProps) {
   const live = (p: Partial<El>) => onPatch(p, false);
   const now = (p: Partial<El>) => onPatch(p, true);
   const swatches = [...new Set([brand.primary, brand.accent, "#ffffff", "#14263d", "#000000"])];
@@ -2110,9 +2124,22 @@ function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove
                 <ImagePlus size={15} /> {el.picFill && !isHolder(el) ? "Resmi değiştir" : "Resimle doldur"}
                 <input type="file" accept=".png,.jpg,.jpeg,.webp" className="sr-only" onChange={(e) => { onReplace(e.target.files?.[0]); e.target.value = ""; }} />
               </label>
-              {el.picFill && <button className="h-9 rounded-lg border border-line px-2 text-sm text-muted hover:border-accent hover:text-accent" onClick={() => now({ picFill: undefined })}>Kaldır</button>}
+              {el.picFill && <button className="h-9 rounded-lg border border-line px-2 text-sm text-muted hover:border-accent hover:text-accent" onClick={() => now({ picFill: undefined, picView: undefined })}>Kaldır</button>}
             </div>
           )}
+          {el.shape !== "line" && el.picFill && !isHolder(el) && (() => {
+            const v = el.picView ?? { x: 0.5, y: 0.5, zoom: 1 };
+            return (
+              <div className="space-y-2 rounded-lg border border-line p-2">
+                <button onClick={() => onPlace(placing ? null : el.id)} aria-pressed={placing} className={`h-8 w-full rounded-md text-xs font-medium ${placing ? "bg-accent text-white" : "border border-line hover:border-accent hover:text-accent"}`}>{placing ? "Bitti" : "Tuvalde konumla"}</button>
+                {placing && <p className="text-xs text-muted">Sürükleyerek kaydırın, tekerlekle yakınlaştırın. Esc ile çıkın.</p>}
+                <Slider label="Yakınlaştırma" value={v.zoom} min={1} max={MAX_PIC_ZOOM} step={0.01} show={`%${Math.round(v.zoom * 100)}`} onChange={(zoom) => live({ picView: { ...v, zoom } })} onCommit={onCommit} />
+                <Slider label="Yatay konum" value={v.x} min={0} max={1} step={0.01} show={`%${Math.round(v.x * 100)}`} onChange={(x) => live({ picView: { ...v, x } })} onCommit={onCommit} />
+                <Slider label="Dikey konum" value={v.y} min={0} max={1} step={0.01} show={`%${Math.round(v.y * 100)}`} onChange={(y) => live({ picView: { ...v, y } })} onCommit={onCommit} />
+                {el.picView && <button onClick={() => now({ picView: undefined })} className="text-xs text-accent hover:underline">Ortala</button>}
+              </div>
+            );
+          })()}
           {el.shape === "line" || el.noFill || el.picFill ? null : el.fill.kind === "solid" ? (
             <Swatches swatches={swatches} value={el.fill.color} set={(color) => now({ fill: { kind: "solid", color } })} />
           ) : (

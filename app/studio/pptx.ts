@@ -4,7 +4,7 @@
 // Pictures are drawn to PNG at their box first (PowerPoint needs a raster next to SVG, and "cover" crops are exact).
 // Fonts aren't embedded: PowerPoint uses the same family if it is installed, otherwise its own substitute.
 import { LIBRARY_FONTS } from "@/lib/font-list";
-import { FORMATS, draw, type El, type Measure, type Prim } from "@/lib/studio";
+import { FORMATS, draw, picBox, type El, type Measure, type Prim } from "@/lib/studio";
 
 const PX = 13.333 / FORMATS.yatay.w; // inches per design pixel
 const hex = (c: string) => c.replace("#", "").toUpperCase();
@@ -53,8 +53,8 @@ async function pictureShape(e: Extract<El, { kind: "shape" }>): Promise<{ data: 
   } else path.roundRect(0, 0, e.w, e.h, Math.min(e.radius ?? 0, e.w / 2, e.h / 2));
   ctx.save();
   ctx.clip(path);
-  const s = Math.max(e.w / img.naturalWidth, e.h / img.naturalHeight);
-  ctx.drawImage(img, (e.w - img.naturalWidth * s) / 2, (e.h - img.naturalHeight * s) / 2, img.naturalWidth * s, img.naturalHeight * s);
+  const at = picBox({ x: 0, y: 0, w: e.w, h: e.h }, pic, e.picView);
+  ctx.drawImage(img, at.x, at.y, at.w, at.h);
   ctx.restore();
   if (e.stroke && line > 0) {
     ctx.strokeStyle = e.stroke.color;

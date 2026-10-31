@@ -5,7 +5,7 @@ import { LIBRARY_FONTS } from "./font-list.ts";
 import { THEMES } from "./themes.ts";
 import { ART_SHAPES } from "./studio-assets.ts";
 import assert from "node:assert/strict";
-import { FORMATS, SHAPES, TEMPLATES, registerFontCss, templatesOf, isHolder, aabb, alignEls, cleanEls, distributeEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type El, type Measure } from "./studio.ts";
+import { FORMATS, SHAPES, TEMPLATES, registerFontCss, templatesOf, isHolder, picBox, aabb, alignEls, cleanEls, distributeEls, fitText, fromTemplate, refit, shapeFrom, svgOf, inkOn, layout, rasterSize, parseFill, safeColor, safePicture, toSvg, type Design, type El, type Measure } from "./studio.ts";
 
 // Monospace stand-in for canvas measureText: every character is 0.55 em.
 const measure: Measure = (t, size) => t.length * size * 0.55;
@@ -351,4 +351,29 @@ test("picture holder: every library shape but a line can be one, and it stays on
     assert.ok(isHolder(cleanEls(JSON.parse(JSON.stringify([e])))[0]), id);
     assert.match(svgOf("kare", [e], measure), /<clipPath id="c\d+"><(rect|ellipse|polygon) /, id);
   }
+});
+
+test("picBox: always covers the shape, whatever the position and zoom; bad values fall back", () => {
+  const box = { x: 100, y: 200, w: 300, h: 100 };
+  const pic = { w: 800, h: 600 };
+  assert.deepEqual(picBox(box, pic), { x: 100, y: 137.5, w: 300, h: 225 });
+  for (const zoom of [1, 2.5, 4, 99, -3]) for (const x of [0, 0.3, 1, 7, -1]) for (const y of [0, 1]) {
+    const p = picBox(box, pic, { x, y, zoom });
+    assert.ok(p.x <= box.x + 1e-6 && p.y <= box.y + 1e-6, `${zoom} ${x} ${y}`);
+    assert.ok(p.x + p.w >= box.x + box.w - 1e-6 && p.y + p.h >= box.y + box.h - 1e-6, `${zoom} ${x} ${y}`);
+    assert.ok(Math.abs(p.w / p.h - 800 / 600) < 1e-9, "keeps its shape");
+  }
+  assert.deepEqual(picBox(box, pic, { x: Number.NaN, y: Number.NaN, zoom: Number.NaN }), picBox(box, pic));
+});
+
+test("picView: reaches the SVG and survives cleanEls within bounds; garbage is dropped", () => {
+  const pic = { src: REAL_PNG, w: 1, h: 1 };
+  const e = { ...shapeFrom("rect", 300, 300, 200, "#000000"), picFill: pic, picView: { x: 0, y: 1, zoom: 2 } };
+  const plain = svgOf("kare", [{ ...e, picView: undefined }], measure);
+  assert.notEqual(svgOf("kare", [e], measure), plain);
+  const clean = (v: unknown) => (cleanEls(JSON.parse(JSON.stringify([{ ...e, picView: v }])))[0] as typeof e).picView;
+  assert.deepEqual(clean({ x: 0, y: 1, zoom: 2 }), { x: 0, y: 1, zoom: 2 });
+  assert.deepEqual(clean({ x: 9, y: -9, zoom: 99 }), { x: 1, y: 0, zoom: 4 });
+  assert.equal(clean({ x: "a", y: 1, zoom: 1 }), undefined);
+  assert.equal(clean("x"), undefined);
 });

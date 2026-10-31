@@ -361,10 +361,21 @@ export type ImageEl = Common & { kind: "image"; pic: Picture; fit: "cover" | "co
  * rect (radius rounds the corners, up to a pill), ellipse, poly (points as 0–1 fractions of the box) or line (left to
  * right through the middle of the box, `arrow` heads). noFill: only the outline is drawn.
  */
+export type PicView = { x: number; y: number; zoom: number };
+export const MAX_PIC_ZOOM = 4;
+/** Where a shape's picture lies: covering the box at zoom 1, larger beyond; its overflow is what x and y move through. */
+export function picBox(box: { x: number; y: number; w: number; h: number }, pic: { w: number; h: number }, view?: PicView) {
+  const clamp = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
+  const s = Math.max(box.w / pic.w, box.h / pic.h) * clamp(view?.zoom, 1, MAX_PIC_ZOOM, 1);
+  const [w, h] = [pic.w * s, pic.h * s];
+  return { x: box.x - (w - box.w) * clamp(view?.x, 0, 1, 0.5), y: box.y - (h - box.h) * clamp(view?.y, 0, 1, 0.5), w, h };
+}
 export type ShapeKind = "rect" | "ellipse" | "poly" | "line";
 export type ShapeEl = Common & { kind: "shape"; fill: Fill; radius?: number; shape?: ShapeKind; points?: [number, number][]; stroke?: Stroke; noFill?: boolean; arrow?: "end" | "both";
   /** A picture filling the shape, cut to its outline and covering its box; it takes the fill's place while set. */
-  picFill?: Picture };
+  picFill?: Picture;
+  /** Which part of it shows: x, y 0-1 (0.5 centred), zoom 1 (just covers the shape) to MAX_PIC_ZOOM. */
+  picView?: PicView };
 export type El = TextEl | ImageEl | ShapeEl;
 
 /** Rotation (degrees around cx, cy) and mirroring of one element's primitives. */
@@ -399,7 +410,7 @@ const regular = (k: number, inner = 0): [number, number][] =>
     return [Math.round((0.5 + r * Math.cos(a)) * 1e4) / 1e4, Math.round((0.5 + r * Math.sin(a)) * 1e4) / 1e4];
   });
 /** A curved outline as a polygon (it stays one element, editable in PowerPoint too): `at` gives points in the 0-1 box. */
-const curve = (at: (t: number) => [number, number], steps = 48): [number, number][] =>
+const curve = (at: (t: number) => [number, number], steps = 64): [number, number][] =>
   Array.from({ length: steps }, (_, i) => {
     const [x, y] = at(i / steps);
     return [Math.round(x * 1e4) / 1e4, Math.round(y * 1e4) / 1e4];
@@ -656,7 +667,7 @@ export function draw(els: El[], measure: Measure): Prim[] {
     if (e.kind === "shape") {
       const fill = e.noFill ? null : e.fill;
       const picture = e.noFill || e.shape === "line" ? undefined : safePicture(e.picFill);
-      if (picture) base.picFill = { pic: picture, x: e.x, y: e.y, w: e.w, h: e.h };
+      if (picture) base.picFill = { pic: picture, ...picBox(e, picture, e.picView) };
       const stroke = e.stroke && e.stroke.width > 0 ? { ...e.stroke, color: safeColor(e.stroke.color, "#14263d") } : undefined;
       const shape = e.shape ?? "rect";
       if (shape === "ellipse") out.push({ ...base, kind: "ellipse", x: e.x, y: e.y, w: e.w, h: e.h, fill, stroke });
@@ -857,6 +868,12 @@ export function cleanEls(raw: unknown): El[] {
         ...(st && typeof st === "object" ? { stroke: { color: safeColor(st.color, "#14263d"), width: Math.min(200, Math.max(0, num(st.width, 2))), ...(st.dash === "dash" || st.dash === "dot" ? { dash: st.dash } : {}) } } : {}),
         ...(r.noFill === true ? { noFill: true } : {}),
         ...(storedPicture(r.picFill) ? { picFill: storedPicture(r.picFill) } : {}),
+        ...(() => {
+          const v = r.picView as Partial<PicView> | undefined;
+          return v && typeof v === "object" && [v.x, v.y, v.zoom].every((q) => typeof q === "number" && Number.isFinite(q))
+            ? { picView: { x: Math.min(1, Math.max(0, v.x as number)), y: Math.min(1, Math.max(0, v.y as number)), zoom: Math.min(MAX_PIC_ZOOM, Math.max(1, v.zoom as number)) } }
+            : {};
+        })(),
         ...(shape === "line" && (r.arrow === "end" || r.arrow === "both") ? { arrow: r.arrow } : {}),
       });
     }

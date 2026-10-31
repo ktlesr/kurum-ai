@@ -3,15 +3,17 @@
 // The studio canvas: the same primitives the export draws (lib/studio draw), as React SVG, plus selection, move,
 // resize handles, snapping guides and in-place text editing. Coordinates are design pixels (the SVG viewBox).
 import { useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { FORMATS, aabb, dashOf, draw, familyOf, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl, gradVector } from "@/lib/studio";
+import { FORMATS, aabb, dashOf, draw, familyOf, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl, gradVector, MAX_PIC_ZOOM, picBox, type PicView } from "@/lib/studio";
 import { spacingSnap, type GapMark } from "@/lib/snap";
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 type Box = { x: number; y: number; w: number; h: number };
 type Drag = {
-  mode: "move" | "resize" | "rotate" | "marquee"; id: string; handle?: Handle; px: number; py: number; box: Box; ratio: number; rot: number; moved: boolean;
+  mode: "move" | "resize" | "rotate" | "marquee" | "pan"; id: string; handle?: Handle; px: number; py: number; box: Box; ratio: number; rot: number; moved: boolean;
   /** move: every chosen unlocked element's starting place (they move together); marquee: Shift adds to the choice. */
   group?: { id: string; x: number; y: number }[]; add?: boolean;
+  /** pan: where the picture was at the start. */
+  view?: PicView;
   /** marquee started on a locked element (the background): a click without dragging chooses that element. */
   under?: string;
 };
@@ -136,11 +138,13 @@ interface Props {
   onEditing: (id: string | null) => void;
   /** Double click on a picture holder: choose its picture. */
   onFillPicture?: (id: string) => void;
+  /** The shape whose picture is being placed: dragging moves the picture, not the shape; the wheel zooms it. */
+  placing?: string | null;
   /** Right click: the element under the pointer (null: the empty canvas) and the screen point for the menu. */
   onMenu?: (id: string | null, x: number, y: number) => void;
 }
 
-export default function Editor({ format, els, measure, selected, onSelect, onChange, editing, onEditing, onFillPicture, onMenu }: Props) {
+export default function Editor({ format, els, measure, selected, onSelect, onChange, editing, onEditing, onFillPicture, placing, onMenu }: Props) {
   const { w: W, h: H } = FORMATS[format];
   const uid = useId().replace(/:/g, "");
   const svg = useRef<SVGSVGElement>(null);
@@ -160,6 +164,44 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
     return () => ro.disconnect();
   }, [W]);
 
+  // The wheel zooms the picture being placed. Native: React's wheel listener can't stop the page scrolling.
+  const wheelDone = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wheelSent = useRef<PicView | null>(null);
+  const changeNow = useRef(onChange);
+  useLayoutEffect(() => {
+    changeNow.current = onChange;
+  });
+  useEffect(() => {
+    const s = svg.current;
+    if (!s || !placing) return;
+    const onWheel = (e: WheelEvent) => {
+      const el = live.current.find((x) => x.id === placing);
+      if (el?.kind !== "shape") return;
+      e.preventDefault();
+      const v = el.picView ?? { x: 0.5, y: 0.5, zoom: 1 };
+      const zoom = Math.min(MAX_PIC_ZOOM, Math.max(1, v.zoom * Math.exp(-e.deltaY * 0.0015)));
+      const picView = { ...v, zoom };
+      changeNow.current(live.current.map((x) => (x.id === placing ? ({ ...x, picView } as El) : x)), false);
+      // One undo step for one turn of the wheel; none if an undo or another slide came first.
+      if (wheelDone.current) clearTimeout(wheelDone.current);
+      wheelSent.current = picView;
+      wheelDone.current = setTimeout(finish, 300);
+    };
+    const finish = () => {
+      wheelDone.current = null;
+      const cur = live.current.find((x) => x.id === placing);
+      if (cur?.kind === "shape" && cur.picView === wheelSent.current) changeNow.current(live.current, true);
+    };
+    s.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      s.removeEventListener("wheel", onWheel);
+      if (wheelDone.current) {
+        clearTimeout(wheelDone.current);
+        finish();
+      }
+    };
+  }, [placing]);
+
   const point = (e: { clientX: number; clientY: number }) => {
     const s = svg.current!;
     const m = s.getScreenCTM();
@@ -178,9 +220,10 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
     const ids = mode === "move" && selected.includes(el.id) ? selected : [el.id];
     if (ids !== selected) onSelect(ids);
     if (el.locked || editing === el.id) return;
+    if (mode === "move" && placing === el.id) mode = "pan";
     const p = point(e);
     const group = mode === "move" ? live.current.filter((x) => ids.includes(x.id) && !x.locked).map((x) => ({ id: x.id, x: x.x, y: x.y })) : undefined;
-    drag.current = { mode, id: el.id, handle, px: p.x, py: p.y, box: { x: el.x, y: el.y, w: el.w, h: el.h }, ratio: el.w / el.h, rot: rotOf(el), moved: false, group };
+    drag.current = { mode, id: el.id, handle, px: p.x, py: p.y, box: { x: el.x, y: el.y, w: el.w, h: el.h }, ratio: el.w / el.h, rot: rotOf(el), moved: false, group, view: el.kind === "shape" ? el.picView : undefined };
   };
   /** On the empty canvas: a box that chooses what it fully covers. */
   const startMarquee = (e: RPointerEvent, under?: string) => {
@@ -209,6 +252,17 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
     }
     const el = live.current.find((x) => x.id === d.id);
     if (!el) return;
+    if (d.mode === "pan") {
+      if (el.kind !== "shape" || !el.picFill) return;
+      // The picture follows the pointer, in the shape's own turned and mirrored axes.
+      const t = turn(dx, dy, 0, 0, -d.rot);
+      const v = d.view ?? { x: 0.5, y: 0.5, zoom: 1 };
+      const at = picBox(d.box, el.picFill, { ...v, x: 0.5, y: 0.5 });
+      const next = (from: number, by: number, over: number, flip?: boolean) => (over > 0 ? Math.min(1, Math.max(0, from - ((flip ? -by : by) / over))) : from);
+      const picView = { zoom: v.zoom, x: next(v.x, t.x, at.w - d.box.w, el.flipX), y: next(v.y, t.y, at.h - d.box.h, el.flipY) };
+      onChange(live.current.map((x) => (x.id === d.id ? ({ ...x, picView } as El) : x)), false);
+      return;
+    }
     const thr = 8 * scale;
     const moving = new Set(d.group?.map((g) => g.id) ?? [d.id]);
     const others = live.current.filter((x) => !moving.has(x.id) && !x.locked);
@@ -391,7 +445,7 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
           height={el.h}
           transform={rotAttr(el)}
           fill="transparent"
-          className={el.locked ? "" : "cursor-move hover:stroke-[#3b82f6]"}
+          className={el.locked ? "" : placing === el.id ? "cursor-grab" : "cursor-move hover:stroke-[#3b82f6]"}
           strokeWidth={stroke}
           vectorEffect="non-scaling-stroke"
           onPointerDown={(e) => start(e, el, "move")}
@@ -450,7 +504,7 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
           <rect x={sel.x} y={sel.y} width={sel.w} height={sel.h} fill="none" stroke="#3b82f6" strokeWidth={stroke * 1.4} strokeDasharray={sel.locked ? `${4 * scale} ${4 * scale}` : undefined} pointerEvents="none" />
           {!sel.locked &&
             editing !== sel.id &&
-            HANDLES.map((hd) => {
+            (placing === sel.id ? [] : HANDLES).map((hd) => {
               const cx = sel.x + (hd.includes("w") ? 0 : hd.includes("e") ? sel.w : sel.w / 2);
               const cy = sel.y + (hd.includes("n") ? 0 : hd.includes("s") ? sel.h : sel.h / 2);
               return (
@@ -470,7 +524,7 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
               );
             })}
           {!sel.locked && editing !== sel.id && (
-            <g style={{ cursor: "grab" }} onPointerDown={(e) => start(e, sel, "rotate")}>
+            <g style={{ cursor: "grab", display: placing === sel.id ? "none" : undefined }} onPointerDown={(e) => start(e, sel, "rotate")}>
               <title>Döndür (Shift: 15° adım)</title>
               <line x1={sel.x + sel.w / 2} x2={sel.x + sel.w / 2} y1={sel.y} y2={sel.y - 26 * scale} stroke="#3b82f6" strokeWidth={stroke} pointerEvents="none" />
               <circle cx={sel.x + sel.w / 2} cy={sel.y - 30 * scale} r={hs * 0.6} fill="#ffffff" stroke="#3b82f6" strokeWidth={stroke} />
