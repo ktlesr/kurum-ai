@@ -1769,7 +1769,7 @@ export default function Studio({ username }: { username: string }) {
           {/* Stays mounted: it works for minutes on a deck, and leaving the panel mustn't cancel that. */}
           {mode === "sunum" && !deck && (
             <section className={`${section} ${open === "deck" ? "" : "hidden"}`}>
-              <DeckPanel docs={docs} onStart={(t: DeckTemplate, i: TemplateInfo, s: El[][]) => startDeck(t, i.primary, s)} onNote={(kind, text) => setNote({ kind, text })} />
+              <DeckPanel docs={docs} measure={font?.measure} username={username} onStart={(t: DeckTemplate, i: TemplateInfo, s: El[][]) => startDeck(t, i.primary, s)} onNote={(kind, text) => setNote({ kind, text })} />
             </section>
           )}
           {panel()}

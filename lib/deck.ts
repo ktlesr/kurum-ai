@@ -141,7 +141,14 @@ function json(answer: string): unknown {
     return null;
   }
 }
-const line = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim() : "").slice(0, max).trim();
+/** Cut at a word's end: a title that stops short reads as a shorter title, one cut mid-word reads as a fault. */
+const line = (v: unknown, max: number) => {
+  const s = typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim() : "";
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const at = cut.lastIndexOf(" ");
+  return (at > max * 0.5 ? cut.slice(0, at) : cut).trim();
+};
 
 export interface OutlineSlide { layout: string; title: string; points: string[] }
 /** The outline: known layouts only (others get the next one in turn), at most `count` slides. */

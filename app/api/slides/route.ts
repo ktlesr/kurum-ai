@@ -3,16 +3,20 @@
 // the answers are validated against it. A document is the user's own and stays on the institution's model.
 import { admission, busy, tooMany } from "@/lib/admission";
 import { requireApiUser } from "@/lib/auth";
+import { PLAN_PROMPT, SECTION_PROMPT, completeGroups, parseBlocks, parsePlan, pickSource, sampleSource, verifyBlocks } from "@/lib/deck-doc";
 import { FROM_DOC, OUTLINE_PROMPT, SLIDE_PROMPT, parseOutline, parseSlide, type LayoutSlot } from "@/lib/deck";
 import { readLimited } from "@/lib/filetype";
-import { modelConfig, providerOf } from "@/lib/model-config";
+import { NUM_CTX, modelConfig, providerOf } from "@/lib/model-config";
 import { retrieve } from "@/lib/rag";
 import { getDoc } from "@/lib/server";
 
 const MAX_BODY = 96 * 1024;
 const WHOLE_DOC = 14_000;
+/** A section's source and answer share the model's context: long lists need room to be written out whole. */
+const SECTION_ANSWER = 5_000;
+const SECTION_SOURCE = Math.min(24_000, Math.floor((NUM_CTX - SECTION_ANSWER - 1_000) * 2.2)); // 2.2: the cautious characters per token
 const fail = (error: string, status: number) => Response.json({ error }, { status });
-const clean = (s: string) => s.replace(/<\/?(konu|belge|slayt|duzenler)/gi, "< $1");
+const clean = (s: string) => s.replace(/<\/?(konu|belge|slayt|duzenler|istek|basliklar|bolum|diger)/gi, "< $1");
 const str = (v: unknown, max: number) => (typeof v === "string" ? clean(v.trim()).slice(0, max) : "");
 
 export async function POST(req: Request) {
@@ -39,8 +43,10 @@ export async function POST(req: Request) {
   const chat = providerOf(cfg.chat);
   if (!(await chat.healthy())) return fail("Model sunucusu çalışmıyor. Yöneticinize bildirin.", 503);
 
+  let truncated = false; // the model stopped at its length limit
   const ask = async (system: string, user: string, maxTokens: number) => {
     const r = await admission.model.run(() => chat.chat({ model: cfg.defaultModel, think: false, maxTokens, signal: req.signal, messages: [{ role: "system", content: system }, { role: "user", content: user }] }), req.signal);
+    truncated ||= !!r.truncated;
     return r.text;
   };
   const source = async (query: string) => {
@@ -50,6 +56,29 @@ export async function POST(req: Request) {
   };
 
   try {
+    if (b.step === "plan") {
+      if (!doc) return fail("Belge bulunamadı.", 400);
+      const heads = doc.text.split("\n").filter((l) => /^#{1,3}\s/.test(l)).slice(0, 60).join("\n") || doc.text.slice(0, 6_000); // no headings: its beginning
+      const plan = parsePlan(await ask(PLAN_PROMPT, `<istek>\n${brief || "Belgenin ana konularını anlatan bir sunum"}\n</istek>\n\n<basliklar>\n${clean(heads)}\n</basliklar>`, 1000));
+      // A plan cut at the length limit has lost topics the user asked for.
+      return plan && !truncated ? Response.json({ plan }) : fail("Model uygun bir plan döndürmedi. Tekrar deneyin.", 502);
+    }
+    if (b.step === "section") {
+      if (!doc) return fail("Belge bulunamadı.", 400);
+      const title = str(b.title, 120);
+      const query = `${title} ${str(b.query, 200)}`;
+      if (!title) return fail("Bölüm adı yok.", 400);
+      const others = (Array.isArray(b.others) ? b.others : []).slice(0, 20).map((o) => str(o, 120)).filter(Boolean).join("; ");
+      const asked = (part: string) => ask(SECTION_PROMPT, `<bolum>${title}</bolum>\n<diger>${others}</diger>\n\n<belge>\n${clean(part)}\n</belge>`, SECTION_ANSWER);
+      let parsed = parseBlocks(await asked(pickSource(doc.text, query, SECTION_SOURCE)));
+      // The search can miss (the document in another language, other words): one more look over all of it before saying "not there".
+      if (parsed && !parsed.blocks.length) {
+        parsed = parseBlocks(await asked(sampleSource(doc.text, SECTION_SOURCE))) ?? parsed;
+      }
+      if (!parsed) return fail("Model bu bölüm için uygun içerik döndürmedi.", 502);
+      const { blocks, dropped } = verifyBlocks(completeGroups(parsed.blocks, doc.text, query), doc.text);
+      return Response.json({ title, source: parsed.source, blocks, dropped, cut: truncated || parsed.capped });
+    }
     if (b.step === "outline") {
       const layouts = (Array.isArray(b.layouts) ? b.layouts : []).slice(0, 40).flatMap((l) => {
         const id = typeof l?.id === "string" && /^[\w-]{1,80}$/.test(l.id) ? l.id : "";

@@ -4,8 +4,11 @@
 // edited by the studio's canvas and inspector.
 import { memo, useId, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Copy, Loader2, Plus, Presentation, Sparkles, Trash2, X } from "lucide-react";
+import { composeDeck } from "@/lib/deck-compose";
+import type { DeckPlan, SectionContent } from "@/lib/deck-doc";
 import { slideFrom, type DeckTemplate, type Layout, type TemplateInfo } from "@/lib/deck";
 import { draw, type El, type Measure } from "@/lib/studio";
+import { ensureFont } from "./fonts";
 import { PrimView } from "./editor";
 
 /** A slide drawn small: the same primitives as the canvas, with the fonts the page has loaded. */
@@ -40,7 +43,9 @@ async function step<T>(body: unknown, signal: AbortSignal): Promise<T> {
   }
 }
 
-export function DeckPanel({ docs, onStart, onNote }: {
+export function DeckPanel({ docs, measure, username, onStart, onNote }: {
+  measure?: Measure;
+  username?: string;
   docs: { id: string; name: string }[];
   onStart: (template: DeckTemplate, info: TemplateInfo, slides: El[][]) => void;
   onNote: (kind: "ok" | "error", text: string) => void;
@@ -71,11 +76,44 @@ export function DeckPanel({ docs, onStart, onNote }: {
       onNote("error", "Şablon yüklenemedi.");
     }
   };
+  /** From a document: its sections, each taken from the document and checked, then laid out by the content. */
+  const fromDoc = async (ac: AbortController) => {
+    const zafer = index.find((t) => t.id === "zafer");
+    if (!zafer || !measure) throw new Error("Tasarım henüz yüklenmedi; biraz sonra tekrar deneyin.");
+    setProgress("Bölümler belirleniyor…");
+    await Promise.allSettled(["playfair-display", "work-sans"].map((id) => ensureFont(id, username ?? "")));
+    const { plan } = await step<{ plan: DeckPlan }>({ step: "plan", brief, docId }, ac.signal);
+    const sections: SectionContent[] = [];
+    for (const [i, s] of plan.sections.entries()) {
+      setProgress(`Bölüm ${i + 1} / ${plan.sections.length}: ${s.title}`);
+      const others = plan.sections.filter((o) => o !== s).map((o) => o.title);
+      try {
+        sections.push(await step<SectionContent>({ step: "section", docId, title: s.title, query: s.query, others }, ac.signal));
+      } catch (e) {
+        if (ac.signal.aborted) throw e;
+        sections.push({ title: s.title, source: "", blocks: [], dropped: [] }); // said below; the others aren't lost with it
+      }
+    }
+    const name = docs.find((d) => d.id === docId)?.name.replace(/\.[^.]+$/, "") ?? "";
+    const { slides, missing, left } = composeDeck(plan, sections, name, measure);
+    const dropped = sections.reduce((n, s) => n + s.dropped.length, 0);
+    if (missing.length === plan.sections.length) throw new Error("Belgede istenen konularda bilgi bulunamadı.");
+    onStart(await loadTemplate("zafer"), zafer, slides);
+    const notes = [
+      `${slides.length} slayt hazır. İçerik belgeden alındı; göndermeden önce kontrol edin.`,
+      missing.length ? `Belgede bulunamayan bölümler: ${missing.join(", ")}.` : "",
+      left.length ? `Slayt sınırına ulaşıldı, sunuma tam sığmayan bölümler: ${left.join(", ")}.` : "",
+      dropped ? `Belgeyle uyuşmayan ${dropped} bilgi çıkarıldı.` : "",
+      sections.some((s) => s.cut) ? `Şu bölümler model sınırına takıldı, eksik olabilir: ${sections.filter((s) => s.cut).map((s) => s.title).join(", ")}.` : "",
+    ];
+    onNote(missing.length || left.length || sections.some((s) => s.cut) ? "error" : "ok", notes.filter(Boolean).join(" "));
+  };
   const generate = async () => {
     if (!info) return;
     const ac = (abort.current = new AbortController());
     setProgress("Taslak hazırlanıyor…");
     try {
+      if (docId) return await fromDoc(ac);
       const t = await loadTemplate(tpl);
       const { slides } = await step<{ slides: { layout: string; title: string; points: string[] }[] }>({ step: "outline", brief, docId: docId || undefined, count, layouts: t.layouts.map((l) => ({ id: l.id, desc: l.desc })) }, ac.signal);
       const out: El[][] = [];
