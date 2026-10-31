@@ -173,6 +173,26 @@ test("refit: an edited design keeps its edits in another format", () => {
   assert.equal(refit(els, "kare", "kare"), els);
 });
 
+test("shapes: outline styles draw no fill, keep it for later, and survive cleanEls", () => {
+  for (const id of Object.keys(SHAPES) as (keyof typeof SHAPES)[]) {
+    for (const style of ["outline", "dash"] as const) {
+      const e = shapeFrom(id, 540, 540, 400, "#2e5e8c", style);
+      assert.equal(e.noFill, true, id);
+      assert.equal(e.fill.kind, "solid", id);
+      assert.equal(!!e.stroke?.dash, style === "dash", id);
+      const svg = svgOf("kare", [e], measure);
+      assert.ok(!/NaN|undefined/.test(svg), `${id}: ${svg}`);
+      assert.match(svg, /stroke="#2e5e8c"/, id);
+      assert.deepEqual(cleanEls(JSON.parse(JSON.stringify([e])))[0].kind, "shape", id);
+      const [back] = cleanEls(JSON.parse(JSON.stringify([e]))) as (typeof e)[];
+      assert.equal(back.noFill, true, id);
+      assert.deepEqual(back.stroke, e.stroke, id);
+      if (e.points) assert.deepEqual(back.points, e.points, id);
+    }
+    for (const p of shapeFrom(id, 0, 0, 100, "#000000").points ?? []) assert.ok(p[0] >= 0 && p[0] <= 1 && p[1] >= 0 && p[1] <= 1, `${id} inside its box`);
+  }
+});
+
 test("shapes: every library shape draws, round-trips through cleanEls, and rotation/flip/shadow reach the SVG", () => {
   for (const id of Object.keys(SHAPES) as (keyof typeof SHAPES)[]) {
     const e = { ...shapeFrom(id, 540, 540, 400, "#2e5e8c"), rotation: 30, flipX: true, shadow: { color: "#000000", blur: 20, x: 0, y: 8, opacity: 0.3 } };

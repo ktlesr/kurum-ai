@@ -30,7 +30,7 @@ import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, 
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, SHAPES, TEMPLATES, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type ShapeId,
+  DEFAULT_BRAND, FORMATS, LIMITS, SHAPES, TEMPLATES, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, type ShapeId, type ShapeStyle,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
@@ -383,7 +383,8 @@ export default function Studio({ username }: { username: string }) {
   };
   const addText = (size = 64, weight = 700, name = "Metin") =>
     add({ id: newId(), kind: "text", name, x: W * 0.1, y: H * 0.42, w: W * 0.8, h: size * 1.4 * u, text: name === "Metin" ? "Yeni metin" : name, size: size * u, weight, color: brand.primary, align: "start", leading: 1.15, tracking: 0, auto: true } satisfies TextEl);
-  const addShape = (id: ShapeId = "rounded") => add(shapeFrom(id, W / 2, H / 2, 360 * u, brand.accent));
+  const [shapeStyle, setShapeStyle] = useState<ShapeStyle>("fill");
+  const addShape = (id: ShapeId = "rounded", style: ShapeStyle = "fill") => add(shapeFrom(id, W / 2, H / 2, 360 * u, brand.accent, style));
   /** Every way out of the design, in one menu under the button. */
   const downloadMenu = (at: HTMLElement) => {
     const r = at.getBoundingClientRect();
@@ -1222,10 +1223,15 @@ export default function Studio({ username }: { username: string }) {
     if (open === "elements") return (
       <section className={section}>
         <h3 className={heading}>Şekiller</h3>
+        <div role="group" aria-label="Şekil biçimi" className="grid grid-cols-3 gap-1 rounded-lg bg-subtle p-1">
+          {([["fill", "Dolu"], ["outline", "Kontur"], ["dash", "Kesikli"]] as const).map(([s, label]) => (
+            <button key={s} onClick={() => setShapeStyle(s)} aria-pressed={shapeStyle === s} className={`h-7 rounded-md text-xs font-medium ${shapeStyle === s ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"}`}>{label}</button>
+          ))}
+        </div>
         <div className="grid grid-cols-4 gap-1.5">
           {(Object.keys(SHAPES) as ShapeId[]).map((id) => (
-            <button key={id} onClick={() => addShape(id)} aria-label={`${SHAPES[id].label} ekle`} title={SHAPES[id].label} className="grid aspect-square place-items-center rounded-lg border border-line text-muted hover:border-accent hover:text-accent [&_svg]:size-7">
-              <ShapeIcon id={id} />
+            <button key={id} onClick={() => addShape(id, shapeStyle)} aria-label={`${SHAPES[id].label} ekle`} title={SHAPES[id].label} className="grid aspect-square place-items-center rounded-lg border border-line text-muted hover:border-accent hover:text-accent [&_svg]:size-7">
+              <ShapeIcon id={id} style={shapeStyle} />
             </button>
           ))}
         </div>
@@ -1902,16 +1908,17 @@ function swapShape(e: ShapeEl, id: ShapeId): Partial<ShapeEl> {
 }
 
 /** A small preview of a library shape for the menu. */
-function ShapeIcon({ id }: { id: ShapeId }) {
+function ShapeIcon({ id, style }: { id: ShapeId; style: ShapeStyle }) {
+  const ink = style === "fill" ? { fill: "currentColor" } : { fill: "none", stroke: "currentColor", strokeWidth: 1.1, strokeLinejoin: "round" as const, ...(style === "dash" ? { strokeDasharray: "2 1.3" } : {}) };
   const d = SHAPES[id] as { shape: string; ratio: number; round?: number; points?: readonly (readonly [number, number])[] };
   const [w, h] = d.shape === "line" ? [14, 2] : d.ratio >= 1 ? [14, 14 / d.ratio] : [14 * d.ratio, 14];
   const [x, y] = [(16 - w) / 2, (16 - h) / 2];
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden className="text-current">
-      {d.shape === "ellipse" ? <ellipse cx="8" cy="8" rx={w / 2} ry={h / 2} fill="currentColor" />
-        : d.shape === "line" ? <line x1="1" x2="15" y1="8" y2="8" stroke="currentColor" strokeWidth="1.6" markerEnd={undefined} />
-        : d.points ? <polygon points={d.points.map(([px, py]) => `${x + px * w},${y + py * h}`).join(" ")} fill="currentColor" />
-        : <rect x={x} y={y} width={w} height={h} rx={d.round ? Math.min(w, h) * d.round : 0} fill="currentColor" />}
+      {d.shape === "ellipse" ? <ellipse cx="8" cy="8" rx={w / 2} ry={h / 2} {...ink} />
+        : d.shape === "line" ? <line x1="1" x2="15" y1="8" y2="8" stroke="currentColor" strokeWidth="1.6" strokeDasharray={style === "dash" ? "2.6 1.6" : undefined} />
+        : d.points ? <polygon points={d.points.map(([px, py]) => `${x + px * w},${y + py * h}`).join(" ")} {...ink} />
+        : <rect x={x} y={y} width={w} height={h} rx={d.round ? Math.min(w, h) * d.round : 0} {...ink} />}
       {id === "arrowLine" && <polygon points="15,8 11,5.5 11,10.5" fill="currentColor" />}
     </svg>
   );

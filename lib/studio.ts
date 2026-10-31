@@ -368,6 +368,23 @@ const regular = (k: number, inner = 0): [number, number][] =>
     const a = -Math.PI / 2 + (i * Math.PI * 2) / (inner ? 2 * k : k);
     return [Math.round((0.5 + r * Math.cos(a)) * 1e4) / 1e4, Math.round((0.5 + r * Math.sin(a)) * 1e4) / 1e4];
   });
+/** A curved outline as a polygon (it stays one element, editable in PowerPoint too): `at` gives points in the 0-1 box. */
+const curve = (at: (t: number) => [number, number], steps = 48): [number, number][] =>
+  Array.from({ length: steps }, (_, i) => {
+    const [x, y] = at(i / steps);
+    return [Math.round(x * 1e4) / 1e4, Math.round(y * 1e4) / 1e4];
+  });
+const TAU = Math.PI * 2;
+const heart = curve((t) => {
+  const a = t * TAU;
+  return [0.5 + (16 * Math.sin(a) ** 3) / 34, 0.46 - (13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a)) / 34];
+});
+const drop = curve((t) => {
+  const a = t * TAU; // the point at the top, a circle below
+  return [0.5 + 0.42 * Math.sin(a) * Math.sin(a / 2) ** 1.5, 0.5 - 0.5 * Math.cos(a)];
+});
+const half: [number, number][] = [...curve((t) => [0.5 + 0.5 * Math.cos(Math.PI + t * Math.PI), 1 + Math.sin(Math.PI + t * Math.PI)], 32), [1, 1]];
+const quarter: [number, number][] = [[0, 1], ...curve((t) => [Math.sin((t * Math.PI) / 2), 1 - Math.cos((t * Math.PI) / 2)], 24), [1, 1]];
 export const SHAPES = {
   rect: { label: "Dikdörtgen", shape: "rect", ratio: 1.6 },
   rounded: { label: "Yuvarlak köşeli", shape: "rect", ratio: 1.6, round: 0.18 },
@@ -387,13 +404,34 @@ export const SHAPES = {
   trapezoid: { label: "Yamuk", shape: "poly", ratio: 1.6, points: [[0.2, 0], [0.8, 0], [1, 1], [0, 1]] },
   plus: { label: "Artı", shape: "poly", ratio: 1, points: [[0.35, 0], [0.65, 0], [0.65, 0.35], [1, 0.35], [1, 0.65], [0.65, 0.65], [0.65, 1], [0.35, 1], [0.35, 0.65], [0, 0.65], [0, 0.35], [0.35, 0.35]] },
   bubble: { label: "Konuşma balonu", shape: "poly", ratio: 1.4, points: [[0, 0], [1, 0], [1, 0.75], [0.4, 0.75], [0.2, 1], [0.22, 0.75], [0, 0.75]] },
+  heptagon: { label: "Yedigen", shape: "poly", ratio: 1, points: regular(7) },
+  decagon: { label: "Ongen", shape: "poly", ratio: 1, points: regular(10) },
+  star4: { label: "Dört köşeli yıldız", shape: "poly", ratio: 1, points: regular(4, 0.35) },
+  star6: { label: "Altı köşeli yıldız", shape: "poly", ratio: 1, points: regular(6, 0.58) },
+  star8: { label: "Sekiz köşeli yıldız", shape: "poly", ratio: 1, points: regular(8, 0.62) },
+  seal: { label: "Mühür", shape: "poly", ratio: 1, points: regular(20, 0.86) },
+  heart: { label: "Kalp", shape: "poly", ratio: 1.08, points: heart },
+  drop: { label: "Damla", shape: "poly", ratio: 0.78, points: drop },
+  semicircle: { label: "Yarım daire", shape: "poly", ratio: 2, points: half },
+  quarter: { label: "Çeyrek daire", shape: "poly", ratio: 1, points: quarter },
+  shield: { label: "Kalkan", shape: "poly", ratio: 0.84, points: [[0.5, 0], [1, 0.14], [1, 0.52], [0.86, 0.75], [0.5, 1], [0.14, 0.75], [0, 0.52], [0, 0.14]] },
+  ribbon: { label: "Şerit", shape: "poly", ratio: 2.6, points: [[0, 0], [1, 0], [0.92, 0.5], [1, 1], [0, 1], [0.08, 0.5]] },
+  tag: { label: "Etiket", shape: "poly", ratio: 1.8, points: [[0, 0], [0.76, 0], [1, 0.5], [0.76, 1], [0, 1]] },
+  flag: { label: "Bayrak", shape: "poly", ratio: 0.8, points: [[0, 0], [1, 0], [1, 1], [0.5, 0.78], [0, 1]] },
+  doubleArrow: { label: "Çift yönlü ok", shape: "poly", ratio: 2.2, points: [[0, 0.5], [0.22, 0], [0.22, 0.3], [0.78, 0.3], [0.78, 0], [1, 0.5], [0.78, 1], [0.78, 0.7], [0.22, 0.7], [0.22, 1]] },
+  step: { label: "Süreç adımı", shape: "poly", ratio: 2.4, points: [[0, 0], [0.84, 0], [1, 0.5], [0.84, 1], [0, 1]] },
+  cross: { label: "Çarpı", shape: "poly", ratio: 1, points: [[0.2, 0], [0.5, 0.3], [0.8, 0], [1, 0.2], [0.7, 0.5], [1, 0.8], [0.8, 1], [0.5, 0.7], [0.2, 1], [0, 0.8], [0.3, 0.5], [0, 0.2]] },
+  corner: { label: "Köşe", shape: "poly", ratio: 1, points: [[0, 0], [1, 0], [1, 0.28], [0.28, 0.28], [0.28, 1], [0, 1]] },
+  bubbleRight: { label: "Sağ konuşma balonu", shape: "poly", ratio: 1.4, points: [[0, 0], [1, 0], [1, 0.75], [0.8, 0.75], [0.78, 1], [0.6, 0.75], [0, 0.75]] },
   line: { label: "Çizgi", shape: "line", ratio: 12 },
   arrowLine: { label: "Oklu çizgi", shape: "line", ratio: 12, arrow: "end" },
 } as const satisfies Record<string, { label: string; shape: ShapeKind; ratio: number; round?: number; points?: [number, number][]; arrow?: "end" | "both" }>;
 export type ShapeId = keyof typeof SHAPES;
+/** How a library shape starts: filled, or only its outline, plain or dashed. */
+export type ShapeStyle = "fill" | "outline" | "dash";
 
 /** A new shape from the library, `size` on its longer side, centred on (cx, cy). */
-export function shapeFrom(id: ShapeId, cx: number, cy: number, size: number, color: string): ShapeEl {
+export function shapeFrom(id: ShapeId, cx: number, cy: number, size: number, color: string, style: ShapeStyle = "fill"): ShapeEl {
   const d: { label: string; shape: ShapeKind; ratio: number; round?: number; points?: readonly (readonly [number, number])[]; arrow?: "end" | "both" } = SHAPES[id];
   const isLine = d.shape === "line";
   const w = d.ratio >= 1 ? size : size * d.ratio;
@@ -403,7 +441,9 @@ export function shapeFrom(id: ShapeId, cx: number, cy: number, size: number, col
     ...(d.shape === "rect" ? {} : { shape: d.shape }),
     ...(d.round ? { radius: Math.min(w, h) * d.round } : {}),
     ...(d.points ? { points: d.points.map(([x, y]) => [x, y] as [number, number]) } : {}),
-    ...(isLine ? { stroke: { color, width: Math.max(2, size / 60) }, noFill: true } : {}),
+    ...(isLine ? { stroke: { color, width: Math.max(2, size / 60), ...(style === "dash" ? { dash: "dash" as const } : {}) }, noFill: true } : {}),
+    // The fill colour stays underneath, so "Dolgu" brings it back.
+    ...(!isLine && style !== "fill" ? { stroke: { color, width: Math.max(3, size / 50), ...(style === "dash" ? { dash: "dash" as const } : {}) }, noFill: true } : {}),
     ...(d.arrow ? { arrow: d.arrow } : {}),
   };
 }
