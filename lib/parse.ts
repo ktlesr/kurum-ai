@@ -81,14 +81,34 @@ async function parseRaw(name: string, buf: Buffer, onProgress: (p: Progress) => 
   }
 }
 
-async function parsePdf(buf: Buffer): Promise<Parsed> {
+/** `signal` releases the caller at once, while loading too, and tears the parser down as soon as it has one. */
+export async function parsePdf(buf: Buffer, signal?: AbortSignal): Promise<Parsed> {
+  if (!signal) return readPdf(buf);
+  let onAbort = () => {};
+  const stopped = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([readPdf(buf, signal), stopped]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
+async function readPdf(buf: Buffer, signal?: AbortSignal): Promise<Parsed> {
   // Count pages before extracting any text, so a 10,000-page file is refused cheaply.
   const pdf = await getDocumentProxy(new Uint8Array(buf));
   let totalPages: number, text: string[];
+  const stop = () => void pdf.loadingTask.destroy().catch(() => {});
   try {
+    signal?.throwIfAborted();
+    signal?.addEventListener("abort", stop, { once: true });
     if (pdf.numPages > MAX_PAGES) throw new UserError(tooManyPages());
     ({ totalPages, text } = await extractText(pdf, { mergePages: false }));
   } finally {
+    signal?.removeEventListener("abort", stop);
     await pdf.loadingTask.destroy(); // we opened it, so we close it (unpdf only cleans up documents it opened itself)
   }
   const body = text

@@ -213,7 +213,7 @@ function getSession(): Promise<Session | null> {
  * downloads, service workers and permissions are off; the context is thrown away after one page. With `site`,
  * the page must still be on that site after its redirects.
  */
-export async function render(raw: string, signal: AbortSignal, opts: { site?: string } = {}): Promise<Page> {
+export async function render(raw: string, signal: AbortSignal, opts: { site?: string; whole?: boolean } = {}): Promise<Page> {
   const s = await getSession();
   if (!s) throw new WebError("no_browser");
   // Every context gets the proxy: there is no context without it (and in the container no other way out at all).
@@ -255,7 +255,7 @@ export async function render(raw: string, signal: AbortSignal, opts: { site?: st
     if (strayed || page.url() !== url.href) throw new WebError(strayed ? "offsite" : "navigated");
     const { title, text, links } = htmlToText(html, url);
     if (isBlockPage(title, text)) throw new WebError("blocked");
-    return { url: url.href, title: title.slice(0, 200), text: text.slice(0, MAX_CHARS), links, html: true };
+    return { url: url.href, title: title.slice(0, 200), text: opts.whole ? text : text.slice(0, MAX_CHARS), links, html: true };
   } catch (e) {
     if (signal.aborted) throw signal.reason ?? e;
     throw e;
@@ -270,7 +270,7 @@ export async function render(raw: string, signal: AbortSignal, opts: { site?: st
  * A page for the model: read directly first (type, size and address checks, data files as they are), then, when
  * it's HTML and a browser is available, rendered with its scripts. Rendering failing keeps the direct read.
  */
-export async function readWeb(raw: string, signal: AbortSignal, opts: { site?: string } = {}): Promise<Page> {
+export async function readWeb(raw: string, signal: AbortSignal, opts: { site?: string; whole?: boolean } = {}): Promise<Page> {
   let p: Page;
   try {
     p = await readPage(raw, signal, opts);

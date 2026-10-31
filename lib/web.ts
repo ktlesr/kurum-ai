@@ -231,7 +231,7 @@ export interface Page { url: string; title: string; text: string; links: Link[];
  * re-checked), at most 2 MB and 15 s, HTML, plain text or XML/JSON data (e.g. a rate feed). Throws WebError with a
  * short reason. With `site`, every hop (redirects too) must stay on that site (onSite).
  */
-export async function readPage(raw: string, signal: AbortSignal, opts: { allowPrivate?: boolean; site?: string } = {}): Promise<Page> {
+export async function readPage(raw: string, signal: AbortSignal, opts: { allowPrivate?: boolean; site?: string; whole?: boolean } = {}): Promise<Page> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -272,13 +272,13 @@ export async function readPage(raw: string, signal: AbortSignal, opts: { allowPr
     if (/text\/html|application\/xhtml/i.test(r.type) || /^\s*<(!doctype|html)/i.test(body)) {
       const { title, text, links } = htmlToText(body, url);
       if (isBlockPage(title, text)) throw new WebError("blocked");
-      return { url: url.href, title: title.slice(0, 200), text: text.slice(0, MAX_CHARS), links, html: true };
+      return { url: url.href, title: title.slice(0, 200), text: opts.whole ? text : text.slice(0, MAX_CHARS), links, html: true };
     }
     // Data files read as they are (the model reads XML/JSON fine); indentation is only spent tokens.
-    if (/^application\/([\w.-]+\+)?(xml|json)\b/i.test(r.type)) return { url: url.href, title: "", text: body.replace(/\n\s+/g, "\n").slice(0, MAX_CHARS), links: [] };
+    if (/^application\/([\w.-]+\+)?(xml|json)\b/i.test(r.type)) return { url: url.href, title: "", text: body.replace(/\n\s+/g, "\n").slice(0, opts.whole ? undefined : MAX_CHARS), links: [] };
     if (/^text\//i.test(r.type) || !r.type) {
       if (isBlockPage("", body)) throw new WebError("blocked");
-      return { url: url.href, title: "", text: body.slice(0, MAX_CHARS), links: [] };
+      return { url: url.href, title: "", text: opts.whole ? body : body.slice(0, MAX_CHARS), links: [] };
     }
     throw new WebError("type");
   }
