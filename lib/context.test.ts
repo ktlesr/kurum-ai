@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { docSections, linkPages, parseSource, type ChatMeta, type MdNode } from "./context.ts";
+import { docSections, linkPages, parseSource, plainNumbering, type ChatMeta, type MdNode } from "./context.ts";
 
 test("docSections splits on page and sheet markers, keeps the outline", () => {
   const t = "Özet satırı\n--- Sayfa 1 ---\nbir\n--- Sayfa 2 ---\niki\n## Sheet: Bütçe\n| a |";
@@ -46,4 +46,11 @@ test("linkPages links single-doc page refs in text only; only existing pages; sk
   assert.deepEqual(run(para(t("Sayfa 4")), undefined), para(t("Sayfa 4")));
   // No page markers (TXT/DOCX): pages can't be checked, so no links.
   assert.deepEqual(run(para(t("Sayfa 4")), { ...meta, pages: undefined }), para(t("Sayfa 4")));
+});
+
+test("plainNumbering: a document's own numbers stay text, real bullets stay bullets", () => {
+  assert.equal(plainNumbering("- 1) Proje"), "1\\) Proje");
+  assert.equal(plainNumbering("- a) Orta Asya\n- (2) Birinci\n- MADDE 9- 4 sayılı\n- \"ç) Kalkınma"), "a) Orta Asya\n(2) Birinci\nMADDE 9- 4 sayılı\n\"ç) Kalkınma");
+  assert.equal(plainNumbering("2) Satır"), "2\\) Satır");
+  assert.equal(plainNumbering("- Düz madde\n1. Sıralı"), "- Düz madde\n1. Sıralı");
 });

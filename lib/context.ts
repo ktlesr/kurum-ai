@@ -120,3 +120,12 @@ export function linkPages(meta: ChatMeta | undefined, nonce: string) {
   };
   return () => (tree: MdNode) => { if (pages.size) walk(tree); };
 }
+
+/**
+ * For showing a document's text: its own numbering stays text. OCR marks lines like "1) Proje…" as bullets, and Markdown
+ * would make "- 1) Proje…" an empty-looking bullet with a list inside, whose number isn't even copied.
+ */
+export const plainNumbering = (text: string) =>
+  text
+    .replace(/^[ 	]*[-*] (?=[a-zçğıöşü]\) |\(\d{1,3}\) |\d{1,3}\) |"|MADDE )/gmu, "")
+    .replace(/^(\d{1,3})\)(?= )/gm, "$1\\)");

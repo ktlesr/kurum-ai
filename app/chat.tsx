@@ -10,7 +10,7 @@ import {
 import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
 import { useChats } from "./use-chats";
-import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
+import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, plainNumbering, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
 import { searchChats, titleFrom, type Message, type StoredChat } from "@/lib/local-store";
 import type { DocKind, DocMeta } from "@/lib/server";
 import { LibraryPanel, type LibItem } from "./library";
@@ -848,7 +848,7 @@ function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: s
                   {s.label && <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">{s.label}</h3>}
                   {/* pre-line: plain-text documents keep their line breaks */}
                   <div className="md whitespace-pre-line text-sm">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{s.text}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{plainNumbering(s.text)}</ReactMarkdown>
                   </div>
                 </section>
               );
