@@ -3,8 +3,8 @@
 // Görsel Stüdyo → short video (TASK-026, plan §7.1 "deterministic template video"). Each scene is a studio design,
 // drawn as two layers with the same SVG as every export: the background (shapes, photos) and the foreground (text,
 // logo). A canvas animates them — the background slowly zooms, the foreground fades and slides in, scenes cross-fade
-// — and the browser's own MediaRecorder records it (MP4 where supported, else WebM), with optional music. Nothing
-// leaves the browser; no server job, no new dependency. Plan §7.1 lists Remotion as a candidate: its license needs a
+// — and it is encoded frame by frame (mediabunny, MPL-2.0, unmodified) or, without an encoder, recorded by the browser's
+// MediaRecorder (MP4 where supported, else WebM), with optional music. Nothing leaves the browser; no server job. Plan §7.1 lists Remotion as a candidate: its license needs a
 // paid company license for organisations over three people, so it isn't used.
 import { FONT_FAMILY, FORMATS, svgOf, type El, type FormatId, type Measure } from "@/lib/studio";
 import { captionLines } from "@/lib/subtitles";
@@ -34,6 +34,76 @@ export function recorderType(): { mime: string; ext: "mp4" | "webm" } | null {
   return null;
 }
 
+type Mediabunny = typeof import("mediabunny");
+type Encoder = { lib: Mediabunny; video: "avc"; audio?: "aac" | "opus" };
+
+/** What this browser can encode at this size; null: record in real time instead. A failing check is a no. */
+async function findEncoder(w: number, h: number, music: boolean): Promise<Encoder | null> {
+  if (typeof VideoEncoder === "undefined") return null;
+  try {
+    const lib = await import("mediabunny");
+    const video = await lib.getFirstEncodableVideoCodec(["avc"], { width: w, height: h });
+    if (video !== "avc") return null;
+    if (!music) return { lib, video };
+    const audio = await lib.getFirstEncodableAudioCodec(["aac", "opus"]);
+    return audio === "aac" || audio === "opus" ? { lib, video, audio } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The music as one buffer of the video's length: looped when shorter, faded out over the last second. */
+async function mixMusic(file: File, total: number): Promise<AudioBuffer> {
+  const rate = 48_000;
+  const off = new OfflineAudioContext(2, Math.ceil(total * rate), rate);
+  const buf = await file.arrayBuffer().then((b) => off.decodeAudioData(b)).catch(() => {
+    throw new Error("Müzik dosyası okunamadı (MP3, WAV, OGG ya da M4A deneyin).");
+  });
+  const source = off.createBufferSource();
+  source.buffer = buf;
+  source.loop = buf.duration < total;
+  const gain = off.createGain();
+  gain.gain.setValueAtTime(0.9, 0);
+  gain.gain.setValueAtTime(0.9, Math.max(0, total - 1));
+  gain.gain.linearRampToValueAtTime(0, total);
+  source.connect(gain).connect(off.destination);
+  source.start();
+  return off.startRendering();
+}
+
+async function encodeFrames(enc: Encoder, canvas: HTMLCanvasElement, music: File | undefined, total: number, fps: number, run: {
+  frameAt: (t: number) => Promise<void>;
+  race: <T>(p: Promise<T>) => Promise<T>;
+  progress: (p: number) => void;
+}): Promise<{ blob: Blob; ext: "mp4" | "webm" }> {
+  const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, AudioBufferSource } = enc.lib;
+  const target = new BufferTarget();
+  const output = new Output({ format: new Mp4OutputFormat({ fastStart: "in-memory" }), target });
+  const video = new CanvasSource(canvas, { codec: enc.video, bitrate: 8_000_000, keyFrameInterval: 2 });
+  output.addVideoTrack(video, { frameRate: fps });
+  const sound = music && enc.audio ? new AudioBufferSource({ codec: enc.audio, bitrate: 192_000 }) : null;
+  if (sound) output.addAudioTrack(sound);
+  try {
+    const mixed = music ? await run.race(mixMusic(music, total)) : null;
+    await run.race(output.start());
+    if (sound && mixed) await run.race(sound.add(mixed));
+    const frames = Math.max(1, Math.round(total * fps));
+    for (let n = 0; n < frames; n++) {
+      const t = n / fps;
+      await run.frameAt(t);
+      await run.race(video.add(t, 1 / fps));
+      run.progress((n + 1) / frames);
+      // A moment for the page: its progress bar and its cancel button. Timers crawl in a hidden tab, and nobody is looking.
+      if (n % 3 === 0 && !document.hidden) await new Promise((ok) => setTimeout(ok));
+    }
+    await run.race(output.finalize());
+  } catch (e) {
+    await output.cancel().catch(() => {});
+    throw e;
+  }
+  return { blob: new Blob([target.buffer!], { type: "video/mp4" }), ext: "mp4" };
+}
+
 type Layers = { bg: ImageBitmap; fg: ImageBitmap };
 const close = (l: Layers) => {
   l.bg.close();
@@ -41,17 +111,18 @@ const close = (l: Layers) => {
 };
 
 /**
- * Records the scenes in real time (a 15-second video takes 15 seconds) and returns the file. `onProgress` gets 0–1.
- * `signal` stops it at once. Only the current and the next scene are kept as bitmaps (a 9:16 scene is ~16 MB of
- * pixels). The tab must stay visible: browsers pause animation in hidden tabs, so hiding it stops the recording with
- * a message rather than recording a frozen picture.
+ * Makes the file and returns it. `onProgress` gets 0–1, `signal` stops it at once. Only the current and the next scene
+ * are kept as bitmaps (a 9:16 scene is ~16 MB of pixels). Where the browser has an H.264 encoder every frame is drawn
+ * and encoded one by one (encodeFrames): none is dropped, however busy the machine. Elsewhere it records in real time:
+ * a 15-second video takes 15 seconds and the tab must stay visible, since browsers pause animation in hidden tabs, so
+ * hiding it stops the recording with a message rather than recording a frozen picture.
  */
 export async function renderVideo(scenes: Scene[], opts: VideoOpts, measure: Measure, fontCss: string, onProgress: (p: number) => void, signal: AbortSignal): Promise<{ blob: Blob; ext: string }> {
   const type = recorderType();
-  if (!type) throw new Error("Bu tarayıcı video kaydedemiyor. Güncel Chrome ya da Edge kullanın.");
   if (!scenes.length) throw new Error("Önce en az bir sahne ekleyin.");
   const { w, h } = FORMATS[opts.format];
   const fps = opts.fps ?? 30;
+  let enc: Encoder | null = null;
   const T = opts.transition === "none" ? 0 : TRANSITION_S;
   const total = scenes.reduce((s, x) => s + x.seconds, 0);
   const starts = scenes.map((_, i) => scenes.slice(0, i).reduce((s, x) => s + x.seconds, 0));
@@ -70,7 +141,7 @@ export async function renderVideo(scenes: Scene[], opts: VideoOpts, measure: Mea
   const stop = new Promise<never>((_, fail) => (halt = fail));
   stop.catch(() => {}); // raced below; an abort after the end has nobody to tell
   const onAbort = () => halt(new DOMException("İptal edildi.", "AbortError"));
-  const onHide = () => document.hidden && halt(new Error("Kayıt sırasında sekme arka plana alındı; video durduruldu. Tekrar deneyin ve kayıt bitene kadar bu sekmede kalın."));
+  const onHide = () => !enc && document.hidden && halt(new Error("Kayıt sırasında sekme arka plana alındı; video durduruldu. Tekrar deneyin ve kayıt bitene kadar bu sekmede kalın."));
   const race = <T,>(p: Promise<T>) => Promise.race([p, stop]);
   let settled = false;
   let raf = 0;
@@ -106,8 +177,9 @@ export async function renderVideo(scenes: Scene[], opts: VideoOpts, measure: Mea
 
   try {
     signal.addEventListener("abort", onAbort);
-    document.addEventListener("visibilitychange", onHide);
     if (signal.aborted) onAbort();
+    enc = await race(findEncoder(w, h, !!opts.music));
+    document.addEventListener("visibilitychange", onHide);
     onHide();
     await race(want(0)!);
     if (scenes.length > 1) await race(want(1)!);
@@ -115,35 +187,6 @@ export async function renderVideo(scenes: Scene[], opts: VideoOpts, measure: Mea
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext("2d")!;
-    stream = canvas.captureStream(fps);
-
-    // Music: decoded locally, faded out over the last second, mixed into the recording.
-    if (opts.music) {
-      audio = new AudioContext();
-      const ac = audio;
-      const buf = await race(
-        opts.music.arrayBuffer().then((b) => ac.decodeAudioData(b)).catch(() => {
-          throw new Error("Müzik dosyası okunamadı (MP3, WAV, OGG ya da M4A deneyin).");
-        }),
-      );
-      source = audio.createBufferSource();
-      source.buffer = buf;
-      source.loop = buf.duration < total;
-      const gain = audio.createGain();
-      gain.gain.setValueAtTime(0.9, audio.currentTime);
-      gain.gain.setValueAtTime(0.9, audio.currentTime + Math.max(0, total - 1));
-      gain.gain.linearRampToValueAtTime(0, audio.currentTime + total);
-      const dest = audio.createMediaStreamDestination();
-      source.connect(gain).connect(dest);
-      for (const t of dest.stream.getAudioTracks()) stream.addTrack(t);
-    }
-
-    const chunks: Blob[] = [];
-    rec = new MediaRecorder(stream, { mimeType: type.mime, videoBitsPerSecond: 8_000_000 });
-    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    const r = rec;
-    stopped = new Promise<void>((ok) => (r.onstop = () => ok()));
-
     // A scene's own clock starts when it begins to come in (T before its start), so the incoming scene's text is
     // already moving during the transition and carries on without a jump.
     const localOf = (i: number, t: number) => t - starts[i] + (i > 0 ? T : 0);
@@ -215,8 +258,50 @@ export async function renderVideo(scenes: Scene[], opts: VideoOpts, measure: Mea
       if (opts.captions && cap) drawCaption(cap);
     };
 
+    if (enc) return await encodeFrames(enc, canvas, opts.music, total, fps, {
+      frameAt: async (t) => {
+        const i = Math.max(0, starts.findLastIndex((x) => x <= t));
+        await race(want(i)!);
+        const next = want(i + 1);
+        if (next) await race(next);
+        frame(t);
+      },
+      race, progress: onProgress,
+    });
+
+    if (!type) throw new Error("Bu tarayıcı video kaydedemiyor. Güncel Chrome ya da Edge kullanın.");
+    stream = canvas.captureStream(fps);
+
+    // Music: decoded locally, faded out over the last second, mixed into the recording.
+    if (opts.music) {
+      audio = new AudioContext();
+      const ac = audio;
+      const buf = await race(
+        opts.music.arrayBuffer().then((b) => ac.decodeAudioData(b)).catch(() => {
+          throw new Error("Müzik dosyası okunamadı (MP3, WAV, OGG ya da M4A deneyin).");
+        }),
+      );
+      source = audio.createBufferSource();
+      source.buffer = buf;
+      source.loop = buf.duration < total;
+      const gain = audio.createGain();
+      gain.gain.setValueAtTime(0.9, audio.currentTime);
+      gain.gain.setValueAtTime(0.9, audio.currentTime + Math.max(0, total - 1));
+      gain.gain.linearRampToValueAtTime(0, audio.currentTime + total);
+      const dest = audio.createMediaStreamDestination();
+      source.connect(gain).connect(dest);
+      for (const t of dest.stream.getAudioTracks()) stream.addTrack(t);
+    }
+
+    const chunks: Blob[] = [];
+    rec = new MediaRecorder(stream, { mimeType: type.mime, videoBitsPerSecond: 8_000_000 });
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    const made = rec;
+    stopped = new Promise<void>((ok) => (made.onstop = () => ok()));
+
+    const r = rec!;
     frame(0);
-    rec.start(250);
+    r.start(250);
     source?.start();
     const t0 = performance.now();
     await race(new Promise<void>((done) => {
@@ -231,7 +316,7 @@ export async function renderVideo(scenes: Scene[], opts: VideoOpts, measure: Mea
       raf = requestAnimationFrame(tick);
     }));
     frame(total - 0.001);
-    rec.stop();
+    r.stop();
     await stopped;
     onProgress(1);
     return { blob: new Blob(chunks, { type: type.mime.split(";")[0] }), ext: type.ext };

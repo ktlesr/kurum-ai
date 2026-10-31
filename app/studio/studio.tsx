@@ -1579,7 +1579,7 @@ export default function Studio({ username }: { username: string }) {
     );
     if (open === "scenes") return (
       <section className={section}>
-        <p className="text-xs text-muted">Her sahne bir tasarımdır: tasarlayın, sahne olarak ekleyin, sonrakini tasarlayın. Video bu tarayıcıda oluşturulur; hiçbir şey sunucuya gitmez.</p>
+        <p className="text-xs text-muted">Her sahne bir tasarımdır: tasarlayın, sahne olarak ekleyin, sonrakini tasarlayın. Video bu tarayıcıda oluşturulur; hiçbir şey sunucuya gitmez. Kodlayıcı: <a className="underline" href="https://github.com/Vanilagy/mediabunny" target="_blank" rel="noreferrer">mediabunny</a> (MPL-2.0).</p>
         <button onClick={addScene} disabled={!font} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm font-medium hover:border-accent hover:text-accent disabled:opacity-40">
           <Clapperboard size={15} /> {editingScene ? "Sahneyi güncelle" : "Bu tasarımı sahne olarak ekle"}
         </button>
