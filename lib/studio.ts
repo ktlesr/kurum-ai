@@ -144,7 +144,7 @@ export type Item = { before?: number } & (
   | { t: "text"; role?: Role; text: string; size: number; min: number; lines: number; weight: number; color: string; leading?: number; flex?: boolean; font?: string; align?: "middle" }
   | { t: "pill"; text: string; size: number; fill: string; color: string; font?: string; center?: boolean }
   | { t: "bar"; w: number; h: number; fill: string; center?: boolean }
-  | { t: "logo"; pic?: Picture; h: number; plate?: boolean }
+  | { t: "logo"; pic?: Picture; h: number; plate?: boolean; center?: boolean }
 );
 
 /**
@@ -164,11 +164,12 @@ function stack(items: Item[], x: number, w: number, y: number, avail: number, di
       const lh = i.h - 2 * pad;
       const lw = Math.min(lh * (pic.w / pic.h), w * 0.5 - 2 * pad);
       const ih = lw / (pic.w / pic.h);
+      const lx = i.center ? x + (w - lw) / 2 - pad : x;
       return {
         h: i.h,
         draw: (top) => [
-          ...(i.plate ? [{ kind: "rect" as const, fill: "#ffffff", x, y: top, w: lw + 2 * pad, h: i.h, radius: pad }] : []),
-          { kind: "image", pic, fit: "contain", logo: true, x: x + pad, y: top + (i.h - ih) / 2, w: lw, h: ih },
+          ...(i.plate ? [{ kind: "rect" as const, fill: "#ffffff", x: lx, y: top, w: lw + 2 * pad, h: i.h, radius: pad }] : []),
+          { kind: "image", pic, fit: "contain", logo: true, x: lx + pad, y: top + (i.h - ih) / 2, w: lw, h: ih },
         ],
       };
     }

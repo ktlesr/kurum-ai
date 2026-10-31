@@ -25,8 +25,9 @@ import { THEMES, type Theme } from "@/lib/themes";
 import { OPEN_COLOR } from "@/lib/studio-assets";
 import { familyNames, ensureFont } from "./fonts";
 import type { Claim } from "@/lib/trace";
-import { recorderType, renderVideo, type Scene, type Transition } from "./video";
-import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, type Work } from "./works";
+import { recorderType, renderVideo, type Scene } from "./video";
+import { BACKDROPS, ENTRANCES, MAX_SCENES, REELS_PACKS, SCENE_SECONDS, TRANSITIONS, cleanVideo, type Backdrop, type Entrance, type ReelsPack, type SavedVideo, type Transition } from "@/lib/studio-video";
+import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, type Work, patchVideo } from "./works";
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
 import {
@@ -71,6 +72,11 @@ const heading = "text-[11px] font-semibold uppercase tracking-wider text-muted";
 const iconBtn = "grid size-8 place-items-center rounded-md text-muted transition-colors hover:bg-subtle hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent";
 const chip = (on: boolean) => `rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${on ? "bg-panel text-fg shadow-card" : "text-muted hover:text-fg"}`;
 
+/** Scenes each carry their pictures; past this a project file couldn't be opened again (openProject reads up to 60 MB). */
+const MAX_PROJECT_BYTES = 60 * 1024 * 1024;
+const MAX_SCENE_CHARS = 50 * 1024 * 1024;
+const scenesTooBig = (lists: unknown[]) => lists.reduce<number>((n, l) => n + JSON.stringify(l).length, 0) > MAX_SCENE_CHARS;
+const SCENES_TOO_BIG = "Sahnelerdeki görseller çok büyük (toplam 50 MB sınırı). Daha küçük görsel kullanın ya da sahne sayısını azaltın.";
 /** Every colour in the design that was the old brand colour becomes the new one. */
 const stamp = () => Date.now();
 /** Brand colours changed: everything drawn in them follows (and the shades the templates derive from them). */
@@ -146,6 +152,10 @@ export default function Studio({ username }: { username: string }) {
   // Video (TASK-026): scenes are snapshots of designs in one format, recorded in the browser.
   const [scenes, setScenes] = useState<(Scene & { format: FormatId; thumb: string })[]>([]);
   const [transition, setTransition] = useState<Transition>("fade");
+  const [editingScene, setEditingScene] = useState<string | null>(null); // the scene the canvas holds, "güncelle" puts it back
+  // The work the scenes are saved with. Opening a design to add it as a scene must not write the scenes into that design.
+  const sceneOwner = useRef<string | null>(null);
+  const restoring = useRef(0);
   const [motion, setMotion] = useState(true);
   const [music, setMusic] = useState<File | undefined>();
   const [burnCaptions, setBurnCaptions] = useState(true);
@@ -855,11 +865,72 @@ export default function Studio({ username }: { username: string }) {
     if (!font) return;
     const ready = await fontsReady(view);
     if (sceneFormat && sceneFormat !== format) return setNote({ kind: "error", text: `Sahneler ${FORMATS[sceneFormat].label} formatında; aynı formatta ekleyin ya da sahneleri temizleyin.` });
-    if (scenes.length >= 20) return setNote({ kind: "error", text: "En fazla 20 sahne eklenebilir." });
     const thumb = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgOf(format, ready, font.measure, font.css))}`;
+    if (editingScene && scenes.some((s) => s.id === editingScene)) {
+      if (scenesTooBig([...scenes.filter((s) => s.id !== editingScene).map((s) => s.els), ready])) return setNote({ kind: "error", text: SCENES_TOO_BIG });
+      setScenes((s) => s.map((x) => (x.id === editingScene ? { ...x, els: ready, thumb } : x)));
+      setEditingScene(null);
+      return setNote({ kind: "ok", text: "Sahne güncellendi." });
+    }
+    if (scenes.length >= MAX_SCENES) return setNote({ kind: "error", text: `En fazla ${MAX_SCENES} sahne eklenebilir.` });
+    if (scenesTooBig([...scenes.map((s) => s.els), ready])) return setNote({ kind: "error", text: SCENES_TOO_BIG });
     // Checked again here: another scene may have been added while the fonts loaded.
     setScenes((s) => (s.length >= 20 || (s[0] && s[0].format !== format) ? s : [...s, { id: newId(), els: ready, seconds: 4, format, thumb }]));
     setNote({ kind: "ok", text: mode === "video" ? `Sahne ${scenes.length + 1} eklendi. Tasarımı değiştirip bir sonraki sahneyi ekleyebilirsiniz.` : `Sahne ${scenes.length + 1} eklendi. Görsel Stüdyo ana sayfasından Video / Reels ile devam edebilirsiniz.` });
+  };
+  const sceneThumb = (els: El[], f: FormatId) => (font ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgOf(f, els, font.measure, font.css))}` : "");
+  /** A ready flow becomes scenes after the ones there are, in the format they have (9:16 when there are none). */
+  const addPack = async (pack: ReelsPack) => {
+    if (!font) return;
+    const f = sceneFormat ?? "hikaye";
+    const room = MAX_SCENES - scenes.length;
+    if (room <= 0) return setNote({ kind: "error", text: `En fazla ${MAX_SCENES} sahne eklenebilir.` });
+    const fresh = await Promise.all(pack.scenes.slice(0, room).map(async (p) => {
+      await Promise.allSettled((TEMPLATES[p.template].fonts as readonly string[]).map((id) => ensureFont(id, username)));
+      const made = await fontsReady(fromTemplate({ template: p.template, format: f, content: p.content, brand, photo }, font.measure));
+      return { id: newId(), els: made, seconds: p.seconds, enter: p.enter, backdrop: p.backdrop, format: f, thumb: sceneThumb(made, f) };
+    }));
+    if (scenesTooBig([...scenes.map((s) => s.els), ...fresh.map((s) => s.els)])) return setNote({ kind: "error", text: SCENES_TOO_BIG });
+    setScenes((s) => (s[0] && s[0].format !== f ? s : [...s, ...fresh].slice(0, MAX_SCENES)));
+    setTransition(pack.transition);
+    chooseFormat(f); // an edited canvas moves to the scenes' format with its edits
+    setTool("scenes");
+    setNote({ kind: "ok", text: `${pack.label}: ${fresh.length} sahne eklendi. Metinleri sahnedeki Düzenle ile değiştirin.` });
+  };
+  /** A scene back on the canvas, to edit like any design. */
+  const editScene = async (s: Scene & { format: FormatId }) => {
+    // The open design is saved first, and from here on the canvas belongs to the scenes' work, not to that design.
+    if (!(await flushSave())) return;
+    const turn = ++restoring.current;
+    const owner = sceneOwner.current;
+    const switching = owner !== workId;
+    const name = switching && owner ? ((await listWorks(username).catch(() => [])).find((x) => x.id === owner)?.name ?? "") : "";
+    if (turn !== restoring.current) return;
+    cancelSuggest(); // a suggestion still on its way must not land on the scene
+    if (switching) {
+      setWorkId(owner);
+      setWorkName(name);
+    }
+    setFormat(s.format);
+    change(s.els);
+    if (switching) setHist({ past: [], future: [] }); // undo must not bring the other design back under this work's name
+    setSelected(null);
+    setEditingScene(s.id);
+  };
+  const savedVideo = (): SavedVideo | undefined =>
+    mode === "video" && scenes.length && sceneFormat ? { format: sceneFormat, transition, scenes: scenes.map(({ id, els: list, seconds, caption, enter, backdrop }) => ({ id, els: list, seconds, ...(caption ? { caption } : {}), ...(enter ? { enter } : {}), ...(backdrop ? { backdrop } : {}) })) } : undefined;
+  /** A saved video's scenes, once the fonts they draw in are here (their previews are drawn with them). False: another open came first. */
+  const restoreVideo = async (v: SavedVideo, owner: string | null, turn: number) => {
+    const next = await Promise.all(v.scenes.map(async (s) => {
+      const made = await fontsReady(s.els);
+      return { ...s, els: made, format: v.format, thumb: sceneThumb(made, v.format) };
+    }));
+    if (turn !== restoring.current) return false;
+    sceneOwner.current = owner;
+    setScenes(next);
+    setTransition(v.transition);
+    setEditingScene(null);
+    return true;
   };
   const moveScene = (i: number, d: -1 | 1) =>
     setScenes((s) => {
@@ -920,9 +991,14 @@ export default function Studio({ username }: { username: string }) {
     if (!font) return;
     const id = workId ?? newId();
     setWorkId(id); // now: a save coming right after this one updates the same work
+    const video = savedVideo();
+    // The scenes belong to the work they were saved with; another design open on the canvas gets none of them.
+    const owner = mode === "video" ? (sceneOwner.current ?? (video ? id : null)) : null;
+    if (owner) sceneOwner.current = owner;
+    if (owner && owner !== id) await patchVideo(username, owner, video);
     const ready = await fontsReady(view);
     const thumb = await thumbnail(svgOf(format, ready, font.measure, font.css), W, H);
-    await saveWork(username, { id, name: workName.trim().slice(0, 80) || designTitle(), format, template, els: ready, thumb, updatedAt: stamp(), ...(deck ? { deck: savedDeck() } : {}) });
+    await saveWork(username, { id, name: workName.trim().slice(0, 80) || designTitle(), format, template, els: ready, thumb, updatedAt: stamp(), ...(deck ? { deck: savedDeck() } : {}), ...(video && owner === id ? { video } : {}) });
   };
   // ponytail: saves the whole design each time; a diff store if very large pictures make this slow.
   const latestStore = useRef(storeWork);
@@ -994,7 +1070,7 @@ export default function Studio({ username }: { username: string }) {
     return false;
   };
   // Only what the user made or opened: an untouched template isn't a work yet (a saved work back on a template still is one).
-  const hasDesign = !!font && !!mode && (!!els || ownText || !!photo || !!workId) && (mode !== "sunum" || !!deck);
+  const hasDesign = !!font && !!mode && (!!els || ownText || !!photo || !!workId || (mode === "video" && scenes.length > 0)) && (mode !== "sunum" || !!deck);
   useEffect(() => {
     if (!hasDesign) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the status follows the timer this effect starts
@@ -1004,7 +1080,7 @@ export default function Studio({ username }: { username: string }) {
       if (pending.current) clearTimeout(pending.current);
       pending.current = null;
     };
-  }, [hasDesign, view, deck, workName, format]);
+  }, [hasDesign, view, deck, workName, format, scenes, transition]);
   // A success note leaves by itself; an error stays until it's read.
   useEffect(() => {
     if (note?.kind !== "ok") return;
@@ -1021,6 +1097,7 @@ export default function Studio({ username }: { username: string }) {
   useEffect(() => { listWorks(username).then(setRecent, () => {}); }, [username]);
   const goHome = async () => {
     if (!(await flushSave())) return;
+    restoring.current++; // an open still on its way must not land after this
     cancelSuggest();
     setMode(null);
     setDeck(null);
@@ -1045,7 +1122,12 @@ export default function Studio({ username }: { username: string }) {
     setWorkName("");
     setOwnText(false);
     setPhoto(undefined);
-    setContent(SAMPLE[template]);
+    restoring.current++; // an open still on its way must not land on the new design
+    sceneOwner.current = null; // scenes waiting from the last video go with the next one saved
+    const first: TemplateId = m === "video" ? "kanca" : "atlas";
+    setTemplate(first);
+    setContent(SAMPLE[first]);
+    setEditingScene(null);
     setSources({});
     setSaved("");
     setZoom(1);
@@ -1061,9 +1143,15 @@ export default function Studio({ username }: { username: string }) {
       setNote({ kind: "error", text: (e as Error).message || "Kaydedilemedi." });
     }
   };
-  const openWork = async (w: Work) => {
-    if (w.id === workId) return closeLibrary(); // already open, and newer than the list's copy
+  const openWork = async (picked: Work) => {
+    if (picked.id === workId) return closeLibrary(); // already open, and newer than the list's copy
     if (!(await flushSave())) return closeLibrary();
+    // Read again: that save may have just put newer scenes in this work, and the list was read before it.
+    const w = (await listWorks(username).catch(() => [])).find((x) => x.id === picked.id) ?? picked;
+    if (w.video && !font) return setNote({ kind: "error", text: "Yazı tipi yükleniyor; birazdan tekrar deneyin." });
+    // First: until the scenes are back this work's id isn't set, so an autosave can't store it without them.
+    const turn = ++restoring.current; // every open counts: a slow one coming back late must not land on a newer one
+    if (w.video && !(await restoreVideo(w.video, w.id, turn))) return;
     cancelSuggest(); // a suggestion still on its way must not land on the opened work
     setTemplate(w.template);
     setZoom(1);
@@ -1073,9 +1161,10 @@ export default function Studio({ username }: { username: string }) {
       setTool("text");
       openDeck(w.deck).then(() => setWorkId(w.id), () => setNote({ kind: "error", text: "Sunumun şablonu yüklenemedi." }));
     } else {
-      setMode((m) => (m === "video" ? m : "gorsel"));
+      setMode((m) => (m === "video" || w.video ? "video" : "gorsel"));
       setTool((t) => t ?? "templates");
       setDeck(null);
+      setEditingScene(null);
       setFormat(w.format);
       change(w.els);
       setHist({ past: [], future: [] }); // undo must not bring another work back under this one's name
@@ -1094,19 +1183,26 @@ export default function Studio({ username }: { username: string }) {
       return;
     }
     if (workId === id) setWorkId(null);
+    if (sceneOwner.current === id) sceneOwner.current = null; // the scenes on screen go with the next save
     setConfirmDelete(null);
     setLibError("");
     setLibrary(await listWorks(username).catch(() => []));
   };
 
-  const saveProject = () => download(new Blob([JSON.stringify({ kind: "kurum-ai-gorsel", version: 1, template, format, els: view, ...(deck ? { deck: savedDeck() } : {}) })], { type: "application/json" }), `kurum-gorsel-${template}-${format}.json`);
+  const saveProject = () => {
+    const video = savedVideo();
+    const file = new Blob([JSON.stringify({ kind: "kurum-ai-gorsel", version: 1, template, format, els: view, ...(deck ? { deck: savedDeck() } : {}), ...(video ? { video } : {}) })], { type: "application/json" });
+    if (file.size > MAX_PROJECT_BYTES) return setNote({ kind: "error", text: SCENES_TOO_BIG });
+    download(file, `kurum-gorsel-${template}-${format}.json`);
+  };
   const openProject = async (file: File | undefined) => {
     if (!file) return;
     try {
-      if (file.size > 60 * 1024 * 1024) throw new Error("Proje dosyası çok büyük.");
-      const j = JSON.parse(await file.text()) as { kind?: unknown; format?: unknown; els?: unknown; deck?: unknown };
+      if (file.size > MAX_PROJECT_BYTES) throw new Error("Proje dosyası çok büyük.");
+      const j = JSON.parse(await file.text()) as { kind?: unknown; format?: unknown; els?: unknown; deck?: unknown; video?: unknown };
       if (j.kind !== "kurum-ai-gorsel" || typeof j.format !== "string" || !Object.hasOwn(FORMATS, j.format)) throw new Error("Bu bir Görsel Stüdyo proje dosyası değil.");
       if (!(await flushSave())) return;
+      const turn = ++restoring.current; // every open counts, a deck too: a slow one coming back late must not land on it
       setWorkName(""); // a new work, not the one that was open
       const saved = cleanDeck(j.deck);
       if (saved) {
@@ -1115,10 +1211,14 @@ export default function Studio({ username }: { username: string }) {
         return setNote({ kind: "ok", text: "Sunum açıldı." });
       }
       const next = cleanEls(j.els);
-      if (!next.length) throw new Error("Proje dosyasında öğe yok.");
-      setMode((m) => (m === "video" ? m : "gorsel"));
+      if (!next.length && !cleanVideo(j.video)) throw new Error("Proje dosyasında öğe yok.");
+      const video = cleanVideo(j.video);
+      if (video && !font) throw new Error("Yazı tipi yükleniyor; birazdan tekrar deneyin.");
+      if (video && !(await restoreVideo(video, null, turn))) return;
+      setMode((m) => (m === "video" || video ? "video" : "gorsel"));
       setTool((t) => t ?? "templates");
       setDeck(null);
+      setEditingScene(null);
       setFormat(j.format as FormatId);
       change(next);
       setHist({ past: [], future: [] });
@@ -1143,7 +1243,20 @@ export default function Studio({ username }: { username: string }) {
     if (open === "deck") return deck ? <p className="px-4 py-4 text-sm text-muted">{deck.template.name} şablonu, {deck.slides.length} slayt. Alttaki şeritten slaytlara geçin ve yeni düzen ekleyin. Renk ve yazı tipi temaları Marka panelinde; tüm slaytlara uygulanır.</p> : null;
     if (open === "templates") return (
       <section className={section}>
-        {([["gorsel", "Özgün şablonlar"], ["klasik", "Klasik"]] as const).map(([group, title]) => (
+        {mode === "video" && (
+          <div>
+            <h3 className={`${heading} mb-1.5`}>Hazır akışlar</h3>
+            <div className="space-y-1.5">
+              {REELS_PACKS.map((p) => (
+                <button key={p.id} onClick={() => void addPack(p)} disabled={!font} className="flex w-full items-center gap-2 rounded-lg border border-line p-2 text-left hover:border-accent disabled:opacity-50">
+                  <Clapperboard size={16} className="shrink-0 text-accent" />
+                  <span className="min-w-0"><span className="block text-sm font-medium">{p.label}</span><span className="block truncate text-xs text-muted">{p.hint}</span></span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {(mode === "video" ? ([["reels", "Reels şablonları"]] as const) : ([["gorsel", "Özgün şablonlar"], ["klasik", "Klasik"]] as const)).map(([group, title]) => (
         <div key={group}>
         <h3 className={`${heading} mb-1.5`}>{title}</h3>
         <div className="grid grid-cols-2 gap-2">
@@ -1374,8 +1487,10 @@ export default function Studio({ username }: { username: string }) {
       <section className={section}>
         <p className="text-xs text-muted">Her sahne bir tasarımdır: tasarlayın, sahne olarak ekleyin, sonrakini tasarlayın. Video bu tarayıcıda oluşturulur; hiçbir şey sunucuya gitmez.</p>
         <button onClick={addScene} disabled={!font} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm font-medium hover:border-accent hover:text-accent disabled:opacity-40">
-          <Clapperboard size={15} /> Bu tasarımı sahne olarak ekle
+          <Clapperboard size={15} /> {editingScene ? "Sahneyi güncelle" : "Bu tasarımı sahne olarak ekle"}
         </button>
+        {editingScene && <button onClick={() => setEditingScene(null)} className="text-xs text-accent hover:underline">Güncellemeden yeni sahne olarak ekle</button>}
+        {!scenes.length && <button onClick={() => setTool("templates")} className="text-xs text-accent hover:underline">Hazır akışlardan başlayın</button>}
         {scenes.length > 0 && (
           <>
             <ol className="space-y-1.5">
@@ -1386,13 +1501,22 @@ export default function Studio({ username }: { username: string }) {
                   <span className="text-xs font-medium tabular-nums">{i + 1}.</span>
                   <label className="flex items-center gap-1 text-xs text-muted">
                     <select aria-label={`Sahne ${i + 1} süresi`} value={s.seconds} onChange={(e) => setScenes((x) => x.map((y) => (y.id === s.id ? { ...y, seconds: +e.target.value } : y)))} className="h-7 rounded-md border border-line bg-panel px-1 text-xs text-fg">
-                      {[2, 3, 4, 5, 6, 8, 10].map((n) => <option key={n} value={n}>{n} sn</option>)}
+                      {SCENE_SECONDS.map((n) => <option key={n} value={n}>{n} sn</option>)}
                     </select>
                   </label>
                   <span className="ml-auto flex">
+                    <button className={iconBtn} onClick={() => void editScene(s)} aria-pressed={editingScene === s.id} aria-label={`Sahne ${i + 1} düzenle`} title="Düzenle"><Pencil size={14} /></button>
                     <button className={iconBtn} onClick={() => moveScene(i, -1)} disabled={i === 0} aria-label={`Sahne ${i + 1} yukarı`}><ChevronUp size={14} /></button>
                     <button className={iconBtn} onClick={() => moveScene(i, 1)} disabled={i === scenes.length - 1} aria-label={`Sahne ${i + 1} aşağı`}><ChevronDown size={14} /></button>
                     <button className={`${iconBtn} hover:text-danger`} onClick={() => setScenes((x) => x.filter((y) => y.id !== s.id))} aria-label={`Sahne ${i + 1} sil`}><Trash2 size={14} /></button>
+                  </span>
+                  <span className="grid w-full grid-cols-2 gap-1.5">
+                    <select aria-label={`Sahne ${i + 1} metin hareketi`} value={s.enter ?? "yuksel"} onChange={(e) => setScenes((x) => x.map((y) => (y.id === s.id ? { ...y, enter: e.target.value as Entrance } : y)))} className="h-7 min-w-0 rounded-md border border-line bg-panel px-1 text-xs">
+                      {(Object.keys(ENTRANCES) as Entrance[]).map((k) => <option key={k} value={k}>{ENTRANCES[k]}</option>)}
+                    </select>
+                    <select aria-label={`Sahne ${i + 1} arka plan hareketi`} value={s.backdrop ?? "yaklas"} onChange={(e) => setScenes((x) => x.map((y) => (y.id === s.id ? { ...y, backdrop: e.target.value as Backdrop } : y)))} className="h-7 min-w-0 rounded-md border border-line bg-panel px-1 text-xs">
+                      {(Object.keys(BACKDROPS) as Backdrop[]).map((k) => <option key={k} value={k}>{BACKDROPS[k]}</option>)}
+                    </select>
                   </span>
                   <input value={s.caption ?? ""} onChange={(e) => setCaption(s.id, e.target.value)} maxLength={240} placeholder="Altyazı (isteğe bağlı)" aria-label={`Sahne ${i + 1} altyazısı`} className="h-7 w-full rounded-md border border-line bg-panel px-2 text-xs outline-none focus:border-accent" />
                 </li>
@@ -1402,9 +1526,7 @@ export default function Studio({ username }: { username: string }) {
               <label className="block">
                 <span className="mb-0.5 block text-[11px] text-muted">Geçiş</span>
                 <select value={transition} onChange={(e) => setTransition(e.target.value as Transition)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-sm outline-none focus:border-accent">
-                  <option value="fade">Yumuşak geçiş</option>
-                  <option value="slide">Kaydırma</option>
-                  <option value="none">Kesme</option>
+                  {(Object.keys(TRANSITIONS) as Transition[]).map((k) => <option key={k} value={k}>{TRANSITIONS[k]}</option>)}
                 </select>
               </label>
               <label className="flex items-end gap-1.5 pb-1.5 text-xs">

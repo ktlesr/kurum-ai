@@ -288,8 +288,8 @@ test("themes: readable, known fonts; art files are plain vector files", () => {
 
 const REAL_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 test("families: every element survives cleanEls, polygons stay in their box, fonts are the template's", () => {
-  assert.ok(templatesOf("gorsel").length >= 8);
-  for (const template of templatesOf("gorsel")) {
+  assert.ok(templatesOf("gorsel").length >= 8 && templatesOf("reels").length >= 6);
+  for (const template of [...templatesOf("gorsel"), ...templatesOf("reels")]) {
     for (const format of Object.keys(FORMATS) as Design["format"][]) {
       for (const photo of [undefined, { src: REAL_PNG, w: 1, h: 1 }]) {
         const els = fromTemplate(design({ template, format, photo, brand: { primary: "#14263d", accent: "#c8102e", logo: { src: REAL_PNG, w: 1, h: 1 } } }), measure);

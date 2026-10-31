@@ -13,6 +13,12 @@ export const FAMILY_TEMPLATES = {
   isik: { label: "Işık", hint: "Tam sayfa çift tonlu fotoğraf", kind: "gorsel", fonts: ["montserrat"] },
   pano: { label: "Pano", hint: "Eğik kesimli renk paneli", kind: "gorsel", fonts: ["oswald", "rubik"] },
   takvim: { label: "Takvim", hint: "Önce tarih, sonra konu", kind: "gorsel", fonts: ["bebas-neue", "nunito"] },
+  kanca: { label: "Kanca", hint: "İlk 3 saniye: dev başlık", kind: "reels", fonts: ["anton", "rubik"] },
+  perde: { label: "Perde", hint: "Tam ekran fotoğraf, alt yazı", kind: "reels", fonts: ["oswald", "rubik"] },
+  adim: { label: "Adım", hint: "Numara ve kısa açıklama", kind: "reels", fonts: ["bebas-neue", "manrope"] },
+  rakamr: { label: "Dev Rakam", hint: "Tek rakam, ortada", kind: "reels", fonts: ["anton", "dm-sans"] },
+  soz: { label: "Söz", hint: "Karanlık zeminde alıntı", kind: "reels", fonts: ["playfair-display", "dm-sans"] },
+  kapanis: { label: "Kapanış", hint: "Logo ve çağrı", kind: "reels", fonts: ["montserrat"] },
 } as const;
 export type FamilyId = keyof typeof FAMILY_TEMPLATES;
 
@@ -25,6 +31,12 @@ export const FAMILY_SAMPLES: Record<FamilyId, Content> = {
   isik: { tag: "Fotoğraf", title: "Bölgenin geleceğine birlikte bakıyoruz", subtitle: "Genç girişimciler kalkınma buluşmasında bir araya geldi.", detail: "12 Kasım 2026" },
   pano: { tag: "Çağrı", title: "Başvurular açıldı", subtitle: "Proje fikrinizi son başvuru tarihine kadar çevrim içi olarak iletebilirsiniz.", detail: "Son gün: 30 Kasım" },
   takvim: { tag: "Takvim", title: "Yatırım Danışma Günü", subtitle: "Uzmanlarımızla birebir görüşme için yerinizi ayırtın.", detail: "12 Kasım 2026" },
+  kanca: { tag: "Duyuru", title: "Bunu kaçırmayın", subtitle: "30 saniyede öğrenin", detail: "" },
+  perde: { tag: "Bölgemiz", title: "Başvurular artık tek adresten", subtitle: "Süreç 45 günden 20 güne iniyor.", detail: "" },
+  adim: { tag: "1", title: "Hesabınızı açın", subtitle: "Kimlik bilgilerinizle giriş yapın.", detail: "" },
+  rakamr: { tag: "2026", title: "%42", subtitle: "Destek başvurularındaki artış", detail: "Kaynak: faaliyet raporu" },
+  soz: { tag: "", title: "Kalkınma, birlikte yürüttüğümüz bir yolculuktur.", subtitle: "Ad Soyad", detail: "Genel Sekreter" },
+  kapanis: { tag: "", title: "Hemen başvurun", subtitle: "Ayrıntılar web sitemizde", detail: "kurum.gov.tr" },
 };
 
 export const FAMILY_HINTS: Record<FamilyId, string> = {
@@ -36,6 +48,12 @@ export const FAMILY_HINTS: Record<FamilyId, string> = {
   isik: "Şablon: tam sayfa fotoğraf. baslik kısa ve etkileyici, en fazla 6 kelime.",
   pano: "Şablon: çağrı panosu. baslik 2-3 kelimelik güçlü bir çağrı, altBaslik yapılacak işi söylesin.",
   takvim: "Şablon: takvim. detay tarih olsun ve kullanıcı vermediyse boş kalsın, baslik etkinliğin ya da işin adı.",
+  kanca: "Şablon: Reels açılışı. baslik en fazla 4 kelime, merak uyandıran; altBaslik en fazla 5 kelime.",
+  perde: "Şablon: Reels fotoğraf sahnesi. baslik en fazla 6 kelime, altBaslik tek kısa cümle.",
+  adim: "Şablon: Reels adımı. etiket adımın numarası, baslik en fazla 3 kelime, altBaslik tek kısa cümle.",
+  rakamr: "Şablon: Reels rakamı. baslik yalnızca rakam, altBaslik rakamın ne anlattığı; rakam uydurma.",
+  soz: "Şablon: Reels alıntısı. baslik en fazla 12 kelimelik söz, altBaslik söyleyen, detay unvanı.",
+  kapanis: "Şablon: Reels kapanışı. baslik en fazla 3 kelimelik çağrı, detay web adresi; kullanıcı vermediyse boş bırak.",
 };
 
 export interface Ctx {
@@ -322,4 +340,143 @@ function takvim(x: Ctx): Layer[] {
   return [...L, ...blockFlow, ...below];
 }
 
-export const FAMILIES: Record<FamilyId, (x: Ctx) => Layer[]> = { atlas, manset, etki, muhur, ajanda, isik, pano, takvim };
+// ---- Reels: a phone's interface covers the top and the bottom, so the text keeps out of both on tall canvases --------
+const safeOf = (x: Ctx) => (x.tall ? { top: x.h * 0.13, bottom: x.h * 0.2 } : { top: x.m, bottom: x.m });
+
+/** The hook: one huge line on a diagonal split, read in under a second. */
+function kanca(x: Ctx): Layer[] {
+  const { w, h, u, m, primary, accent } = x;
+  const safe = safeOf(x);
+  const ink = x.inkOn(primary);
+  return [
+    rect(0, 0, w, h, primary),
+    poly(0, h * 0.58, w, h * 0.42, "Eğik zemin", accent, [[0, 0.3], [1, 0], [1, 1], [0, 1]]),
+    ...x.flow(m, w - 2 * m, safe.top, h - safe.bottom, {
+      head: [logoOf(x, 80), pill(x, accent, x.inkOn(accent), "rubik", 26 * u)],
+      body: [
+        title(x, { size: 250 * u, min: 72 * u, lines: 4, weight: 400, color: ink, font: "anton", leading: 1.06 }),
+        sub(x, { color: ink, font: "rubik", size: 46 * u, lines: 2, before: 28 * u }),
+      ],
+      gap: 40 * u,
+    }),
+  ];
+}
+
+/** The photo fills the screen, its words low in the safe area on a dark fade. */
+function perde(x: Ctx): Layer[] {
+  const { w, h, u, m, primary, accent, photo, shade } = x;
+  const safe = safeOf(x);
+  const L: Layer[] = [{ kind: "gradient", x: 0, y: 0, w, h, a: shade(primary, -0.25), b: accent }];
+  if (photo) L.push({ kind: "image", pic: photo, fit: "cover", x: 0, y: 0, w, h });
+  else L.push(ring(-w * 0.3, -w * 0.1, w * 1.1, "Halka", WHITE, 3 * u, 0.35), ring(w * 0.2, h * 0.12, w, "Halka", WHITE, 3 * u, 0.25));
+  L.push({ kind: "fade", x: 0, y: h * 0.25, w, h: h * 0.75, color: shade(primary, -0.6), from: 0, to: 0.95 });
+  L.push(rect(m, h - safe.bottom + 26 * u, 120 * u, 10 * u, accent, 5 * u));
+  return [
+    ...L,
+    ...x.flow(m, w - 2 * m, safe.top, h - safe.bottom, {
+      head: [{ t: "logo", pic: x.logo, h: 88 * u, plate: true }],
+      foot: [
+        pill(x, accent, x.inkOn(accent), "rubik"),
+        title(x, { size: 124 * u, min: 52 * u, lines: 4, weight: 700, color: WHITE, font: "oswald", leading: 1.1, before: 26 * u }),
+        sub(x, { color: "#eef2f6", font: "rubik", size: 42 * u, lines: 3, before: 22 * u }),
+      ],
+      footShare: 0.8,
+    }),
+  ];
+}
+
+/** A numbered step: the number as big as the screen allows, in the outline of a ring. */
+function adim(x: Ctx): Layer[] {
+  const { w, h, u, m, primary, accent } = x;
+  const safe = safeOf(x);
+  const s = Math.min(w, h) * (x.wide ? 0.3 : 0.5);
+  const top = safe.top + (x.wide ? 0 : 90 * u);
+  return [
+    rect(0, 0, w, h, PAPER),
+    disc(w - s * 0.7, -s * 0.2 + top * 0.2, s * 1.1, "Daire", accent, 0.16),
+    ring(m - 12 * u, top - 12 * u, s, "Halka", accent, 12 * u),
+    ...x.flow(m - 12 * u + s * 0.1, s * 0.8, top + s * 0.12, top + s * 0.8, {
+      body: [{ t: "text", role: "tag", text: x.c.tag.trim(), size: (x.wide ? 200 : 340) * u, min: 90 * u, lines: 1, weight: 400, color: primary, font: "bebas-neue", leading: 1, align: "middle" }],
+    }),
+    ...x.flow(m, w - 2 * m, top + s + 50 * u, h - safe.bottom, {
+      body: [
+        title(x, { size: 124 * u, min: 52 * u, lines: 3, weight: 800, color: primary, font: "manrope", leading: 1.08 }),
+        { t: "bar", w: 130 * u, h: 10 * u, fill: accent, before: 28 * u },
+        sub(x, { color: "#3f4c58", font: "manrope", size: 46 * u, lines: 4, before: 28 * u }),
+      ],
+      foot: [logoOf(x, 72)],
+      gap: 20 * u,
+    }),
+  ];
+}
+
+/** One number, centred, in concentric rings. */
+function rakamr(x: Ctx): Layer[] {
+  const { w, h, u, m, primary, accent, shade } = x;
+  const safe = safeOf(x);
+  const deep = shade(primary, -0.6);
+  const ink = x.inkOn(deep);
+  const s = Math.min(w, h);
+  const cy = safe.top + (h - safe.top - safe.bottom) * 0.42;
+  const rings = [1.3, 1, 0.7].map((k, i) => ring(w / 2 - (s * k) / 2, cy - (s * k) / 2, s * k, "Halka", accent, (3 + i * 2) * u, 0.25 + i * 0.25));
+  return [
+    rect(0, 0, w, h, deep),
+    ...rings,
+    ...x.flow(m, w - 2 * m, safe.top, h - safe.bottom, {
+      head: [pill(x, accent, x.inkOn(accent), "dm-sans")].map((p) => ({ ...p, center: true })),
+      body: [
+        { t: "bar", w: 2 * u, h: Math.max(0, (cy - safe.top) * 0.4), fill: deep, center: true },
+        title(x, { size: 340 * u, min: 90 * u, lines: 2, weight: 400, color: ink, font: "anton", leading: 1.04, align: "middle" }),
+        sub(x, { color: ink, font: "dm-sans", size: 48 * u, lines: 3, before: 30 * u, align: "middle" }),
+      ],
+      foot: [detail(x, { color: ink, font: "dm-sans", size: 28 * u, weight: 500, align: "middle" })],
+      gap: 20 * u,
+    }),
+  ];
+}
+
+/** A saying on dark: a large serif, the name under a short rule. */
+function soz(x: Ctx): Layer[] {
+  const { w, h, u, m, primary, accent, shade } = x;
+  const safe = safeOf(x);
+  const deep = shade(primary, -0.6);
+  return [
+    rect(0, 0, w, h, deep),
+    { kind: "text", role: "deco", x: m - 8 * u, y: safe.top - 20 * u, w: 320 * u, size: 340 * u, lines: ["“"], weight: 700, color: accent, leading: 1, font: "playfair-display" },
+    ...x.flow(m, w - 2 * m, safe.top + 220 * u, h - safe.bottom, {
+      body: [title(x, { size: 98 * u, min: 46 * u, lines: 8, weight: 600, color: WHITE, font: "playfair-display", leading: 1.22 })],
+      foot: [
+        { t: "bar", w: 100 * u, h: 6 * u, fill: accent },
+        { t: "text", role: "subtitle", text: x.c.subtitle, size: 44 * u, min: 28 * u, lines: 1, weight: 700, color: WHITE, font: "dm-sans", before: 26 * u },
+        detail(x, { color: "#cdd6df", font: "dm-sans", weight: 400, before: 10 * u }),
+        { ...logoOf(x, 70), before: 26 * u },
+      ],
+      footShare: 0.4,
+      gap: 30 * u,
+    }),
+  ];
+}
+
+/** The last frame: logo plate, a call, the address in a pill-like block. */
+function kapanis(x: Ctx): Layer[] {
+  const { w, h, u, m, primary, accent, shade } = x;
+  const safe = safeOf(x);
+  const s = Math.max(w, h) * 0.8;
+  const ink = x.inkOn(accent);
+  return [
+    { kind: "gradient", x: 0, y: 0, w, h, a: accent, b: shade(primary, -0.25) },
+    ring(w / 2 - s / 2, h * 0.42 - s / 2, s, "Halka", WHITE, 2.5 * u, 0.3),
+    ring(w / 2 - s * 0.35, h * 0.42 - s * 0.35, s * 0.7, "Halka", WHITE, 2.5 * u, 0.4),
+    ...x.flow(m, w - 2 * m, safe.top + 60 * u, h - safe.bottom, {
+      head: [{ t: "logo", pic: x.logo, h: 130 * u, plate: true, center: true }],
+      body: [
+        title(x, { size: 150 * u, min: 60 * u, lines: 3, weight: 800, color: ink, font: "montserrat", leading: 1.08, align: "middle" }),
+        sub(x, { color: ink, font: "montserrat", size: 44 * u, lines: 3, before: 30 * u, align: "middle" }),
+      ],
+      foot: [detail(x, { color: ink, font: "montserrat", size: 44 * u, weight: 800, align: "middle" })],
+      gap: 90 * u,
+    }),
+  ];
+}
+
+export const FAMILIES: Record<FamilyId, (x: Ctx) => Layer[]> = { atlas, manset, etki, muhur, ajanda, isik, pano, takvim, kanca, perde, adim, rakamr, soz, kapanis };

@@ -8,10 +8,11 @@
 // paid company license for organisations over three people, so it isn't used.
 import { FONT_FAMILY, FORMATS, svgOf, type El, type FormatId, type Measure } from "@/lib/studio";
 import { captionLines } from "@/lib/subtitles";
+import { backdropAt, ease, entranceAt, type Backdrop, type Entrance, type Transition } from "@/lib/studio-video";
 import { imageOf } from "./media";
 
-export interface Scene { id: string; els: El[]; seconds: number; caption?: string }
-export type Transition = "fade" | "slide" | "none";
+export interface Scene { id: string; els: El[]; seconds: number; caption?: string; enter?: Entrance; backdrop?: Backdrop }
+export type { Transition };
 export interface VideoOpts { format: FormatId; transition: Transition; motion: boolean; music?: File; fps?: number; captions?: boolean }
 
 const isFore = (e: El) => e.kind === "text" || (e.kind === "image" && !!e.logo);
@@ -38,7 +39,6 @@ const close = (l: Layers) => {
   l.bg.close();
   l.fg.close();
 };
-const ease = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : 1 - (1 - t) ** 3);
 
 /**
  * Records the scenes in real time (a 15-second video takes 15 seconds) and returns the file. `onProgress` gets 0–1.
@@ -148,12 +148,12 @@ export async function renderVideo(scenes: Scene[], opts: VideoOpts, measure: Mea
     // already moving during the transition and carries on without a jump.
     const localOf = (i: number, t: number) => t - starts[i] + (i > 0 ? T : 0);
     const drawScene = (l: Layers, i: number, local: number, alpha: number, dx: number) => {
-      const z = opts.motion ? 1 + 0.08 * Math.min(1, Math.max(0, local) / (scenes[i].seconds + T)) : 1;
+      const b = opts.motion ? backdropAt(scenes[i].backdrop ?? "yaklas", Math.max(0, local) / (scenes[i].seconds + T)) : backdropAt("sabit", 0);
       ctx.globalAlpha = alpha;
-      ctx.drawImage(l.bg, dx + (w - w * z) / 2, (h - h * z) / 2, w * z, h * z);
-      const e = opts.motion ? ease(local / ENTER_S) : 1;
-      ctx.globalAlpha = alpha * e;
-      ctx.drawImage(l.fg, dx, (1 - e) * h * 0.04, w, h);
+      ctx.drawImage(l.bg, dx + b.dx * w + (w - w * b.scale) / 2, (h - h * b.scale) / 2, w * b.scale, h * b.scale);
+      const f = entranceAt(scenes[i].enter ?? "yuksel", opts.motion ? ease(local / ENTER_S) : 1);
+      ctx.globalAlpha = alpha * f.alpha;
+      ctx.drawImage(l.fg, dx + f.dx * w + (w - w * f.scale) / 2, f.dy * h + (h - h * f.scale) / 2, w * f.scale, h * f.scale);
       ctx.globalAlpha = 1;
     };
     // Burnt-in caption of the scene on screen: a dark rounded box near the bottom, white text, at most 2 lines.
@@ -195,7 +195,21 @@ export async function renderVideo(scenes: Scene[], opts: VideoOpts, measure: Mea
       if (next && T && left < T) {
         const p = ease(1 - left / T);
         if (opts.transition === "fade") drawScene(next, i + 1, localOf(i + 1, t), p, 0);
-        else drawScene(next, i + 1, localOf(i + 1, t), 1, (1 - p) * w);
+        else if (opts.transition === "wipe") {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, 0, p * w, h);
+          ctx.clip();
+          drawScene(next, i + 1, localOf(i + 1, t), 1, 0);
+          ctx.restore();
+        } else if (opts.transition === "zoom") {
+          const z = 1.25 - 0.25 * p;
+          ctx.save();
+          ctx.translate((w - w * z) / 2, (h - h * z) / 2);
+          ctx.scale(z, z);
+          drawScene(next, i + 1, localOf(i + 1, t), p, 0);
+          ctx.restore();
+        } else drawScene(next, i + 1, localOf(i + 1, t), 1, (1 - p) * w);
       }
       const cap = scenes[i].caption?.trim();
       if (opts.captions && cap) drawCaption(cap);

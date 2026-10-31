@@ -5,11 +5,12 @@
 // apart. What comes back is validated like a project file (cleanEls): storage is the user's, but not trusted code.
 import { MAX_SLIDES } from "@/lib/deck";
 import { THEMES } from "@/lib/themes";
+import { cleanVideo, type SavedVideo } from "@/lib/studio-video";
 import { FORMATS, cleanEls, safeColor, type El, type FormatId, type TemplateId, TEMPLATES } from "@/lib/studio";
 
 /** A presentation: its slides (`els` is the first one, for the list) and the layouts' template. */
 export interface SavedDeck { template: string; primary: string; slides: El[][]; theme?: string }
-export interface Work { id: string; name: string; format: FormatId; template: TemplateId; els: El[]; thumb: string; updatedAt: number; deck?: SavedDeck }
+export interface Work { id: string; name: string; format: FormatId; template: TemplateId; els: El[]; thumb: string; updatedAt: number; deck?: SavedDeck; video?: SavedVideo }
 const STORE = "works";
 const MAX_WORKS = 200;
 
@@ -46,8 +47,9 @@ function clean(r: unknown): Work | null {
   if (!x || typeof x.id !== "string" || typeof x.format !== "string" || !Object.hasOwn(FORMATS, x.format)) return null;
   const els = cleanEls(x.els);
   const deck = cleanDeck(x.deck);
+  const video = cleanVideo(x.video);
   // A deck's open slide may be empty; its other slides aren't lost with it.
-  if (!els.length && !deck) return null;
+  if (!els.length && !deck && !video) return null;
   return {
     id: x.id.slice(0, 64),
     name: typeof x.name === "string" ? x.name.slice(0, 80) : "Adsız tasarım",
@@ -57,6 +59,7 @@ function clean(r: unknown): Work | null {
     thumb: typeof x.thumb === "string" && /^data:image\/(png|jpeg);base64,/.test(x.thumb) ? x.thumb : "",
     updatedAt: typeof x.updatedAt === "number" ? x.updatedAt : 0,
     ...(deck ? { deck } : {}),
+    ...(video ? { video } : {}),
   };
 }
 
@@ -65,6 +68,24 @@ export async function listWorks(user: string): Promise<Work[]> {
   try {
     const all = await req(d.transaction(STORE, "readonly").objectStore(STORE).getAll());
     return all.map(clean).filter((w): w is Work => !!w).sort((a, b) => b.updatedAt - a.updatedAt);
+  } finally {
+    d.close();
+  }
+}
+
+/** The scenes of a stored work, changed while another design is open on the canvas. A work since deleted stays deleted. */
+export async function patchVideo(user: string, id: string, video: SavedVideo | undefined): Promise<void> {
+  const d = await db(user);
+  try {
+    const t = d.transaction(STORE, "readwrite");
+    const store = t.objectStore(STORE);
+    const cur = await req(store.get(id));
+    if (cur) {
+      if (video) cur.video = video;
+      else delete cur.video;
+      await req(store.put(cur));
+    }
+    await done(t);
   } finally {
     d.close();
   }
