@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import warnings
 
@@ -36,7 +37,14 @@ SCAN_BUDGET = 150_000_000  # base64 bytes of scans per file: a small PDF can rep
 path = sys.argv[1]
 opts = PdfPipelineOptions(do_ocr=True, do_table_structure=True)
 # Tesseract's Turkish model keeps ğ, ı, İ and whole lines; Docling's default OCR doesn't. That default stays where it isn't installed.
-if shutil.which("tesseract"):
+def has_turkish():
+    if not shutil.which("tesseract"):
+        return False
+    r = subprocess.run(["tesseract", "--list-langs"], capture_output=True, text=True)
+    return "tur" in (r.stdout + r.stderr).split()
+
+
+if has_turkish():
     opts.ocr_options = TesseractCliOcrOptions(lang=["tur"])
 # Tables are often pasted screenshots: build cells from OCR, not the (missing) text layer.
 opts.table_structure_options.do_cell_matching = False
