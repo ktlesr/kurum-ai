@@ -877,6 +877,7 @@ export default function Studio({ username }: { username: string }) {
   const sceneFormat = scenes[0]?.format;
   // ---- Sunum ----
   const clearEditing = () => {
+    gesture.current = null; // an unfinished live change belongs to the design that is going away
     setHist({ past: [], future: [] }); // undo stays within one slide
     setPicked([]);
     setEditing(null);
