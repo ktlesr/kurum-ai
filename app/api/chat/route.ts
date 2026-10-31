@@ -17,7 +17,7 @@ import { retrieve, TOP_K, windows } from "@/lib/rag";
 import { getSetting } from "@/lib/db";
 import { findUrls, MAX_CHARS_TOTAL, onSite, parsePick, siteOf, WebError, webReason, type Page } from "@/lib/web";
 import { readWeb } from "@/lib/browser";
-import { parseSearchQuery, saysNotInDoc, searchWeb } from "@/lib/websearch";
+import { parseSearchQuery, searchWeb } from "@/lib/websearch";
 
 export const runtime = "nodejs";
 
@@ -26,7 +26,7 @@ const SYSTEM = `Kurum personeline yardımcı olan, yetkin ve yardımsever bir as
 Karşılaştırma, uyum/tutarlılık kontrolü, değerlendirme, yorum, öneri ya da fikir istenirse dokümanları incele ve kendi analizini yap; uzman bir danışman gibi gerekçeli, net bir görüş bildir. Dokümanlarda bu konuda hazır bir cümle geçmiyor diye "bilgi yok" deme: analizi sen yaparsın.
 Gerektiğinde genel bilgini de kullan (kavramlar, yöntemler, iyi uygulamalar); dokümandan gelen ile genel bilgiden gelen bilgiyi ayırt edilebilir yaz.
 Dokümanlara ait olgusal bilgiyi (rakam, tarih, ad, şart) uydurma: dokümanda yoksa bunu söyle.
-Sorunun cevabı dokümanda yoksa cevabına "Belgede yok." diye başla. Konuyu biliyorsan ardından ayrı bir paragrafta "Genel bilgime göre:" diye başlayarak cevap ver ve bunun doğrulanması gerektiğini belirt. Madde numarası, kurum adı, tarih, tutar gibi kesin bilgilerden emin değilsen tahmin etme, bilmediğini söyle.
+Sorunun cevabı dokümanda yoksa cevabına "Belgede yok." diye başla. Konuyu biliyorsan ardından ayrı bir paragrafta "Genel bilgime göre:" diye başlayarak cevap ver ve bunun doğrulanması gerektiğini belirt. Madde numarası, kurum adı, tarih, tutar gibi kesin bilgilerden emin değilsen tahmin etme, bilmediğini söyle. Belirli bir bilgi soruluyorsa ve belgede açıkça yazmıyorsa, belgenin başka bölümlerinden çıkarım yaparak o bilgiyi tamamlama.
 Mümkünse sayfa numarasını ("Sayfa 4") ya da sayfa adını ("Sheet: Bütçe") belirt.
 Sayıları dokümanda yazdığı gibi aktar; kendin hesap yapma, yuvarlama.
 "(?)" ile işaretli sayılar iki bağımsız okumanın uyuşmadığı belirsiz değerlerdir; kullanırsan "belirsiz okuma" diye belirt.
@@ -45,6 +45,8 @@ const NO_WEB = "\nBu soru için internet sonucu yok; güncel bilgi gerekiyorsa b
 const SEARCH_DECIDE = `Kullanıcının mesajları verilecek. Son mesajı cevaplamak için internette aramak gerekiyor mu? Güncel bilgi (kur, haber, tarih, fiyat, mevzuatın son hali) ya da senin kesin bilemeyeceğin belirli bir bilgi (kişi, kurum, madde numarası) soruluyorsa gerekir; selamlaşma, yazma, çeviri, kod, genel açıklama için gerekmez.
 Gerekmiyorsa yalnızca YOK yaz. Gerekiyorsa yalnızca kısa bir Türkçe arama sorgusu yaz; başka hiçbir şey yazma.`;
 const SEARCH_QUERY = `Kullanıcının mesajları verilecek. Son mesajı cevaplamak için kısa bir Türkçe internet arama sorgusu yaz. Yalnızca sorguyu yaz.`;
+// The model's own wording varies too much for a word list ("zikredilmemiştir", "açıkça yazmamaktadır"…).
+const NOT_IN_DOC = `Bir soru ve bir belgeye dayanarak verilmiş cevap verilecek. Cevap, sorulan bilginin belgede bulunmadığını ya da açıkça yazmadığını söylüyorsa yalnızca EVET, sorulanı belgeden cevaplıyorsa yalnızca HAYIR yaz.`;
 const SEARCH_URL = process.env.SEARCH_URL;
 /** Result pages read in full per search; the other results count with their snippets. */
 const SEARCH_READ = 3;
@@ -439,7 +441,13 @@ export async function POST(req: Request) {
         const claims = traceClaims(answer, selected.map((d) => ({ name: d.name, text: d.text })));
         if (claims.length) meta.claims = claims;
         // The documents don't hold it: the web may, as a clearly separate second part (the model reads no document here).
-        if (SEARCH_URL && !pages.length && !urls.length && saysNotInDoc(answer)) {
+        const notInDoc = SEARCH_URL && !pages.length && !urls.length
+          ? await chatOnce(chat, model, [{ role: "system", content: NOT_IN_DOC }, { role: "user", content: `Soru: ${asked0.slice(0, 2000)}\n\nCevap: ${answer.slice(0, 3000)}` }], signal, 5).catch((e) => {
+              if (signal.aborted) throw e;
+              return "";
+            })
+          : "";
+        if (/^\W*evet/i.test(notInDoc)) {
           const found = await search(SEARCH_QUERY);
           if (found.length) {
             send("\n\n---\n\n**Belgede değil, internetten:**\n\n");

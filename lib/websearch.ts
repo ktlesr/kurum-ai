@@ -28,6 +28,3 @@ export function parseSearchQuery(raw: string): string | null {
   const q = raw.trim().split("\n")[0].trim().replace(/^["'“”]+|["'“”.]+$/g, "");
   return !q || q.length > 150 || /^yok\b/i.test(q) ? null : q;
 }
-
-/** The answer's opening says the documents don't hold it (the rule in the chat's system message, in the model's wording). */
-export const saysNotInDoc = (answer: string) => /(belge|doküman|döküman)\S*[^]{0,100}?(\byok\b|geçmiyor|geçmemekte|bulunmuyor|bulunmamakta|belirtilmemiş|belirtilmiyor|yer almıyor|yer almamakta)/iu.test(answer.slice(0, 300));

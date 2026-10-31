@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { parseSearchQuery, saysNotInDoc, searchWeb } from "./websearch.ts";
+import { parseSearchQuery, searchWeb } from "./websearch.ts";
 
 let asked = "";
 const server = createServer((req, res) => {
@@ -40,13 +40,4 @@ test("parseSearchQuery: one line; YOK or a sentence-long reply is no query", () 
   assert.equal(parseSearchQuery("yok."), null);
   assert.equal(parseSearchQuery(""), null);
   assert.equal(parseSearchQuery("x".repeat(151)), null);
-});
-
-test("saysNotInDoc: the opening says the document doesn't hold it", () => {
-  assert.equal(saysNotInDoc("Belgede yok; genel bilgime göre: …"), true);
-  assert.equal(saysNotInDoc("Paylaştığınız dokümanın içeriğine göre, 493. madde ile ilgili doğrudan bir kurum ismi belirtilmemiştir."), true);
-  assert.equal(saysNotInDoc("Belgenin 4. sayfasına göre tutar 12 milyon TL'dir."), false);
-  assert.equal(saysNotInDoc("Belgede yer almaktadır."), false);
-  assert.equal(saysNotInDoc("Belgede geçmektedir: şart yerine getirilmiştir."), false);
-  assert.equal(saysNotInDoc("Tutar 12 milyon TL'dir. " + "x".repeat(300) + " belgede yok"), false);
 });
