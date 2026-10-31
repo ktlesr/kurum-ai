@@ -132,8 +132,8 @@ const MARK = /^( {0,3}(?:[-*+] )?"?)(&amp;|[^\s()]{1,3})\)(?= )/;
 
 /**
  * OCR's misread list marks, mended only where the list itself says what they must be: "b) … / e) … / ç) …" (Turkish order)
- * makes the middle one "c)", "g) / 8) / h)" makes it "ğ)", "Iİ) / 2)" makes it "1)", "h) / 1)" makes it "ı)". Nothing is
- * guessed from meaning; a mark with no such neighbours stays as read.
+ * makes the middle one "c)", "g) / 8) / h)" makes it "ğ)" and "Iİ) / 2)" makes it "1)". Nothing is guessed from
+ * meaning; a mark with no such neighbours stays as read, even a likely wrong one: "h) / 1)" may be a real sublist.
  */
 export function repairListMarks(text: string): string {
   const lines = text.split("\n");
@@ -153,7 +153,6 @@ export function repairListMarks(text: string): string {
     else if (at(p) >= 0 && at(n) - at(p) === 2) want = TR_LETTERS[at(p) + 1];
     else if (unreadable && Number.isNaN(num(p)) && n === "2") want = "1"; // a numbered list starting, also under a lettered item
     else if (unreadable && p === undefined && n === "b") want = "a";
-    else if (p === "h" && n === undefined && /^[1lI]$/.test(m[2])) want = "ı";
     if (want && want !== m[2]) lines[i] = m[1] + want + line.slice(m[0].length - 1);
   });
   return lines.join("\n");

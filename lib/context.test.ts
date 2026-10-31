@@ -68,10 +68,9 @@ test("repairListMarks: only what the list's own order decides", () => {
   assert.equal(repairListMarks("- g) A\n\n- 5) B\n\n- h) C"), "- g) A\n\n- ğ) B\n\n- h) C");
   assert.equal(repairListMarks("Başlık\nIİ) A\n2) B\n3) C"), "Başlık\n1) A\n2) B\n3) C");
   assert.equal(repairListMarks("Iİ) A\nb) B"), "a) A\nb) B");
-  assert.equal(repairListMarks("g) A\nğ) B\nh) C\n1) D\n\nParagraf"), "g) A\nğ) B\nh) C\nı) D\n\nParagraf");
   assert.equal(repairListMarks("1) A\n9) B\n3) C"), "1) A\n2) B\n3) C");
   assert.equal(repairListMarks("g) A\n&amp;) B\nh) C"), "g) A\nğ) B\nh) C");
   assert.equal(repairListMarks('"c) Başlık\nIİ) A\n2) B'), '"c) Başlık\n1) A\n2) B');
   // No neighbours to say otherwise, or a list that may really skip.
-  for (const t of ["a) A\nb) B\n2) Alt", "1) A\nb) B", "a) A\nc) B", "e) Tek satır", "b) A\n1) B\n2) C", "a) A\nx) B\nd) C", "Sayfa 2) gibi"]) assert.equal(repairListMarks(t), t);
+  for (const t of ["h) A\n1) Alt\n\nParagraf", "a) A\nb) B\n2) Alt", "1) A\nb) B", "a) A\nc) B", "e) Tek satır", "b) A\n1) B\n2) C", "a) A\nx) B\nd) C", "Sayfa 2) gibi"]) assert.equal(repairListMarks(t), t);
 });
