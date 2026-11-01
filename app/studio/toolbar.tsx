@@ -5,11 +5,15 @@ import type { ReactNode } from "react";
 import {
   AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, ArrowUpToLine, Bold, Copy, ImagePlus, Italic, Lock, LockOpen, Minus, Plus, SlidersHorizontal, Trash2, Underline,
 } from "lucide-react";
-import type { AlignTo, El } from "@/lib/studio";
+import { TEXT_WEIGHTS, type AlignTo, type El } from "@/lib/studio";
 import FontPicker from "./font-picker";
 
 const btn = "grid size-8 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-subtle hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent";
 const on = "bg-accent-soft text-accent";
+/** A press on a button leaves the text selection being edited where it is. */
+export const keepSelection = (e: React.MouseEvent) => {
+  if (!(e.target as Element).closest("input, select, label")) e.preventDefault();
+};
 const Sep = () => <span className="mx-1 h-5 w-px shrink-0 bg-line" aria-hidden />;
 
 function ColorBtn({ label, value, set }: { label: string; value: string; set: (c: string) => void }) {
@@ -72,7 +76,7 @@ export default function Toolbar({ el, count, username, aligns, onPatch, onFont, 
 
   const L = el.locked;
   return (
-    <div className={shell} role="toolbar" aria-label={`${el.name} ayarları`}>
+    <div className={shell} role="toolbar" aria-label={`${el.name} ayarları`} data-text-tools onMouseDown={keepSelection}>
       {el.kind === "text" && (
         <>
           <div className="w-44 shrink-0">
@@ -89,6 +93,10 @@ export default function Toolbar({ el, count, username, aligns, onPatch, onFont, 
           <Icon label="Yazıyı büyüt" disabled={L} onClick={() => onPatch({ size: Math.min(600, Math.round(el.size) + 2), auto: false })}><Plus size={14} /></Icon>
           <Sep />
           <ColorBtn label="Yazı rengi" value={el.color} set={(color) => onPatch({ color })} />
+          <select aria-label="Kalınlık" title="Kalınlık" disabled={L} value={el.weight} onChange={(e) => onPatch({ weight: +e.target.value })} className="h-8 shrink-0 rounded-md border border-line bg-panel px-1 text-sm outline-none focus:border-accent">
+            {!TEXT_WEIGHTS.some((w) => w.v === el.weight) && <option value={el.weight}>{el.weight}</option>}
+            {TEXT_WEIGHTS.map((w) => <option key={w.v} value={w.v}>{w.label}</option>)}
+          </select>
           <Icon label="Kalın" active={el.weight >= 600} disabled={L} onClick={() => onPatch({ weight: el.weight >= 600 ? 400 : 700 })}><Bold size={15} /></Icon>
           <Icon label="Eğik" active={!!el.italic} disabled={L} onClick={() => onPatch({ italic: !el.italic || undefined })}><Italic size={15} /></Icon>
           <Icon label="Altı çizili" active={!!el.underline} disabled={L} onClick={() => onPatch({ underline: !el.underline || undefined })}><Underline size={15} /></Icon>

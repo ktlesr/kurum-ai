@@ -137,7 +137,29 @@ export function DesignPreview({ design, content, slides, measure, master, userna
   );
 }
 
+
 const MAX_SOURCES = 5;
+/** Which of the user's documents to write from. */
+export function SourcePicker({ docs, value, onChange }: { docs: { id: string; name: string }[]; value: string[]; onChange: (ids: string[]) => void }) {
+  return (
+    <fieldset className="rounded-lg border border-line p-2">
+      <legend className="px-1 text-xs text-muted">Kaynaklar (en fazla {MAX_SOURCES})</legend>
+      <ul className="max-h-36 space-y-1 overflow-y-auto">
+        {docs.map((d) => {
+          const on = value.includes(d.id);
+          return (
+            <li key={d.id}>
+              <label className="flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={on} disabled={!on && value.length >= MAX_SOURCES} onChange={() => onChange(on ? value.filter((y) => y !== d.id) : [...value, d.id])} />
+                <span className="min-w-0 flex-1 truncate" title={d.name}>{d.name}</span>
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+    </fieldset>
+  );
+}
 
 export function DeckPanel({ docs, measure, username, design, onDesign, onStart, onBlank, onNote }: {
   measure?: Measure;
@@ -206,22 +228,7 @@ export function DeckPanel({ docs, measure, username, design, onDesign, onStart, 
       <DesignList current={design.id} onPick={onDesign} />
       <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={3} maxLength={2000} placeholder="Sunumun konusu, hedef kitlesi, öne çıkacak noktalar" aria-label="Sunumun konusu" className={`${field} resize-y`} />
       {docs.length > 0 && (
-        <fieldset className="rounded-lg border border-line p-2">
-          <legend className="px-1 text-xs text-muted">Kaynaklar (en fazla {MAX_SOURCES})</legend>
-          <ul className="max-h-36 space-y-1 overflow-y-auto">
-            {docs.map((d) => {
-              const on = docIds.includes(d.id);
-              return (
-                <li key={d.id}>
-                  <label className="flex items-center gap-2 text-xs">
-                    <input type="checkbox" checked={on} disabled={!on && docIds.length >= MAX_SOURCES} onChange={() => setDocIds((x) => (on ? x.filter((y) => y !== d.id) : [...x, d.id]))} />
-                    <span className="min-w-0 flex-1 truncate" title={d.name}>{d.name}</span>
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
-        </fieldset>
+        <SourcePicker docs={docs} value={docIds} onChange={setDocIds} />
       )}
       <label className="flex items-center justify-between gap-2 text-xs text-muted">
         Slayt sayısı

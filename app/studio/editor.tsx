@@ -3,7 +3,7 @@
 // The studio canvas: the same primitives the export draws (lib/studio draw), as React SVG, plus selection, move,
 // resize handles, snapping guides and in-place text editing. Coordinates are design pixels (the SVG viewBox).
 import { useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { FORMATS, aabb, dashOf, draw, familyOf, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl, gradVector, MAX_PIC_ZOOM, picBox, type PicView } from "@/lib/studio";
+import { FORMATS, aabb, dashOf, draw, familyOf, textStyleAt, tfAttr, type El, type FormatId, type Measure, type Prim, type TextEl, type TextRun, gradVector, MAX_PIC_ZOOM, picBox, type PicView } from "@/lib/studio";
 import { spacingSnap, type GapMark } from "@/lib/snap";
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
@@ -115,12 +115,182 @@ export function PrimView({ p, k, uid }: { p: Prim; k: number; uid: string }) {
         fontSize={p.size} fontWeight={p.weight} fill={p.color} textAnchor={p.anchor === "start" ? undefined : p.anchor} letterSpacing={p.tracking || undefined}
         fontStyle={p.italic ? "italic" : undefined} textDecoration={p.underline ? "underline" : undefined} {...common} style={{ fontFamily: familyOf(p.font) }}
       >
-        {p.lines.map((line, i) => (
+        {p.rich?.map((l, i) => l.segs.map((s, j) => (
+          <tspan key={`${i}-${j}`} {...(j ? {} : { x: p.x, y: l.baseline })} fontSize={s.size} fontWeight={s.weight} fill={s.color} fontStyle={s.italic ? "italic" : undefined} textDecoration={s.underline ? "underline" : undefined} style={s.font !== p.font ? { fontFamily: familyOf(s.font) } : undefined}>
+            {s.text}
+          </tspan>
+        )))}
+        {!p.rich && p.lines.map((line, i) => (
           <tspan key={i} x={p.x} y={p.y + p.size * (0.9 + i * p.leading)}>
             {line}
           </tspan>
         ))}
       </text>
+    </>
+  );
+}
+
+const runsKey = (e: TextEl) => JSON.stringify([e.text, e.runs ?? []]);
+/** Where a character offset lies in the box's text. */
+function nodeAt(box: HTMLElement, at: number): [Node, number] {
+  const walk = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+  let left = at, last: Text | null = null;
+  for (let n = walk.nextNode() as Text | null; n; n = walk.nextNode() as Text | null) {
+    if (left <= n.length) return [n, left];
+    left -= n.length;
+    last = n;
+  }
+  return last ? [last, last.length] : [box, 0];
+}
+const rangeOf = (box: HTMLElement, from: number, to: number) => {
+  const r = document.createRange();
+  r.setStart(...nodeAt(box, from));
+  r.setEnd(...nodeAt(box, to));
+  return r;
+};
+/** The text and its styled parts as they stand in the box after typing; each part knows its style from when it was drawn. */
+function readBox(box: HTMLElement): { text: string; runs?: TextRun[] } {
+  const walk = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+  let text = "";
+  const runs: TextRun[] = [];
+  for (let n = walk.nextNode() as Text | null; n; n = walk.nextNode() as Text | null) {
+    const style = n.parentElement?.closest<HTMLElement>("[data-r]")?.dataset.r;
+    if (style && n.length) {
+      const last = runs.at(-1);
+      const parsed = JSON.parse(style) as TextRun;
+      if (last && last.to === text.length && JSON.stringify({ ...last, from: 0, to: 0 }) === JSON.stringify({ ...parsed, from: 0, to: 0 })) last.to += n.length;
+      else runs.push({ ...parsed, from: text.length, to: text.length + n.length });
+    }
+    text += n.data;
+  }
+  // The browser keeps a last line break of its own for the caret to stand on.
+  if (text.endsWith("\n")) text = text.slice(0, -1);
+  const clipped = runs.map((r) => ({ ...r, to: Math.min(r.to, text.length) })).filter((r) => r.to > r.from);
+  return { text, runs: clipped.length ? clipped : undefined };
+}
+/** In-place text: styled like the result, selecting part of it lets the controls change just that part. */
+function TextBox({ el, scale, onText, onDone, onSel }: { el: TextEl; scale: number; onText: (t: { text: string; runs?: TextRun[] }) => void; onDone: () => void; onSel?: (s: { from: number; to: number } | null) => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  const drawn = useRef<string | null>(null);
+  const sel = useRef<{ from: number; to: number } | null>(null);
+  const report = useRef(onSel);
+  const done = useRef(onDone);
+  useLayoutEffect(() => {
+    report.current = onSel;
+    done.current = onDone;
+  });
+  const HL = (globalThis as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+  const Highlight = (globalThis as { Highlight?: new (r: Range) => unknown }).Highlight;
+  /** Focus in a control hides the browser's selection: the part it changes stays marked. */
+  const mark = () => {
+    const b = box.current, s = sel.current;
+    if (!HL || !Highlight) return;
+    if (b && s && document.activeElement !== b) HL.set("k-text-sel", new Highlight(rangeOf(b, s.from, s.to)));
+    else HL.delete("k-text-sel");
+  };
+  // Drawn anew when the text or its parts changed from outside; what was typed is already there (and may be mid-composition).
+  useLayoutEffect(() => {
+    const b = box.current!;
+    const key = runsKey(el);
+    if (drawn.current === key) return;
+    const first = drawn.current === null;
+    drawn.current = key;
+    const focused = document.activeElement === b;
+    b.textContent = "";
+    let at = 0;
+    const piece = (to: number, run?: TextRun) => {
+      if (to <= at) return;
+      const t = document.createTextNode(el.text.slice(at, to));
+      at = to;
+      if (!run) return void b.append(t);
+      const look = textStyleAt(el, run.from);
+      const { from: _f, to: _t, ...style } = run;
+      const s = document.createElement("span");
+      s.dataset.r = JSON.stringify(style);
+      Object.assign(s.style, { fontSize: `${look.size}px`, fontWeight: String(look.weight), fontStyle: look.italic ? "italic" : "normal", textDecoration: look.underline ? "underline" : "none", color: look.color, fontFamily: familyOf(look.font) });
+      s.append(t);
+      b.append(s);
+    };
+    for (const r of el.runs ?? []) {
+      piece(Math.max(at, Math.min(r.from, el.text.length)));
+      piece(Math.min(r.to, el.text.length), r);
+    }
+    piece(el.text.length);
+    if (first) {
+      b.focus();
+      const end = rangeOf(b, el.text.length, el.text.length);
+      getSelection()?.removeAllRanges();
+      getSelection()?.addRange(end);
+    } else if (focused && sel.current) {
+      getSelection()?.removeAllRanges();
+      getSelection()?.addRange(rangeOf(b, sel.current.from, sel.current.to));
+    }
+    mark();
+  });
+  useEffect(() => {
+    const b = box.current!;
+    const onChange = () => {
+      const s = getSelection();
+      if (document.activeElement !== b || !s?.rangeCount || !b.contains(s.anchorNode)) return;
+      const r = s.getRangeAt(0);
+      const before = document.createRange();
+      before.selectNodeContents(b);
+      before.setEnd(r.startContainer, r.startOffset);
+      const from = before.toString().length;
+      const next = r.collapsed ? null : { from, to: from + r.toString().length };
+      if (JSON.stringify(next) === JSON.stringify(sel.current)) return;
+      sel.current = next;
+      report.current?.(next);
+    };
+    // Pressing outside the box and the controls that work on it ends the editing.
+    const away = (e: PointerEvent) => {
+      const t = e.target as Element;
+      if (!b.contains(t) && !t.closest?.("[data-text-tools]")) done.current();
+    };
+    document.addEventListener("selectionchange", onChange);
+    document.addEventListener("pointerdown", away, true);
+    return () => {
+      document.removeEventListener("selectionchange", onChange);
+      document.removeEventListener("pointerdown", away, true);
+      HL?.delete("k-text-sel");
+      report.current?.(null);
+    };
+  }, [HL]);
+  return (
+    <>
+      <style>{`::highlight(k-text-sel){background:rgb(59 130 246 / .35)}`}</style>
+      <div
+        ref={box}
+        role="textbox"
+        aria-multiline
+        aria-label={`${el.name} metni`}
+        lang="tr"
+        contentEditable="plaintext-only"
+        suppressContentEditableWarning
+        spellCheck={false}
+        onInput={() => {
+          const next = readBox(box.current!);
+          drawn.current = runsKey({ ...el, ...next });
+          onText(next);
+        }}
+        onFocus={mark}
+        onBlur={(e) => {
+          mark();
+          const to = e.relatedTarget as Element | null;
+          if (to && !to.closest("[data-text-tools]")) onDone(); // Tab; a window losing focus isn't leaving the text
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Escape") onDone();
+        }}
+        style={{
+          width: "100%", height: "100%", boxSizing: "border-box", outline: `${2 * scale}px solid #3b82f6`, background: "rgba(255,255,255,0.12)", cursor: "text", userSelect: "text", whiteSpace: "pre-wrap", overflowWrap: "break-word",
+          color: el.color, fontFamily: familyOf(el.font), fontSize: el.size, fontWeight: el.weight, lineHeight: el.leading, fontStyle: el.italic ? "italic" : undefined, textDecoration: el.underline && !el.runs?.length ? "underline" : undefined,
+          letterSpacing: el.tracking || undefined, textAlign: el.align === "middle" ? "center" : el.align === "end" ? "right" : "left",
+          padding: el.bg ? `0 ${el.size * 0.8}px` : 0, overflow: "hidden", textTransform: el.upper ? "uppercase" : undefined,
+        }}
+      />
     </>
   );
 }
@@ -136,6 +306,8 @@ interface Props {
   onChange: (els: El[], commit: boolean) => void;
   editing: string | null;
   onEditing: (id: string | null) => void;
+  /** Which part of the text being edited is selected. */
+  onTextSel?: (s: { from: number; to: number } | null) => void;
   /** Double click on a picture holder: choose its picture. */
   onFillPicture?: (id: string) => void;
   /** The shape whose picture is being placed: dragging moves the picture, not the shape; the wheel zooms it. */
@@ -144,7 +316,7 @@ interface Props {
   onMenu?: (id: string | null, x: number, y: number) => void;
 }
 
-export default function Editor({ format, els, measure, selected, onSelect, onChange, editing, onEditing, onFillPicture, placing, onMenu }: Props) {
+export default function Editor({ format, els, measure, selected, onSelect, onChange, editing, onEditing, onTextSel, onFillPicture, placing, onMenu }: Props) {
   const { w: W, h: H } = FORMATS[format];
   const uid = useId().replace(/:/g, "");
   const svg = useRef<SVGSVGElement>(null);
@@ -408,7 +580,7 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
   const chosen = els.filter((e) => selected.includes(e.id));
   const sel = chosen.length === 1 ? chosen[0] : undefined;
   const editEl = els.find((e) => e.id === editing && e.kind === "text") as TextEl | undefined;
-  const prims = draw(editEl ? els.map((e) => (e.id === editEl.id ? { ...e, text: "" } : e)) : els, measure);
+  const prims = draw(editEl ? els.map((e) => (e.id === editEl.id ? { ...e, text: "", runs: undefined } : e)) : els, measure);
   const hs = 11 * scale; // handle size on screen ≈ 11 px
   const stroke = 1.5 * scale;
 
@@ -421,7 +593,7 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
       onPointerDown={(e) => startMarquee(e)}
       onPointerMove={move}
       onContextMenu={(e) => {
-        if ((e.target as Element).closest("textarea")) return; // the text being edited keeps the browser's menu
+        if ((e.target as Element).closest("[contenteditable]")) return; // the text being edited keeps the browser's menu
         e.preventDefault();
         onSelect([]);
         onMenu?.(null, e.clientX, e.clientY);
@@ -535,26 +707,15 @@ export default function Editor({ format, els, measure, selected, onSelect, onCha
 
       {editEl && (
         <foreignObject x={editEl.x} y={editEl.y} width={Math.max(editEl.w, 40)} height={Math.max(editEl.h, editEl.size * editEl.leading)} transform={rotAttr(editEl)}>
-          <textarea
-            autoFocus
-            aria-label={`${editEl.name} metni`}
-            lang="tr"
-            value={editEl.text}
-            onPointerDown={(e) => e.stopPropagation()}
-            onChange={(e) => onChange(els.map((x) => (x.id === editEl.id ? { ...x, text: e.target.value } : x)), false)}
-            onBlur={() => {
+          <TextBox
+            key={editEl.id}
+            el={editEl}
+            scale={scale}
+            onSel={onTextSel}
+            onText={(t) => onChange(live.current.map((x) => (x.id === editEl.id ? { ...x, ...t } as El : x)), false)}
+            onDone={() => {
               onChange(live.current, true);
               onEditing(null);
-            }}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Escape") (e.target as HTMLTextAreaElement).blur();
-            }}
-            style={{
-              width: "100%", height: "100%", resize: "none", border: "none", outline: `${2 * scale}px solid #3b82f6`, background: "rgba(255,255,255,0.12)",
-              color: editEl.color, fontFamily: familyOf(editEl.font), fontSize: editEl.size, fontWeight: editEl.weight, lineHeight: editEl.leading,
-              letterSpacing: editEl.tracking || undefined, textAlign: editEl.align === "middle" ? "center" : editEl.align === "end" ? "right" : "left",
-              padding: editEl.bg ? `0 ${editEl.size * 0.8}px` : 0, overflow: "hidden", textTransform: editEl.upper ? "uppercase" : undefined,
             }}
           />
         </foreignObject>

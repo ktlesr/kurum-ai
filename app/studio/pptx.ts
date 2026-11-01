@@ -4,7 +4,7 @@
 // Pictures are drawn to PNG at their box first (PowerPoint needs a raster next to SVG, and "cover" crops are exact).
 // Fonts aren't embedded: PowerPoint uses the same family if it is installed, otherwise its own substitute.
 import { LIBRARY_FONTS } from "@/lib/font-list";
-import { FORMATS, draw, picBox, type El, type Measure, type Prim } from "@/lib/studio";
+import { FORMATS, draw, picBox, richParagraphs, type El, type Measure, type Prim, type RichSeg } from "@/lib/studio";
 
 const PX = 13.333 / FORMATS.yatay.w; // inches per design pixel
 const hex = (c: string) => c.replace("#", "").toUpperCase();
@@ -124,7 +124,12 @@ export async function downloadPptx(slides: El[][], measure: Measure, name: strin
         // wrap it for the font it really has.
         const cut = p.lines.at(-1)?.endsWith("…") && !e.text.trimEnd().endsWith("…");
         const text = cut ? p.lines.join("\n") : e.text;
-        slide.addText(e.upper ? text.toLocaleUpperCase("tr") : text, {
+        const scale = p.size / e.size;
+        const parts = p.rich && (cut ? p.rich.map((l) => l.segs) : richParagraphs(e, scale)).flatMap((segs) => (segs.length ? segs : [{ ...p, text: "", size: p.size, italic: false, underline: false } as unknown as RichSeg]).map((s, i, all) => ({
+          text: s.text,
+          options: { fontFace: family(s.font), fontSize: Math.max(1, Math.round(s.size * 0.5 * 10) / 10), color: hex(s.color), bold: s.weight >= 600, italic: s.italic, underline: s.underline ? { style: "sng" as const } : undefined, ...(i === all.length - 1 ? { breakLine: true } : {}) },
+        })));
+        slide.addText(parts || (e.upper ? text.toLocaleUpperCase("tr") : text), {
           // pptxgenjs order: left, right, bottom, top (points).
           ...box, margin: e.bg ? [p.size * 0.2, p.size * 0.2, 0, 0] : 0, fontFace: family(e.font), fontSize: Math.max(1, Math.round(p.size * 0.5 * 10) / 10), color: hex(e.color), bold: e.weight >= 600, italic: !!e.italic, underline: e.underline ? { style: "sng" } : undefined,
           align: e.align === "middle" ? "center" : e.align === "end" ? "right" : "left", valign: e.bg ? "middle" : "top", lineSpacingMultiple: e.leading, charSpacing: (p.tracking ?? 0) * 0.5 || undefined, transparency,

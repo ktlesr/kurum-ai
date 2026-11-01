@@ -1,7 +1,7 @@
 // Run: pnpm test. Görsel Stüdyo editable design: template → elements, drawing, boxes hugging text, project import.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanEls, draw, fromTemplate, hug, svgOf, type Design, type El, type Measure, type TextEl } from "./studio.ts";
+import { cleanEls, draw, editedText, fromTemplate, hug, setTextStyle, svgOf, textStyleAt, type Design, type El, type Measure, type TextEl } from "./studio.ts";
 
 const measure: Measure = (t, size) => t.length * size * 0.55;
 const PNG = "data:image/png;base64,iVBORw0KGgo=";
@@ -95,3 +95,43 @@ test("cleanEls (review): impossible picture sizes, oversized rasters and repeate
   assert.equal(new Set(dup.map((e) => e.id)).size, 4);
   assert.ok(!svgOf("kare", cleanEls([{ kind: "shape", x: 1e999, w: "big" }]), measure).includes("NaN"));
 });
+
+test("part of a text: its own style, kept through typing, wrapped, drawn and read back", () => {
+  const m: Measure = (t, size) => t.length * size * 0.5;
+  const base: TextEl = { id: "t", kind: "text", name: "M", x: 0, y: 0, w: 2000, h: 60, text: "kalın normal", size: 40, weight: 400, color: "#000000", align: "start", leading: 1.2, tracking: 0, auto: false };
+  const bold = setTextStyle(base, { weight: 700 }, { from: 0, to: 5 });
+  assert.deepEqual(bold.runs, [{ from: 0, to: 5, weight: 700 }]);
+  assert.equal(bold.weight, 400, "the rest stays");
+  assert.equal(textStyleAt(bold, 1).weight, 700);
+  assert.equal(textStyleAt(bold, 8).weight, 400);
+  // Overlap splits; the same style side by side joins.
+  const it = setTextStyle(bold, { italic: true }, { from: 3, to: 8 });
+  assert.deepEqual(it.runs, [{ from: 0, to: 3, weight: 700 }, { from: 3, to: 5, weight: 700, italic: true }, { from: 5, to: 8, italic: true }]);
+  assert.deepEqual(setTextStyle(setTextStyle(base, { weight: 700 }, { from: 0, to: 3 }), { weight: 700 }, { from: 3, to: 5 }).runs, [{ from: 0, to: 5, weight: 700 }]);
+  // Off for a part of a text that has it on.
+  assert.equal(setTextStyle({ ...base, italic: true }, { italic: undefined }, { from: 0, to: 5 }).runs?.[0].italic, false);
+  // For all of it: the parts give way.
+  const all = setTextStyle(it, { weight: 300 });
+  assert.equal(all.weight, 300);
+  assert.deepEqual(all.runs, [{ from: 3, to: 8, italic: true }]);
+  // Typing before a part moves it; typing after doesn't.
+  assert.deepEqual(editedText(bold, "çok kalın normal").runs, [{ from: 4, to: 9, weight: 700 }]);
+  assert.deepEqual(editedText(bold, "kalın normal!").runs, [{ from: 0, to: 5, weight: 700 }]);
+  // Drawn: a part per style on one line, in the SVG too.
+  const p = draw([bold], m)[0];
+  assert.ok(p.kind === "text" && p.rich);
+  assert.deepEqual(p.rich[0].segs.map((s) => [s.text, s.weight]), [["kalın", 700], [" normal", 400]]);
+  const svg = svgOf("kare", [bold], m);
+  assert.ok(svg.includes('font-weight="700"') && svg.includes(">kalın</tspan>"));
+  // A larger part makes its line taller; a narrow box wraps; hug follows.
+  const big = setTextStyle({ ...base, w: 150 }, { size: 80 }, { from: 0, to: 5 });
+  const [hugged] = hug([big], m) as TextEl[];
+  assert.equal(hugged.h, 80 * 1.2 + 40 * 1.2);
+  // From a file: bad values go, the good stay.
+  const [clean] = cleanEls([{ ...bold, runs: [{ from: 0, to: 5, weight: 700, color: "url(x)", font: "a b" }, { from: 9, to: 2 }, "x"] }]) as TextEl[];
+  assert.deepEqual(clean.runs, [{ from: 0, to: 5, weight: 700, color: "#14263d" }]);
+  // Without runs nothing changes for plain text.
+  const plain = draw([base], m)[0];
+  assert.ok(plain.kind === "text" && !plain.rich);
+});
+

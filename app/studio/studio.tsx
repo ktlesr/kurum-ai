@@ -13,11 +13,11 @@ import {
 import { Logo } from "../logo";
 import { ThemeToggle } from "../theme-toggle";
 import Home, { type Mode } from "./home";
-import Toolbar from "./toolbar";
+import Toolbar, { keepSelection } from "./toolbar";
 import Editor from "./editor";
 import ContextMenu, { type MenuItem } from "./context-menu";
 import ArtPicker from "./art-picker";
-import { DeckPanel, DesignList, DesignPreview, LayoutPicker, SlideStrip, loadDesign, loadTemplate, type DeckContent } from "./deck-panel";
+import { DeckPanel, DesignList, SourcePicker, DesignPreview, LayoutPicker, SlideStrip, loadDesign, loadTemplate, type DeckContent } from "./deck-panel";
 import { MasterPanel } from "./master-panel";
 import { composeDeck } from "@/lib/deck-compose";
 import { DESIGNS, type DeckDesign } from "@/lib/deck-design";
@@ -37,17 +37,11 @@ import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, 
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont, whiteLogo } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, MAX_PIC_ZOOM, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, isHolder, type GradientDir, type ShapeId, type ShapeStyle,
+  DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, MAX_PIC_ZOOM, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, isHolder, TEXT_WEIGHTS, editedText, fontsOfText, setTextStyle, textStyleAt, type TextStyle, type GradientDir, type ShapeId, type ShapeStyle,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
 /** Colour pairs to start a brand kit from (ana renk, vurgu). */
-const WEIGHTS = [
-  { v: 400, label: "Normal" },
-  { v: 600, label: "Yarı kalın" },
-  { v: 700, label: "Kalın" },
-  { v: 800, label: "Çok kalın" },
-];
 const HISTORY = 100;
 const AUTOSAVE_MS = 1500;
 const TOOLS = {
@@ -155,7 +149,8 @@ export default function Studio({ username }: { username: string }) {
   const [brief, setBrief] = useState("");
   // The user's own uploaded documents (TASK-025): a poster can be written from one; each field shows its page.
   const [docs, setDocs] = useState<{ id: string; name: string }[]>([]);
-  const [docId, setDocId] = useState("");
+  const [docIds, setDocIds] = useState<string[]>([]);
+  const [textSel, setTextSel] = useState<{ from: number; to: number } | null>(null); // the part of the text being edited that is selected
   // Each field's source with the exact text it was found for: shown only while the field still says that, so a
   // canvas edit, an undo or a new template never keeps a page that belongs to other words.
   const [sources, setSources] = useState<Partial<Record<Field, { claim: Claim; text: string }>>>({});
@@ -244,7 +239,7 @@ export default function Studio({ username }: { username: string }) {
 
   // Fonts the design uses: loaded on demand, then drawn again (until then: the default font).
   const [, setFontTick] = useState(0);
-  const usedFonts = (list: El[]) => [...new Set(list.flatMap((e) => (e.kind === "text" && e.font ? [e.font] : [])))];
+  const usedFonts = (list: El[]) => [...new Set(list.flatMap((e) => (e.kind === "text" ? fontsOfText(e) : [])))];
   const fontKey = usedFonts(els ?? []).join(",");
   useEffect(() => {
     let live = true;
@@ -330,6 +325,17 @@ export default function Studio({ username }: { username: string }) {
 
   const patch = (id: string, p: Partial<El>, commit = true) => change(view.map((e) => (e.id === id ? ({ ...e, ...p } as El) : e)), commit);
   const sel = view.find((e) => e.id === selected && !e.master) ?? null; // the master is changed in its own panel
+  // While part of a text is selected, the controls show and change that part.
+  const textRange = sel?.kind === "text" && editing === sel.id && !sel.bg && textSel && textSel.to > textSel.from ? textSel : null;
+  const shownSel: El | null = sel?.kind === "text" && textRange ? { ...sel, ...textStyleAt(sel, textRange.from) } : sel;
+  const patchSel = (p: Partial<El>, commit = true) => {
+    if (sel?.kind !== "text") return sel && patch(sel.id, p, commit);
+    const entries = Object.entries(p);
+    const isStyle = ([k]: [string, unknown]) => ["size", "weight", "italic", "underline", "font", "color"].includes(k);
+    const style: TextStyle = Object.fromEntries(entries.filter(isStyle));
+    const rest = Object.fromEntries(entries.filter((x) => !isStyle(x)));
+    change(view.map((e) => (e.id === sel.id ? ({ ...(Object.keys(style).length ? setTextStyle(sel, style, textRange) : sel), ...rest } as El) : e)), commit);
+  };
 
   const saveBrand = (b: Brand) => {
     setBrand(b);
@@ -375,14 +381,14 @@ export default function Studio({ username }: { username: string }) {
     cancelSuggest();
     setOwnText(true);
     setContent((c) => ({ ...c, [k]: v }));
-    if (els) change(els.map((e) => (e.kind === "text" && e.role === k ? { ...e, text: v } : e)), false);
+    if (els) change(els.map((e) => (e.kind === "text" && e.role === k ? { ...e, ...editedText(e, v) } : e)), false);
   };
   const applyContent = (c: Content) => {
     setOwnText(true);
     setContent(c);
     // The design as it is now: the user may have moved or added things while the suggestion was coming.
     const cur = now.current.els;
-    if (cur) change(cur.map((e) => (e.kind === "text" && e.role && e.role !== "deco" ? { ...e, text: c[e.role] } : e)));
+    if (cur) change(cur.map((e) => (e.kind === "text" && e.role && e.role !== "deco" ? { ...e, text: c[e.role], runs: undefined } : e)));
   };
 
   const chooseTemplate = (t: TemplateId) => {
@@ -412,7 +418,7 @@ export default function Studio({ username }: { username: string }) {
     setBusy("fill");
     setNote(null);
     try {
-      const r = await fetch("/api/studio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ template, brief, ...(docId ? { docId } : {}) }), signal: ac.signal });
+      const r = await fetch("/api/studio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ template, brief, docIds }), signal: ac.signal });
       const j = (await r.json().catch(() => ({}))) as { content?: Content; error?: string; sources?: Partial<Record<Field, Claim>> };
       if (ac.signal.aborted) return; // edited or switched meanwhile: keep the user's version
       if (!r.ok || !j.content) throw new Error(j.error ?? "Öneri alınamadı.");
@@ -423,7 +429,7 @@ export default function Studio({ username }: { username: string }) {
       setNote(
         missing
           ? { kind: "error", text: `Metinler yazıldı; ${missing} alan belgede eşleşmedi (kırmızı). Kontrol edin.` }
-          : { kind: "ok", text: docId ? "Metinler belgeden yazıldı; her alanın sayfası yanında. Tuvalde ya da soldan düzenleyebilirsiniz." : "Metinler yazıldı. Tuvalde çift tıklayarak ya da soldan düzenleyebilirsiniz." },
+          : { kind: "ok", text: docIds.length ? "Metinler belgeden yazıldı; her alanın sayfası yanında. Tuvalde ya da soldan düzenleyebilirsiniz." : "Metinler yazıldı. Tuvalde çift tıklayarak ya da soldan düzenleyebilirsiniz." },
       );
     } catch (e) {
       if (!ac.signal.aborted) setNote({ kind: "error", text: (e as Error).message });
@@ -686,7 +692,7 @@ export default function Studio({ username }: { username: string }) {
   };
   /** Looks without content: colours, type, corners, transparency (same kind of element only). */
   const styleOf = (e: El): Partial<El> =>
-    e.kind === "text" ? { color: e.color, size: e.size, weight: e.weight, align: e.align, leading: e.leading, tracking: e.tracking, upper: e.upper, italic: e.italic, underline: e.underline, font: e.font, bg: e.bg, opacity: e.opacity, auto: e.auto, shadow: e.shadow }
+    e.kind === "text" ? { color: e.color, size: e.size, weight: e.weight, align: e.align, leading: e.leading, tracking: e.tracking, upper: e.upper, italic: e.italic, underline: e.underline, font: e.font, bg: e.bg, opacity: e.opacity, auto: e.auto, shadow: e.shadow, runs: undefined }
     : e.kind === "shape" ? { fill: e.fill, radius: e.radius, opacity: e.opacity, stroke: e.stroke, noFill: e.noFill, shadow: e.shadow }
     : { radius: e.radius, opacity: e.opacity, shadow: e.shadow };
   const pasteStyle = (id: string) => {
@@ -781,6 +787,9 @@ export default function Studio({ username }: { username: string }) {
               }, disabled: L },
             ...(e.logo ? [] : [{ label: e.fit === "cover" ? "Tamamını göster (sığdır)" : "Kutuyu doldur (kırp)", icon: <ImageIcon size={14} />, run: () => patch(e.id, { fit: e.fit === "cover" ? "contain" : "cover" }), disabled: L } as MenuItem]),
           ] as MenuItem[])
+        : []),
+      ...(e.kind === "shape"
+        ? (["-", { label: "Şekli değiştir", icon: <Shapes size={14} />, run: () => {}, disabled: L, sub: (Object.keys(SHAPES) as ShapeId[]).map((id): MenuItem => ({ label: SHAPES[id].label, icon: <ShapeIcon id={id} style="fill" />, run: () => patch(e.id, swapShape(e, id)) })) }] as MenuItem[])
         : []),
       ...(e.kind === "shape" && e.shape !== "line"
         ? (["-",
@@ -911,7 +920,7 @@ export default function Studio({ username }: { username: string }) {
     clearEditing();
     setWorkId(null);
     // The fonts of the slides and of the layouts on offer, so previews show them.
-    const fonts = new Set([...slides.flat(), ...template.layouts.flatMap((l) => l.els)].flatMap((e) => (typeof (e as { font?: unknown }).font === "string" ? [(e as { font: string }).font] : [])));
+    const fonts = new Set([...slides.flat(), ...template.layouts.flatMap((l) => l.els)].flatMap((e) => [...(typeof (e as { font?: unknown }).font === "string" ? [(e as { font: string }).font] : []), ...(((e as TextEl).runs ?? []).flatMap((r) => (r.font ? [r.font] : [])))]));
     Promise.allSettled([...fonts].map((id) => ensureFont(id, username))).then(() => setFontTick((n) => n + 1));
   };
   const openDeck = async (d: SavedDeck) => {
@@ -1080,7 +1089,11 @@ export default function Studio({ username }: { username: string }) {
   const savedDeck = (): SavedDeck | undefined => (deck ? { template: deck.template.id, primary: deck.primary, slides: withoutMaster(slidesNow()), ...(deck.theme ? { theme: deck.theme.name } : {}), ...(deck.design ? { design: deck.design.id } : {}), ...(deck.master ? { master: deck.master } : {}), ...(deck.content ? { content: deck.content } : {}) } : undefined);
 
   /** A font chosen for these (arrives after loading: applied to the design as it is then). */
-  const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => (e.kind === "text" && ids.includes(e.id) && !e.locked ? (font ? fitPill({ ...e, font: f }, font.measure) : { ...e, font: f }) : e)));
+  const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => {
+    if (e.kind !== "text" || !ids.includes(e.id) || e.locked) return e;
+    const next = setTextStyle(e, { font: f }, sel?.id === e.id ? textRange : null);
+    return font ? fitPill(next, font.measure) : next;
+  }));
   /** Everything drawn into a picture waits for its fonts (a design just opened may still be loading them), and gets
    *  its text boxes measured with them. */
   const fontsReady = async (list: El[]) => {
@@ -1523,17 +1536,11 @@ export default function Studio({ username }: { username: string }) {
     if (open === "ai") return (
       <section className={section}>
         {docs.length > 0 && (
-          <label className="block space-y-1">
-            <span className="text-xs font-medium">Belgeden yaz <span className="font-normal text-muted">(isteğe bağlı)</span></span>
-            <select value={docId} onChange={(e) => setDocId(e.target.value)} className={field}>
-              <option value="">Belge kullanma</option>
-              {docs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-          </label>
+          <SourcePicker docs={docs} value={docIds} onChange={setDocIds} />
         )}
         <textarea aria-label="Konu" value={brief} onChange={(e) => setBrief(e.target.value)} maxLength={2000} rows={4} placeholder="Konuyu anlatın: ör. 12 Kasım'da kongre salonunda yatırımcı buluşması, saat 10.00" className={`${field} resize-none`} />
         <div className="flex items-center gap-2">
-          <button onClick={suggest} disabled={(!brief.trim() && !docId) || busy === "fill"} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40">
+          <button onClick={suggest} disabled={(!brief.trim() && !docIds.length) || busy === "fill"} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40">
             {busy === "fill" ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {busy === "fill" ? "Yazılıyor…" : "Metinleri öner"}
           </button>
@@ -1543,7 +1550,7 @@ export default function Studio({ username }: { username: string }) {
             </button>
           )}
         </div>
-        <p className="text-xs text-muted">{docId ? "Metinler yalnızca seçilen belgedeki bilgilerle yazılır; belge zaten kurum sunucusunda. " : "Yalnızca bu açıklama kurum sunucusundaki modele gider. "}Görselleriniz tarayıcınızda kalır.</p>
+        <p className="text-xs text-muted">{docIds.length ? "Metinler yalnızca seçilen kaynaklardaki bilgilerle yazılır; kaynaklar zaten kurum sunucusunda. " : "Yalnızca bu açıklama kurum sunucusundaki modele gider. "}Görselleriniz tarayıcınızda kalır.</p>
       </section>
     );
     if (open === "text") return (
@@ -1736,7 +1743,7 @@ export default function Studio({ username }: { username: string }) {
         <p className="text-xs text-muted">Shift ya da Ctrl ile tıklayarak seçime ekleyip çıkarın; boş alanda sürükleyerek kutu içindekileri seçin. Aynı boyut ilk seçilene göre yapılır.</p>
       </section>
     ) : sel ? (
-      <Inspector key={sel.id} placing={placingNow === sel.id} onPlace={setPlacing} el={sel} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={(p, commit) => patch(sel.id, p, commit)} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onAlign={(how) => alignMany([sel.id], how, true)} />
+      <Inspector key={sel.id} placing={placingNow === sel.id} onPlace={setPlacing} el={shownSel!} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={patchSel} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onAlign={(how) => alignMany([sel.id], how, true)} />
     ) : (
       <section className={section}>
         <p className="text-sm text-muted">Tuvalde bir öğeye tıklayın: konumunu, boyutunu, gölgesini ve diğer ayarlarını buradan değiştirebilirsiniz.</p>
@@ -1936,11 +1943,11 @@ export default function Studio({ username }: { username: string }) {
           ) : showCanvas ? (
             <>
               <Toolbar
-                el={sel}
+                el={shownSel}
                 count={picked.length}
                 username={username}
                 aligns={ALIGNS}
-                onPatch={(p) => sel && patch(sel.id, p)}
+                onPatch={(p) => patchSel(p)}
                 onFont={(f) => sel && applyFont([sel.id], f)}
                 onDuplicate={() => duplicate(picked)}
                 onRemove={() => remove(picked)}
@@ -1952,7 +1959,7 @@ export default function Studio({ username }: { username: string }) {
               <div className="flex min-h-0 flex-1 overflow-auto p-4 md:p-8" style={{ containerType: "size", backgroundImage: "radial-gradient(var(--line) 1px, transparent 1px)", backgroundSize: "18px 18px" }} onPointerDown={() => { setSelected(null); setEditing(null); }}>
                 {font ? (
                   <div className="m-auto shrink-0 [&>svg]:size-full" style={{ aspectRatio: `${W} / ${H}`, width: `calc(min(100cqw, 100cqh * ${W / H}) * ${zoom})` }} onPointerDown={(e) => e.stopPropagation()}>
-                    <Editor placing={placingNow} onFillPicture={(id) => { const t = view.find((e) => e.id === id); if (t && isHolder(t)) fillPicture(id); else setPlacing(id); }} format={format} els={view} measure={font.measure} selected={picked} onSelect={setPicked} onChange={change} editing={editing} onEditing={setEditing} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
+                    <Editor placing={placingNow} onFillPicture={(id) => { const t = view.find((e) => e.id === id); if (t && isHolder(t)) fillPicture(id); else setPlacing(id); }} format={format} els={view} measure={font.measure} selected={picked} onSelect={setPicked} onChange={change} editing={editing} onEditing={setEditing} onTextSel={setTextSel} onMenu={(id, x, y) => setMenu({ items: menuItems(id), x, y, view })} />
                   </div>
                 ) : (
                   <p className="m-auto flex items-center gap-2 text-sm text-muted">{fontError || <><Loader2 size={16} className="animate-spin" /> Hazırlanıyor…</>}</p>
@@ -2194,16 +2201,16 @@ function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove
       </section>
 
       {el.kind === "text" && (
-        <section className={section}>
+        <section className={section} data-text-tools onMouseDown={keepSelection}>
           <h3 className={heading}>Yazı</h3>
           <FontPicker value={el.font} username={username} onPick={onFont} />
-          <textarea aria-label="Metin" value={el.text} onChange={(e) => live({ text: e.target.value })} onBlur={onCommit} rows={3} className={`${field} resize-y`} lang="tr" />
+          <textarea aria-label="Metin" value={el.text} onChange={(e) => live(editedText(el, e.target.value))} onBlur={onCommit} rows={3} className={`${field} resize-y`} lang="tr" />
           <div className="grid grid-cols-2 gap-2">
             <Num label="Yazı boyutu" value={el.size} min={6} max={600} onChange={(size) => live({ size, auto: false })} onCommit={onCommit} />
             <label className="block">
               <span className="mb-0.5 block text-[11px] text-muted">Kalınlık</span>
               <select className={small} value={el.weight} onChange={(e) => now({ weight: +e.target.value })}>
-                {WEIGHTS.map((w) => <option key={w.v} value={w.v}>{w.label}</option>)}
+                {TEXT_WEIGHTS.map((w) => <option key={w.v} value={w.v}>{w.label}</option>)}
               </select>
             </label>
           </div>

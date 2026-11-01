@@ -357,7 +357,12 @@ export type TextEl = Common & {
   auto: boolean;
   /** A filled, rounded box behind the text (the tag pill). */
   bg?: { fill: string; radius: number };
+  /** Parts of the text styled apart from the rest: sorted, not overlapping. Not on a pill, which has one look. */
+  runs?: TextRun[];
 };
+/** What part of a text can set for itself; `font: ""` is the default font, false turns off what the whole text has on. */
+export type TextStyle = { size?: number; weight?: number; italic?: boolean; underline?: boolean; font?: string; color?: string };
+export type TextRun = TextStyle & { from: number; to: number };
 export type ImageEl = Common & { kind: "image"; pic: Picture; fit: "cover" | "contain"; logo?: boolean; radius?: number };
 /**
  * rect (radius rounds the corners, up to a pill), ellipse, poly (points as 0–1 fractions of the box) or line (left to
@@ -390,7 +395,7 @@ export type Prim = PrimBase &
     | { kind: "ellipse"; x: number; y: number; w: number; h: number; fill: Fill | null; stroke?: Stroke }
     | { kind: "poly"; pts: [number, number][]; closed: boolean; fill: Fill | null; stroke?: Stroke }
     | { kind: "image"; x: number; y: number; w: number; h: number; pic: Picture; clip?: { x: number; y: number; w: number; h: number; radius: number } }
-    | { kind: "text"; x: number; y: number; anchor: "start" | "middle" | "end"; size: number; lines: string[]; weight: number; color: string; leading: number; tracking: number; italic?: boolean; underline?: boolean; font?: string }
+    | { kind: "text"; x: number; y: number; anchor: "start" | "middle" | "end"; size: number; lines: string[]; weight: number; color: string; leading: number; tracking: number; italic?: boolean; underline?: boolean; font?: string; rich?: RichLine[] }
   );
 
 /** SVG transform for a Tf (numbers only): rotate, then mirror around the same centre. */
@@ -619,7 +624,7 @@ export function refit(els: El[], from: FormatId, to: FormatId): El[] {
     const box = { ...e, x, y, w, h };
     // Outline and shadow sizes scale with everything else, so the proportions stay.
     const fx = { ...(e.shadow ? { shadow: { ...e.shadow, blur: e.shadow.blur * s, x: e.shadow.x * s, y: e.shadow.y * s } } : {}) };
-    if (e.kind === "text") return { ...box, ...fx, size: e.size * s, tracking: e.tracking * s, ...(e.bg ? { bg: { ...e.bg, radius: e.bg.radius * s } } : {}) } as El;
+    if (e.kind === "text") return { ...box, ...fx, size: e.size * s, tracking: e.tracking * s, ...(e.bg ? { bg: { ...e.bg, radius: e.bg.radius * s } } : {}), ...(e.runs ? { runs: e.runs.map((r) => (r.size ? { ...r, size: r.size * s } : r)) } : {}) } as El;
     if (e.kind === "shape" && e.stroke) Object.assign(fx, { stroke: { ...e.stroke, width: e.stroke.width * s } });
     return (e.radius ? { ...box, ...fx, radius: e.radius * s } : { ...box, ...fx }) as El;
   });
@@ -632,6 +637,10 @@ export function refit(els: El[], from: FormatId, to: FormatId): El[] {
 export function hug(els: El[], measure: Measure): El[] {
   return els.map((e) => {
     if (e.kind !== "text" || e.auto || e.bg) return e;
+    if (e.runs?.length) {
+      const tall = richLayout(e, measure).reduce((sum, l) => sum + l.size * e.leading, 0) || e.size * e.leading;
+      return Math.abs(tall - e.h) < 0.5 ? e : { ...e, h: tall };
+    }
     const t = e.upper ? e.text.toLocaleUpperCase("tr") : e.text;
     const width = (s: string, size: number, weight: number) => measure(s, size, weight, e.font) + e.tracking * s.length;
     const lines = fitText(t, Math.max(1, e.w), Number.MAX_SAFE_INTEGER, e.size, e.size, 999, e.weight, width, e.leading).lines.length;
@@ -645,6 +654,168 @@ export function fitPill(e: TextEl, measure: Measure): TextEl {
   if (!e.bg) return e;
   const t = (e.upper ? e.text.toLocaleUpperCase("tr") : e.text).replace(/\s+/g, " ");
   return { ...e, w: measure(t, e.size, e.weight, e.font) + e.tracking * t.length + e.size * 1.6 };
+}
+
+// ---- part of a text styled apart ------------------------------------------------------------------------------------
+export const TEXT_WEIGHTS = [{ v: 300, label: "İnce" }, { v: 400, label: "Normal" }, { v: 600, label: "Yarı kalın" }, { v: 700, label: "Kalın" }, { v: 800, label: "Çok kalın" }];
+const STYLE_KEYS = ["size", "weight", "italic", "underline", "font", "color"] as const;
+/** The text cut where its style changes, from its first character to its last. */
+function textPieces(e: TextEl): TextRun[] {
+  const out: TextRun[] = [];
+  let at = 0;
+  for (const r of e.runs ?? []) {
+    const from = Math.max(at, r.from), to = Math.min(e.text.length, r.to);
+    if (to <= from) continue;
+    if (from > at) out.push({ from: at, to: from });
+    out.push({ ...r, from, to });
+    at = to;
+  }
+  if (at < e.text.length) out.push({ from: at, to: e.text.length });
+  return out;
+}
+/** Sorted runs without those that style nothing, neighbours with the same style joined. */
+function tidyRuns(runs: TextRun[]): TextRun[] | undefined {
+  const out: TextRun[] = [];
+  const looks = ({ from: _f, to: _t, ...style }: TextRun) => JSON.stringify(STYLE_KEYS.map((k) => style[k]));
+  for (const r of runs) {
+    if (r.to <= r.from || STYLE_KEYS.every((k) => r[k] === undefined)) continue;
+    const last = out.at(-1);
+    if (last && last.to === r.from && looks(last) === looks(r)) last.to = r.to;
+    else out.push({ ...r });
+  }
+  return out.length ? out : undefined;
+}
+/** The look of one part: its own style over the whole text's. */
+const lookOf = (e: TextEl, s: TextStyle) => ({ size: s.size ?? e.size, weight: s.weight ?? e.weight, italic: s.italic ?? !!e.italic, underline: s.underline ?? !!e.underline, font: s.font ?? e.font, color: safeColor(s.color ?? e.color, "#14263d") });
+/** The text as the character at `at` shows it (what the toolbar shows for a selection). */
+export function textStyleAt(e: TextEl, at: number) {
+  const r = (e.runs ?? []).find((x) => x.from <= at && at < x.to);
+  const look = lookOf(e, r ?? {});
+  return { ...look, italic: look.italic || undefined, underline: look.underline || undefined };
+}
+/**
+ * A style on part of the text; without a range on all of it, which also clears that property from the parts (bold for
+ * everything means everything). Undefined turns a property off: for a part that has to be said explicitly.
+ */
+export function setTextStyle(e: TextEl, style: TextStyle, range?: { from: number; to: number } | null): TextEl {
+  const keys = STYLE_KEYS.filter((k) => k in style);
+  if (!range || range.to <= range.from || e.bg) {
+    const runs = (e.runs ?? []).map((r) => {
+      const c = { ...r };
+      for (const k of keys) delete c[k];
+      return c;
+    });
+    return { ...e, ...style, runs: tidyRuns(runs) };
+  }
+  const forced: TextStyle = Object.fromEntries(keys.map((k) => [k, style[k] ?? (k === "font" ? "" : false)]));
+  const out: TextRun[] = [];
+  for (const p of textPieces(e)) {
+    const a = Math.max(p.from, range.from), b = Math.min(p.to, range.to);
+    if (b <= a) {
+      out.push(p);
+      continue;
+    }
+    if (p.from < a) out.push({ ...p, to: a });
+    out.push({ ...p, ...forced, from: a, to: b });
+    if (b < p.to) out.push({ ...p, from: b });
+  }
+  return { ...e, runs: tidyRuns(out) };
+}
+/** Typed text replacing the old: the styled parts stay on the characters that stayed. */
+export function editedText(e: TextEl, text: string): Pick<TextEl, "text" | "runs"> {
+  if (!e.runs?.length) return { text, runs: undefined };
+  const old = e.text;
+  let pre = 0;
+  while (pre < old.length && pre < text.length && old[pre] === text[pre]) pre++;
+  let suf = 0;
+  while (suf < old.length - pre && suf < text.length - pre && old[old.length - 1 - suf] === text[text.length - 1 - suf]) suf++;
+  const shift = text.length - old.length;
+  const start = (at: number) => (at >= old.length - suf ? at + shift : Math.min(at, pre)); // typed right before a part: not in it
+  const end = (at: number) => (at <= pre ? at : at >= old.length - suf ? at + shift : pre);
+  return { text, runs: tidyRuns(e.runs.map((r) => ({ ...r, from: start(r.from), to: end(r.to) }))) };
+}
+/** All fonts a text uses. */
+export const fontsOfText = (e: TextEl) => [...(e.font ? [e.font] : []), ...(e.runs ?? []).flatMap((r) => (r.font ? [r.font] : []))];
+
+export type RichSeg = { text: string; size: number; weight: number; italic: boolean; underline: boolean; font?: string; color: string };
+export type RichLine = { segs: RichSeg[]; size: number; baseline: number };
+const pushSeg = (line: RichSeg[], s: RichSeg) => {
+  const last = line.at(-1);
+  if (last && JSON.stringify({ ...last, text: "" }) === JSON.stringify({ ...s, text: "" })) last.text += s.text;
+  else line.push({ ...s });
+};
+/** The parts of [a, b) as segments; drawn in capitals if the text is. */
+function segsOf(e: TextEl, pieces: TextRun[], a: number, b: number, scale: number): RichSeg[] {
+  return pieces.flatMap((p) => {
+    const from = Math.max(a, p.from), to = Math.min(b, p.to);
+    if (to <= from) return [];
+    const look = lookOf(e, p);
+    const t = e.text.slice(from, to);
+    return [{ ...look, size: look.size * scale, text: e.upper ? t.toLocaleUpperCase("tr") : t }];
+  });
+}
+/** Wrapped to the box like plain text (spaces collapse, empty lines go), each line as tall as its largest part. */
+export function richLayout(e: TextEl, measure: Measure, scale = 1): { segs: RichSeg[]; size: number }[] {
+  const pieces = textPieces(e);
+  const widthOf = (segs: RichSeg[]) => segs.reduce((w, s) => w + measure(s.text, s.size, s.weight, s.font) + e.tracking * scale * s.text.length, 0);
+  const lines: RichSeg[][] = [];
+  let line: RichSeg[] = [], used = 0, space = -1;
+  const flush = () => {
+    if (line.length) lines.push(line);
+    line = [];
+    used = 0;
+    space = -1;
+  };
+  for (const m of e.text.matchAll(/\n|[^\S\n]+|\S+/g)) {
+    const at = m.index, tok = m[0];
+    if (tok === "\n") flush();
+    else if (!tok.trim()) space = line.length ? at : -1;
+    else {
+      const word = segsOf(e, pieces, at, at + tok.length, scale);
+      const gap = space >= 0 ? segsOf(e, pieces, space, space + 1, scale).map((s) => ({ ...s, text: " " })) : [];
+      const w = widthOf(word);
+      if (line.length && used + widthOf(gap) + w > Math.max(1, e.w)) flush();
+      else if (gap.length) {
+        gap.forEach((s) => pushSeg(line, s));
+        used += widthOf(gap);
+      }
+      word.forEach((s) => pushSeg(line, s));
+      used += w;
+      space = -1;
+    }
+  }
+  flush();
+  return lines.map((segs) => ({ segs, size: Math.max(...segs.map((s) => s.size)) }));
+}
+/** Paragraphs at full length, for a program that wraps by itself (PowerPoint). */
+export function richParagraphs(e: TextEl, scale = 1): RichSeg[][] {
+  const pieces = textPieces(e);
+  let at = 0;
+  return e.text.split("\n").map((para) => {
+    const segs = segsOf(e, pieces, at, at + para.length, scale);
+    at += para.length + 1;
+    return segs;
+  });
+}
+/** Shrunk to the box as plain text is (down to 40% with "Kutuya sığdır"), what still can't fit cut with "…". */
+function richFit(e: TextEl, measure: Measure) {
+  const min = e.auto ? 0.4 : 1;
+  const room = e.auto ? Math.max(1, e.h + 0.5) : Math.max(e.size * e.leading, e.h + 0.5);
+  const tall = (ls: { size: number }[]) => ls.reduce((sum, l) => sum + l.size * e.leading, 0);
+  let scale = 1;
+  let lines = richLayout(e, measure, scale);
+  while (tall(lines) > room && scale > min) {
+    scale = Math.max(min, scale * 0.94);
+    lines = richLayout(e, measure, scale);
+  }
+  let keep = lines.length;
+  while (keep > 1 && tall(lines.slice(0, keep)) > room) keep--;
+  if (keep < lines.length) {
+    lines = lines.slice(0, keep);
+    const segs = lines[keep - 1].segs;
+    segs[segs.length - 1] = { ...segs[segs.length - 1], text: `${segs[segs.length - 1].text}…` };
+  }
+  return { scale, lines };
 }
 
 export function textLines(e: TextEl, measure: Measure) {
@@ -697,6 +868,16 @@ export function draw(els: El[], measure: Measure): Prim[] {
       const x = e.x + (e.w - iw) / 2;
       const y = e.y + (e.h - ih) / 2;
       out.push({ ...base, kind: "image", x, y, w: iw, h: ih, pic, ...(e.fit === "cover" || e.radius ? { clip: { x: e.x, y: e.y, w: e.w, h: e.h, radius: Math.min(e.radius ?? 0, e.w / 2, e.h / 2) } } : {}) });
+    } else if (e.runs?.length && !e.bg) {
+      const fit = richFit(e, measure);
+      let top = e.y;
+      const rich = fit.lines.map((l): RichLine => {
+        const baseline = top + l.size * 0.9;
+        top += l.size * e.leading;
+        return { ...l, baseline };
+      });
+      const x = e.align === "middle" ? e.x + e.w / 2 : e.align === "end" ? e.x + e.w : e.x;
+      out.push({ ...base, kind: "text", x, y: e.y, anchor: e.align, size: e.size * fit.scale, lines: rich.map((l) => l.segs.map((s) => s.text).join("")), weight: e.weight, color: safeColor(e.color, "#14263d"), leading: e.leading, tracking: e.tracking * fit.scale, rich, ...(e.font ? { font: e.font } : {}) });
     } else {
       const { size, lines, pad } = textLines(e, measure);
       const scale = size / e.size;
@@ -805,13 +986,16 @@ export function svgOf(format: FormatId, els: El[], measure: Measure, css = ""): 
       body.push(`<g${common(p)}>${img}</g>`);
     } else {
       // y is the top of the first line; the baseline sits ~0.9 em below it (Geist's ascent).
-      const spans = p.lines.map((line, i) => `<tspan x="${n(p.x)}" y="${n(p.y + p.size * (0.9 + i * p.leading))}">${esc(line)}</tspan>`).join("");
+      const part = (s: RichSeg, at: string) => `<tspan${at} font-size="${n(s.size)}" font-weight="${s.weight}" fill="${s.color}"${s.italic ? ` font-style="italic"` : ""}${s.underline ? ` text-decoration="underline"` : ""}${s.font && safeFontId(s.font) ? ` style="font-family:${familyOf(s.font)}"` : ""}>${esc(s.text)}</tspan>`;
+      const spans = p.rich
+        ? p.rich.map((l) => l.segs.map((s, i) => part(s, i ? "" : ` x="${n(p.x)}" y="${n(l.baseline)}"`)).join("")).join("")
+        : p.lines.map((line, i) => `<tspan x="${n(p.x)}" y="${n(p.y + p.size * (0.9 + i * p.leading))}">${esc(line)}</tspan>`).join("");
       const anchor = p.anchor === "start" ? "" : ` text-anchor="${p.anchor}"`;
       const deco = `${p.italic ? ` font-style="italic"` : ""}${p.underline ? ` text-decoration="underline"` : ""}`;
       body.push(`<text font-size="${n(p.size)}" font-weight="${p.weight}" fill="${p.color}"${anchor}${p.tracking ? ` letter-spacing="${n(p.tracking)}"` : ""}${deco}${p.font && safeFontId(p.font) ? ` style="font-family:${familyOf(p.font)}"` : ""}${common(p)}>${spans}</text>`);
     }
   }
-  const used = [...new Set(els.flatMap((e) => (e.kind === "text" && e.font ? [e.font] : [])))].map((f) => fontsCss.get(f) ?? "").join("");
+  const used = [...new Set(els.flatMap((e) => (e.kind === "text" ? fontsOfText(e) : [])))].map((f) => fontsCss.get(f) ?? "").join("");
   const style = `<style>${css}${used}text{font-family:${FONT_FAMILY},Arial,sans-serif}</style>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><defs>${style}${defs.join("")}</defs>${body.join("")}</svg>`;
 }
@@ -852,6 +1036,19 @@ export function cleanEls(raw: unknown): El[] {
         align: r.align === "middle" || r.align === "end" ? r.align : "start", leading: Math.min(3, Math.max(0.8, num(r.leading, 1.2))), tracking: Math.min(50, Math.max(-10, num(r.tracking))),
         upper: r.upper === true, auto: r.auto === true, ...(safeFontId(r.font) ? { font: r.font as string } : {}), ...(r.italic === true ? { italic: true } : {}), ...(r.underline === true ? { underline: true } : {}),
         ...(bg && typeof bg === "object" ? { bg: { fill: safeColor(bg.fill, "#2e5e8c"), radius: Math.max(0, num(bg.radius)) } } : {}),
+        ...(() => {
+          const runs = (Array.isArray(r.runs) ? r.runs : []).slice(0, 200).flatMap((q: Record<string, unknown>): TextRun[] => {
+            if (!q || typeof q !== "object" || !Number.isInteger(q.from) || !Number.isInteger(q.to) || (q.from as number) < 0 || (q.to as number) <= (q.from as number)) return [];
+            return [{
+              from: q.from as number, to: q.to as number,
+              ...(typeof q.size === "number" && Number.isFinite(q.size) ? { size: Math.max(4, Math.min(10000, q.size)) } : {}),
+              ...([300, 400, 500, 600, 700, 800, 900].includes(q.weight as number) ? { weight: q.weight as number } : {}),
+              ...(typeof q.italic === "boolean" ? { italic: q.italic } : {}), ...(typeof q.underline === "boolean" ? { underline: q.underline } : {}),
+              ...(q.font === "" || safeFontId(q.font) ? { font: q.font as string } : {}), ...(typeof q.color === "string" ? { color: safeColor(q.color, "#14263d") } : {}),
+            }];
+          }).sort((a: TextRun, b: TextRun) => a.from - b.from);
+          return runs.length ? { runs } : {};
+        })(),
       });
     } else if (r.kind === "image") {
       const pic = storedPicture(r.pic);
