@@ -14,7 +14,7 @@ function Results({ result }: { result: CreateResult }) {
   const made = result.rows.filter((r) => r.ok);
   const passwords = made.filter((r) => r.password);
   const saveList = () => {
-    const url = URL.createObjectURL(new Blob([`﻿kullanici;parola\n${passwords.map((r) => `${r.username};${r.password}`).join("\n")}\n`], { type: "text/csv;charset=utf-8" }));
+    const url = URL.createObjectURL(new Blob([`﻿kullanici;parola\n${passwords.map((r) => `${/^[-.]/.test(r.username) ? "'" : ""}${r.username};${r.password}`).join("\n")}\n`], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url;
     a.download = "yeni-kullanicilar.csv";
