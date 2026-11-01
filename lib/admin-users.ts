@@ -5,8 +5,8 @@ import { USERNAME_RE, passwordProblem } from "./password.ts";
 export const MAX_BULK = 200;
 export type BulkRow = { username: string; password?: string; error?: string };
 
-/** Hex: no character a spreadsheet would take for the start of a formula when the list is opened from CSV. */
-export const generatePassword = () => randomBytes(9).toString("hex");
+/** Starts with a letter and is otherwise hex: a spreadsheet opening the list takes it neither for a formula nor for a number. */
+export const generatePassword = () => `k${randomBytes(9).toString("hex")}`;
 
 export function parseBulk(text: string): BulkRow[] {
   const seen = new Set<string>();

@@ -20,5 +20,5 @@ test("bulk user lines: separators, header, bad and repeated names", () => {
 test("a generated password passes the rules and can't start a spreadsheet formula", () => {
   const p = generatePassword();
   assert.equal(passwordProblem(p), null);
-  assert.match(p, /^[0-9a-f]+$/);
+  assert.match(p, /^k[0-9a-f]{18}$/);
 });
