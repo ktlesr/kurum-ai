@@ -41,7 +41,7 @@ export interface ExportDoc { title: string; createdAt: number; turns: ExportTurn
 type Node = { type: string; value?: string; children?: Node[]; depth?: number; ordered?: boolean; start?: number; url?: string; lang?: string; align?: TableAlign[]; alt?: string };
 
 const parser = unified().use(remarkParse).use(remarkGfm);
-type Pos = { type: string; alt?: string; identifier?: string; children?: Pos[]; position?: { start: { offset: number }; end: { offset: number } } };
+type Pos = { type: string; value?: string; alt?: string; identifier?: string; children?: Pos[]; position?: { start: { offset: number }; end: { offset: number } } };
 
 function inlinesOf(nodes: Node[] | undefined, style: Omit<Inline, "text"> = {}): Inline[] {
   const out: Inline[] = [];
@@ -169,6 +169,8 @@ export function toText(doc: ExportDoc): string {
  * A preview of the file would fetch pictures by itself, sending what is in their address away: they stay as words. Found by
  * the same parser that reads the answer, not by pattern, so every way of writing a picture is one; ordinary links stay as written.
  */
+const TAG = /<[a-z/!?][^>\n]*>/i;
+const TAG_ALL = /<[a-z/!?][^>\n]*>/gi;
 export function withoutPictures(markdown: string): string {
   let text = markdown;
   // Again until nothing is left: taking one away can make what was around it read as another.
@@ -182,8 +184,13 @@ export function withoutPictures(markdown: string): string {
       else if (at && (n.type === "image" || n.type === "imageReference")) {
         if (n.identifier) pictures.add(n.identifier);
         cuts.push({ from: at.start.offset, to: at.end.offset, put: `(görsel: ${(n.alt ?? "").replace(/[[\]!<>()]/g, " ").trim() || "adsız"})` });
-      } else if (at && n.type === "html") cuts.push({ from: at.start.offset, to: at.end.offset, put: "" });
-      else n.children?.forEach(walk);
+      } else if (at && n.type === "html") cuts.push({ from: at.start.offset, to: at.end.offset, put: (n.value ?? "").replace(/<[^>]*>?/g, "") }); // its words stay
+      else {
+        // A tag this parser read as plain words may still be one to another program's preview: fail on the safe side.
+        const own = at && (n.type === "paragraph" || n.type === "heading" || n.type === "tableCell") ? text.slice(at.start.offset, at.end.offset) : "";
+        if (at && own && !own.includes("`") && TAG.test(own)) cuts.push({ from: at.start.offset, to: at.end.offset, put: own.replace(TAG_ALL, "") });
+        else n.children?.forEach(walk);
+      }
     };
     walk(parser.parse(text) as Pos);
     for (const d of definitions) if (d.position && pictures.has(d.identifier ?? "")) cuts.push({ from: d.position.start.offset, to: d.position.end.offset, put: "" });

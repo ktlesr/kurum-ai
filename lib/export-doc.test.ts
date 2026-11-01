@@ -175,7 +175,7 @@ test("the title isn't printed twice; a stray dot goes", () => {
 test("no picture in a file fetches anything; a very long answer still makes a file", () => {
   const md = toMarkdown(exportDoc([turnOf({ answer: 'Metin ![x](https://kotu.example/?s=GIZLI) ![y][r] <img src="https://kotu.example/a">\n\n[r]: https://kotu.example/b' })]));
   assert.ok(!md.includes("kotu.example"), md);
-  assert.ok(md.includes("[görsel: x]"));
+  assert.ok(md.includes("(görsel: x)"));
   const long = Array.from({ length: 150_000 }, (_, i) => `p${i}`).join("\n\n");
   assert.ok(toText(exportDoc([turnOf({ answer: long })])).includes("p149999"));
 });
@@ -195,7 +195,7 @@ test("no way of writing a picture survives in a markdown file; links do", () => 
     "![logo]\n\n[logo]: https://kotu.example/a",
     "![logo][]\n\n[logo]: https://kotu.example/a",
     "![x]( <https://kotu.example/a> 'b' )",
-    "![a]\n[A]: https://kotu.example/a",
+    "![a]\n\n[A]: https://kotu.example/a",
     "[![x](https://kotu.example/a)](https://a.org)",
     '<img src="https://kotu.example/a">',
     '<div><img\nsrc="https://kotu.example/a"></div>',
@@ -208,6 +208,9 @@ test("no way of writing a picture survives in a markdown file; links do", () => 
     assert.ok(!md.includes("kotu.example"), md);
     assert.ok(md.includes("Önce") && md.includes("Sonra"), md);
   }
+  // What an HTML block says stays; only its tags go.
+  const html = toMarkdown(exportDoc([turnOf({ answer: "<div>\nGelir: 123\n</div>" })]));
+  assert.ok(html.includes("Gelir: 123") && !html.includes("<div"), html);
   // In a question too.
   assert.ok(!toMarkdown(exportDoc([turnOf({ question: "![q](https://kotu.example/q)", answer: "A" })])).includes("kotu.example"));
   // What is plain stays as it is, tables and code included.
