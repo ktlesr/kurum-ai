@@ -105,7 +105,7 @@ export function useDragOrder<T extends HTMLElement>({ axis, onDrop, changes, lim
     // For the life of the list; everything it touches is in refs.
   }, []);
   useEffect(() => {
-    if (dragging.current) end();
+    if (press.current) end(); // held or only just pressed: the index no longer means the same item
     // Only when the list changes.
   }, [changes]);
 

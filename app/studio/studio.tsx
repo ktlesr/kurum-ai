@@ -1741,7 +1741,6 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
           onToggle={(id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))}
           onLock={(id, locked) => patch(id, { locked })}
           onOrder={(next) => change(next)}
-          onStep={(id, to) => reorder([id], to)}
         />
       </section>
     );

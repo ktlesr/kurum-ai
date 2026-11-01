@@ -9,14 +9,13 @@ import { useDragOrder } from "./use-drag-order";
 
 const label = (e: El) => (e.kind === "text" && e.text.trim() ? `${e.name}: ${e.text.trim().slice(0, 24)}` : e.name);
 
-export function LayerList({ els, picked, onSelect, onToggle, onLock, onOrder, onStep }: {
+export function LayerList({ els, picked, onSelect, onToggle, onLock, onOrder }: {
   els: El[]; picked: string[];
   onSelect: (id: string) => void;
   onToggle: (id: string) => void;
   onLock: (id: string, locked: boolean) => void;
   /** The whole list in its new order. */
   onOrder: (next: El[]) => void;
-  onStep: (id: string, to: "up" | "down") => void;
 }) {
   const rows = [...els].reverse().filter((e) => !e.master);
   const ids = rows.map((e) => e.id).join();
@@ -75,7 +74,12 @@ export function LayerList({ els, picked, onSelect, onToggle, onLock, onOrder, on
                   ev.preventDefault();
                   ev.stopPropagation(); // not a nudge of the element on the canvas
                   const up = ev.key === "ArrowUp";
-                  if (ev.ctrlKey || ev.metaKey) return canMove ? onStep(e.id, up ? "up" : "down") : undefined;
+                  if (ev.ctrlKey || ev.metaKey) {
+                    // One row in this list, whatever the slide master keeps between them.
+                    const next = moveLayers(els, [e.id], i + (up ? -1 : 2));
+                    if (next !== els) onOrder(next);
+                    return;
+                  }
                   const to = rows[i + (up ? -1 : 1)];
                   if (!to) return;
                   onSelect(to.id);
