@@ -89,7 +89,8 @@ const ROLES: Record<string, StoryRole> = { acilis: "acilis", "açılış": "acil
 
 const fold = (s: string) => s.toLocaleLowerCase("tr").replace(/[^\p{L}\p{N}%]+/gu, " ").trim();
 /** Figures in a text, as written: 42, %42, 1.250, 12,5 (a lone list digit is too little to say anything). */
-const figures = (s: string) => (s.match(/\d[\d.,]*\d|\d/g) ?? []).filter((n) => n.length > 1 || /%\s*\d|\d\s*%/.test(s));
+const numbers = (s: string) => s.match(/\d[\d.,]*\d|\d/g) ?? [];
+const figures = (s: string) => numbers(s).filter((n) => n.length > 1 || /%\s*\d|\d\s*%/.test(s));
 
 /**
  * The model's answer as pages to make, or null if nothing usable came back. `known` is what it was given (the brief and the
@@ -101,6 +102,8 @@ export function parseStory(answer: string, kind: StoryKind, count: number, known
   const r = STORY_RANGE[kind];
   const haystack = fold(known);
   const has = (t: string) => !!fold(t) && haystack.includes(fold(t));
+  // A figure is there only whole: 42 isn't in 142.
+  const stated = new Set(numbers(known));
   const seen = new Set<string>();
   let pages: StoryPage[] = items.flatMap((o): StoryPage[] => {
     const title = clip(o.baslik, LIMITS.title).replace(/^["“”']+|["“”']+$/g, "");
@@ -118,7 +121,7 @@ export function parseStory(answer: string, kind: StoryKind, count: number, known
     // A post may end on a real quotation; a video always ends on what to do next.
     if (i === last && pages.length > 2 && !(kind === "album" && p.role === "soz" && has(p.title))) return { ...p, role: "kapanis" as const };
     if (p.role === "acilis" || p.role === "kapanis") return { ...p, role: "bilgi" as const };
-    if (p.role === "rakam" && !figures(p.title).some((n) => has(n))) return { ...p, role: "bilgi" as const };
+    if (p.role === "rakam" && !figures(p.title).some((n) => stated.has(n))) return { ...p, role: "bilgi" as const };
     if (p.role === "soz" && !has(p.title)) return { ...p, role: "bilgi" as const, tag: "" };
     return p;
   });
@@ -126,7 +129,7 @@ export function parseStory(answer: string, kind: StoryKind, count: number, known
   const steps = pages.filter((p) => p.role === "adim").length;
   let step = 0;
   pages = pages.map((p) => (p.role !== "adim" ? p : steps < 2 ? { ...p, role: "bilgi" as const } : { ...p, tag: String(++step) }));
-  const unverified = pages.flatMap((p, i) => (figures(`${p.title} ${p.subtitle} ${p.detail}`).some((n) => !has(n)) ? [i] : []));
+  const unverified = pages.flatMap((p, i) => (figures(`${p.title} ${p.subtitle} ${p.detail}`).some((n) => !stated.has(n)) ? [i] : []));
   return { pages, cut, unverified };
 }
 

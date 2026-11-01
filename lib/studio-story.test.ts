@@ -45,6 +45,12 @@ test("a figure or a quotation not in what was given isn't shown as one", () => {
   assert.deepEqual(r.unverified, [2], "the invented figure is pointed out");
 });
 
+test("a figure counts only whole", () => {
+  const r = parseStory(json([row("acilis", "A"), row("rakam", "%42", "Oran"), row("rakam", "142", "Katılımcı"), row("kapanis", "Z")]), "reels", 0, "Katılımcı sayısı 142 oldu.")!;
+  assert.deepEqual(r.pages.map((p) => p.role), ["acilis", "bilgi", "rakam", "kapanis"]);
+  assert.deepEqual(r.unverified, [1]);
+});
+
 test("figures in a text are checked too; steps number themselves", () => {
   const r = parseStory(json([
     row("acilis", "Başvuru"),

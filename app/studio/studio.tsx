@@ -8,7 +8,7 @@ import {
   AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight,
   AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowLeft, ArrowUpToLine, Check, ClipboardPaste, Copy, Download, FolderOpen, Image as ImageIcon, LayoutTemplate, Minus, Plus, SlidersHorizontal,
   Presentation, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, BoxSelect, FlipHorizontal2, FlipVertical2, Palette, Italic, MoveDown, MoveUp, Paintbrush, Pencil, RotateCcw, Scissors, Underline,
-  ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Library, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Square, Stamp, Trash2, Type, Undo2, X,
+  ChevronDown, ChevronUp, Clapperboard, Film, ImagePlus, Layers, Library, Loader2, Lock, LockOpen, Redo2, Save, Shapes, Sparkles, Stamp, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import { Logo } from "../logo";
 import { ThemeToggle } from "../theme-toggle";
@@ -161,7 +161,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   const [aiTab, setAiTab] = useState<"one" | "many" | null>(null); // null: what suits the kind of work
   const [storyCount, setStoryCount] = useState(0); // 0: the content decides
   const [storyReplace, setStoryReplace] = useState(false);
-  const [scenesBefore, setScenesBefore] = useState<typeof scenes | null>(null); // one step back from replacing them
+  const [scenesBefore, setScenesBefore] = useState<typeof scenes | null>(null); // one step back from replacing them, in this work only
   const [textSel, setTextSel] = useState<{ from: number; to: number } | null>(null); // the part of the text being edited that is selected
   // Each field's source with the exact text it was found for: shown only while the field still says that, so a
   // canvas edit, an undo or a new template never keeps a page that belongs to other words.
@@ -474,12 +474,15 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     abort.current?.abort();
     const ac = (abort.current = new AbortController());
     const kind = mode === "video" ? "reels" : "album";
+    // Another work opened, or the format changed, by the time the answer comes: it no longer belongs on the canvas.
+    const turn = restoring.current;
+    const stale = () => ac.signal.aborted || turn !== restoring.current || now.current.format !== format;
     setBusy("fill");
     setNote(null);
     try {
       const r = await fetch("/api/studio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ template, brief, docIds, story: kind, count: storyCount }), signal: ac.signal });
       const j = (await r.json().catch(() => ({}))) as { pages?: StoryPage[]; cut?: boolean; unverified?: number[]; error?: string };
-      if (ac.signal.aborted) return;
+      if (stale()) return;
       if (!r.ok || !j.pages?.length) throw new Error(j.error ?? "İçerik hazırlanamadı.");
       const noun = kind === "reels" ? "sahne" : "görsel";
       const warnings = [
@@ -487,15 +490,15 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
         j.cut ? "Model sınırına takıldı, son bölüm eksik kalmış olabilir." : "",
         storyCount && j.pages.length < storyCount ? `İstenen ${storyCount} yerine ${j.pages.length} ${noun} çıktı: metindeki bilgi bu kadarına yetti.` : "",
       ].filter(Boolean).join(" ");
-      if (kind === "reels") await putScenes(j.pages, ac.signal, warnings);
-      else await putImages(j.pages, ac.signal, warnings);
+      if (kind === "reels") await putScenes(j.pages, stale, warnings);
+      else await putImages(j.pages, stale, warnings);
     } catch (e) {
       if (!ac.signal.aborted) setNote({ kind: "error", text: (e as Error).message });
     } finally {
       if (abort.current === ac) setBusy("");
     }
   }
-  async function putScenes(pages: StoryPage[], signal: AbortSignal, warnings: string) {
+  async function putScenes(pages: StoryPage[], stale: () => boolean, warnings: string) {
     const replace = storyReplace && scenes.length > 0;
     const f = sceneFormat ?? "hikaye";
     const room = MAX_SCENES - (replace ? 0 : scenes.length);
@@ -505,7 +508,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
       const made = await pageFrom(t, f, p);
       return { id: newId(), els: made, caption, format: f, thumb: sceneThumb(made, f), ...plan };
     }));
-    if (signal.aborted) return;
+    if (stale()) return;
     if (scenesTooBig([...(replace ? [] : scenes.map((s) => s.els)), ...fresh.map((s) => s.els)])) return setNote({ kind: "error", text: SCENES_TOO_BIG });
     setScenesBefore(replace ? scenes : null);
     setScenes((s) => (replace ? fresh : [...s, ...fresh]).slice(0, MAX_SCENES));
@@ -513,18 +516,20 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     setTransition(reelsTransition(pages));
     setTool("scenes");
     // An empty canvas shows the first scene; one the person is working on stays.
-    if (!els) void editScene(fresh[0]);
+    if (!now.current.els) void editScene(fresh[0]);
     else chooseFormat(f);
     const total = fresh.reduce((n, s) => n + s.seconds, 0);
     setNote(warnings ? { kind: "error", text: `${fresh.length} sahne hazır (${total} sn). ${warnings}` } : { kind: "ok", text: `${fresh.length} sahne hazır (${total} sn). Metinler verdiğiniz bilgilerden yazıldı; kullanmadan önce kontrol edin.` });
   }
-  async function putImages(pages: StoryPage[], signal: AbortSignal, warnings: string) {
+  /** A page made for this post wears the theme the post has. */
+  const wearing = (page: El[]) => (deck?.theme ? rethemeSlides([page], deck.theme, deckRoles(deck))[0] : page);
+  async function putImages(pages: StoryPage[], stale: () => boolean, warnings: string) {
     const classic = (TEMPLATES[template].kind as string) === "klasik";
-    const slides = await Promise.all(pages.map((p) => pageFrom(albumTemplate(p, template, classic), format, p)));
-    if (signal.aborted) return;
+    const slides = (await Promise.all(pages.map((p) => pageFrom(albumTemplate(p, template, classic), format, p)))).map(wearing);
+    if (stale()) return;
     if (deck?.album) slideStep(slides, 0);
     else {
-      if (!(await flushSave())) return; // what was on the canvas stays in Çalışmalarım
+      if (!(await flushSave()) || stale()) return; // what was on the canvas stays in Çalışmalarım
       startAlbum(slides, format, brand.primary);
     }
     setNote(warnings ? { kind: "error", text: `${slides.length} görsel hazır. ${warnings}` } : { kind: "ok", text: `${slides.length} görsel hazır. Metinler verdiğiniz bilgilerden yazıldı; kullanmadan önce kontrol edin.` });
@@ -533,14 +538,18 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   const addAlbumPage = async () => {
     if (!deck?.album || !font || !slideRoom()) return;
     const s = slidesNow();
-    const made = await pageFrom(template, format, SAMPLE[template]);
+    const was = now.current.deck, wasView = now.current.view;
+    const made = wearing(await pageFrom(template, format, SAMPLE[template]));
+    if (now.current.deck !== was || now.current.view !== wasView) return; // changed while its fonts loaded: that comes first
     slideStep([...s.slice(0, deck.at + 1), made, ...s.slice(deck.at + 1)], deck.at + 1);
   };
   /** Another template for the whole post: each image laid out anew with its own text (one undo step). */
   const restyleAlbum = async (t: TemplateId) => {
     if (!deck?.album || !font) return;
     const textOf = (page: El[], r: Field) => (page.find((e) => e.kind === "text" && e.role === r) as TextEl | undefined)?.text ?? "";
-    const pages = await Promise.all(slidesNow().map((page) => pageFrom(t, format, { tag: textOf(page, "tag"), title: textOf(page, "title"), subtitle: textOf(page, "subtitle"), detail: textOf(page, "detail") })));
+    const was = now.current.deck, wasView = now.current.view;
+    const pages = (await Promise.all(slidesNow().map((page) => pageFrom(t, format, { tag: textOf(page, "tag"), title: textOf(page, "title"), subtitle: textOf(page, "subtitle"), detail: textOf(page, "detail") })))).map(wearing);
+    if (now.current.deck !== was || now.current.view !== wasView) return; // changed while the fonts loaded: that comes first
     setTemplate(t);
     slideStep(pages, deck.at);
     setNote({ kind: "ok", text: "Şablon tüm görsellere uygulandı. Görsellere elle eklediklerinizi geri getirmek için Ctrl+Z." });
@@ -1085,6 +1094,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   };
   /** A post of several images: the deck's strip, undo and saving, in the format of the post. */
   const startAlbum = (slides: El[][], f: FormatId, primary: string, theme?: Theme) => {
+    cancelSuggest(); // a suggestion still on its way must not land on this post
     setDeckBefore(null);
     setDeck({ album: true, template: ALBUM_TEMPLATE, slides, at: 0, primary, theme });
     setMode("gorsel");
@@ -1531,6 +1541,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   const goHome = async () => {
     if (!(await flushSave())) return;
     restoring.current++; // an open still on its way must not land after this
+    setScenesBefore(null);
     cancelSuggest();
     setMode(null);
     setDeck(null);
@@ -1558,6 +1569,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     setOwnText(false);
     setPhoto(undefined);
     restoring.current++; // an open still on its way must not land on the new design
+    setScenesBefore(null);
     setDesignPreview(null);
     setDeckBefore(null);
     sceneOwner.current = null; // scenes waiting from the last video go with the next one saved
@@ -1588,6 +1600,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     if (w.video && !font) return setNote({ kind: "error", text: "Yazı tipi yükleniyor; birazdan tekrar deneyin." });
     // First: until the scenes are back this work's id isn't set, so an autosave can't store it without them.
     const turn = ++restoring.current; // every open counts: a slow one coming back late must not land on a newer one
+    setScenesBefore(null);
     if (w.video && !(await restoreVideo(w.video, w.id, turn))) return;
     cancelSuggest(); // a suggestion still on its way must not land on the opened work
     setTemplate(w.template);
@@ -1642,6 +1655,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
       if (j.kind !== "kurum-ai-gorsel" || typeof j.format !== "string" || !Object.hasOwn(FORMATS, j.format)) throw new Error("Bu bir Görsel Stüdyo proje dosyası değil.");
       if (!(await flushSave())) return;
       const turn = ++restoring.current; // every open counts, a deck too: a slow one coming back late must not land on it
+      setScenesBefore(null);
       setWorkName(""); // a new work, not the one that was open
       const saved = cleanDeck(j.deck);
       if (saved) {
