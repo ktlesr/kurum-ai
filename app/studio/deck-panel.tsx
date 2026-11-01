@@ -261,8 +261,56 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
   onReorder: (from: number, gap: number) => void; onClose: () => void;
 }) {
   const list = useRef<HTMLOListElement>(null);
-  const dragged = useRef<number | null>(null); // only our own slides: a file dragged over the bar isn't one
-  const [drag, setDrag] = useState<{ from: number; gap: number } | null>(null);
+  // Pointer events, not the browser's drag: the same code for mouse and finger, in every browser.
+  const press = useRef<{ id: number; from: number; x0: number; y0: number; x: number; touch: boolean; timer?: ReturnType<typeof setTimeout>; scroll?: ReturnType<typeof setInterval> } | null>(null);
+  const dragging = useRef(false);
+  const justDropped = useRef(false);
+  const [drag, setDrag] = useState<{ from: number; gap: number; x: number; y: number } | null>(null);
+  const endDrag = () => {
+    const p = press.current;
+    if (p?.timer) clearTimeout(p.timer);
+    if (p?.scroll) clearInterval(p.scroll);
+    press.current = null;
+    dragging.current = false;
+    setDrag(null);
+  };
+  const beginDrag = (y: number) => {
+    const p = press.current;
+    if (!p) return;
+    dragging.current = true;
+    list.current?.setPointerCapture(p.id);
+    setDrag({ from: p.from, gap: gapAt(p.x), x: p.x, y });
+    // Held near an end of the bar: the bar moves, so a far slide can be reached.
+    p.scroll = setInterval(() => {
+      const ol = list.current, q = press.current;
+      if (!ol || !q) return;
+      const r = ol.getBoundingClientRect();
+      const by = q.x < r.left + 40 ? -14 : q.x > r.right - 40 ? 14 : 0;
+      if (!by) return;
+      ol.scrollLeft += by;
+      setDrag((d) => d && { ...d, gap: gapAt(q.x) });
+    }, 30);
+  };
+  useEffect(() => {
+    // Once a finger holds a slide, moving it drags instead of scrolling: only a listener of our own can say so.
+    const ol = list.current;
+    const hold = (e: TouchEvent) => {
+      if (dragging.current) e.preventDefault();
+    };
+    const cancel = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && dragging.current) {
+        e.stopPropagation();
+        endDrag();
+      }
+    };
+    ol?.addEventListener("touchmove", hold, { passive: false });
+    window.addEventListener("keydown", cancel, true);
+    return () => {
+      ol?.removeEventListener("touchmove", hold);
+      window.removeEventListener("keydown", cancel, true);
+      endDrag();
+    };
+  }, []);
   // The current slide stays in view, and keyboard focus goes along with it.
   useEffect(() => {
     const ol = list.current;
@@ -302,48 +350,59 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
         className="flex min-w-0 flex-1 gap-2 overflow-x-auto px-1 py-0.5"
         aria-label="Slaytlar. Yön tuşlarıyla geçin, Ctrl ile birlikte slaytı taşıyın."
         onKeyDown={onKey}
-        onDragOver={(e) => {
-          if (dragged.current === null) return;
-          e.preventDefault();
-          e.dataTransfer.dropEffect = "move";
-          const gap = gapAt(e.clientX);
-          setDrag((d) => (d?.gap === gap ? d : { from: dragged.current!, gap }));
+        onPointerMove={(e) => {
+          const p = press.current;
+          if (!p || e.pointerId !== p.id) return;
+          p.x = e.clientX;
+          if (dragging.current) return setDrag((d) => d && { ...d, gap: gapAt(e.clientX), x: e.clientX, y: e.clientY });
+          const moved = Math.hypot(e.clientX - p.x0, e.clientY - p.y0);
+          if (p.touch) {
+            if (moved > 8) endDrag(); // a finger moving at once is scrolling the bar
+          } else if (moved > 5) beginDrag(e.clientY);
         }}
-        onDrop={(e) => {
-          if (dragged.current === null) return;
-          e.preventDefault();
-          onReorder(dragged.current, gapAt(e.clientX));
-          dragged.current = null;
-          setDrag(null);
+        onPointerUp={(e) => {
+          const p = press.current;
+          if (!p || e.pointerId !== p.id) return;
+          if (dragging.current) {
+            justDropped.current = true;
+            setTimeout(() => (justDropped.current = false), 0); // the click that ends this press isn't a choice of slide
+            onReorder(p.from, gapAt(e.clientX));
+          }
+          endDrag();
         }}
+        onPointerCancel={endDrag}
       >
         {slides.map((els, i) => (
           <li
             key={i}
-            draggable
-            onDragStart={(e) => {
-              dragged.current = i;
-              e.dataTransfer.effectAllowed = "move";
-              e.dataTransfer.setData("text/plain", `Slayt ${i + 1}`);
-              setDrag({ from: i, gap: i });
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              const touch = e.pointerType !== "mouse";
+              press.current = { id: e.pointerId, from: i, x0: e.clientX, y0: e.clientY, x: e.clientX, touch };
+              // A finger holds a moment first: a quick swipe still scrolls the bar.
+              if (touch) press.current.timer = setTimeout(() => beginDrag(e.clientY), 350);
             }}
-            onDragEnd={() => {
-              dragged.current = null;
-              setDrag(null);
+            onContextMenu={(e) => {
+              if (dragging.current || press.current?.touch) e.preventDefault(); // holding a finger opens no menu
             }}
             title="Sürükleyerek taşıyın"
-            className={`relative w-28 shrink-0 cursor-grab active:cursor-grabbing ${drag?.from === i ? "opacity-40" : ""}`}
+            className={`relative w-28 shrink-0 cursor-grab select-none active:cursor-grabbing [-webkit-touch-callout:none] ${drag?.from === i ? "opacity-40" : ""}`}
           >
             {/* Where it will land; no mark where it would stay put. */}
             {drag && drag.gap === i && i !== drag.from && i !== drag.from + 1 && <span className="absolute -left-[5px] inset-y-0 w-0.5 rounded bg-accent" aria-hidden />}
             {drag && drag.gap === slides.length && i === slides.length - 1 && i !== drag.from && <span className="absolute -right-[5px] inset-y-0 w-0.5 rounded bg-accent" aria-hidden />}
-            <button onClick={() => onGo(i)} aria-current={i === at ? "true" : undefined} aria-label={`Slayt ${i + 1}`} className={`block w-full cursor-[inherit] overflow-hidden rounded border-2 ${i === at ? "border-accent" : "border-line hover:border-accent/50"}`}>
+            <button onClick={() => !justDropped.current && onGo(i)} aria-current={i === at ? "true" : undefined} aria-label={`Slayt ${i + 1}`} className={`block w-full cursor-[inherit] overflow-hidden rounded border-2 ${i === at ? "border-accent" : "border-line hover:border-accent/50"}`}>
               <SlideThumb els={els} measure={measure} />
             </button>
             <span className="block text-center text-[11px] text-muted">{i + 1}</span>
           </li>
         ))}
       </ol>
+      {drag && slides[drag.from] && (
+        <div className="pointer-events-none fixed z-50 w-28 -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded border-2 border-accent opacity-90 shadow-xl" style={{ left: drag.x, top: drag.y }} aria-hidden>
+          <SlideThumb els={slides[drag.from]} measure={measure} />
+        </div>
+      )}
       <div className="grid shrink-0 grid-cols-2">
         <button className={btn} disabled={at === 0} onClick={() => onMove(-1)} aria-label="Slaytı sola taşı" title="Öne al"><ArrowLeft size={14} /></button>
         <button className={btn} disabled={at === slides.length - 1} onClick={() => onMove(1)} aria-label="Slaytı sağa taşı" title="Sona al"><ArrowRight size={14} /></button>

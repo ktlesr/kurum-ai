@@ -66,7 +66,7 @@ const RAIL: Record<Mode, Tool[]> = {
   sunum: ["deck", "master", "text", "elements", "images", "brand", "layers", "edit"],
   video: ["scenes", "templates", "ai", "text", "elements", "images", "brand", "layers", "edit"],
 };
-type Snap = { els: El[]; format: FormatId; primary: string; accent: string };
+type Snap = { els: El[]; format: FormatId; primary: string; accent: string; deck?: { slides: El[][]; at: number } };
 type Field = Exclude<Role, "deco">;
 
 const field = "w-full rounded-lg border border-line bg-panel px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted focus:border-accent";
@@ -265,11 +265,14 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   const generated = useMemo(() => (font ? fromTemplate({ template, format, content, brand, photo }, font.measure) : []), [font, template, format, content, brand, photo, templateFonts]);
   const view = els ?? generated;
   // The latest committed state for callbacks that run later (a suggestion arriving, undo from the keyboard).
-  const now = useRef({ view, els, format, hist, brand, clip: null as El[] | null });
+  const now = useRef({ view, els, format, hist, brand, clip: null as El[] | null, deck });
   useLayoutEffect(() => {
-    now.current = { view, els, format, hist, brand, clip };
+    now.current = { view, els, format, hist, brand, clip, deck };
   });
-  const snap = (): Snap => ({ els: now.current.view, format: now.current.format, primary: now.current.brand.primary, accent: now.current.brand.accent });
+  const snap = (): Snap => {
+    const { view: v, deck: d } = now.current;
+    return { els: v, format: now.current.format, primary: now.current.brand.primary, accent: now.current.brand.accent, ...(d ? { deck: { slides: d.slides.map((x, i) => (i === d.at ? v : x)), at: d.at } } : {}) };
+  };
   const push = (s: Snap) => setHist((h) => ({ past: [...h.past.slice(-HISTORY + 1), s], future: [] }));
 
   /** A new design state; `commit` makes it one undo step (from where the current gesture started). */
@@ -302,6 +305,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     setActiveTheme("");
     setFormat(s.format);
     setEls(s.els);
+    if (s.deck) setDeck((d) => d && { ...d, slides: s.deck!.slides, at: s.deck!.at }); // the order of the slides goes back too
     setPicked((ids) => ids.filter((id) => s.els.some((e) => e.id === id))); // still there: stays chosen
     setEditing(null);
   };
@@ -1072,6 +1076,12 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     setNote({ kind: "error", text: `Bir sunumda en fazla ${MAX_SLIDES} slayt olabilir.` });
     return false;
   };
+  /** A change to the list of slides, as one undo step. */
+  const slideStep = (raw: El[][], at: number) => {
+    const before = snap();
+    setSlides(raw, at); // empties the history: undo otherwise stays within one slide
+    push(before);
+  };
   const addSlide = (l: Layout) => {
     setLayoutsOpen(false);
     const s = slidesNow();
@@ -1079,28 +1089,28 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     // A new slide wears the theme the deck has.
     const fresh = slideFrom(l, undefined, deck.primary);
     const slide = deck.theme ? rethemeSlides([fresh], deck.theme, deck.template.roles ? [deck.template.roles.primary, deck.template.roles.accent] : [])[0] : fresh;
-    setSlides([...s.slice(0, deck.at + 1), slide, ...s.slice(deck.at + 1)], deck.at + 1);
+    slideStep([...s.slice(0, deck.at + 1), slide, ...s.slice(deck.at + 1)], deck.at + 1);
   };
   const duplicateSlide = () => {
     const s = slidesNow();
-    if (deck && slideRoom()) setSlides([...s.slice(0, deck.at + 1), s[deck.at].map((e) => ({ ...e, id: newId() }) as El), ...s.slice(deck.at + 1)], deck.at + 1);
+    if (deck && slideRoom()) slideStep([...s.slice(0, deck.at + 1), s[deck.at].map((e) => ({ ...e, id: newId() }) as El), ...s.slice(deck.at + 1)], deck.at + 1);
   };
   const deleteSlide = () => {
     const s = slidesNow();
-    if (deck && s.length > 1) setSlides(s.filter((_, i) => i !== deck.at), Math.min(deck.at, s.length - 2));
+    if (deck && s.length > 1) slideStep(s.filter((_, i) => i !== deck.at), Math.min(deck.at, s.length - 2));
   };
   const moveSlide = (d: -1 | 1) => {
     const s = slidesNow();
     if (!deck || !s[deck.at + d]) return;
     [s[deck.at], s[deck.at + d]] = [s[deck.at + d], s[deck.at]];
-    setSlides(s, deck.at + d);
+    slideStep(s, deck.at + d);
   };
   const reorderSlide = (from: number, gap: number) => {
     const s = slidesNow();
     const to = gap > from ? gap - 1 : gap;
     if (!deck || to === from || !s[from]) return;
     s.splice(to, 0, ...s.splice(from, 1));
-    setSlides(s, to); // the moved slide is the one on the canvas, as in PowerPoint
+    slideStep(s, to); // the moved slide is the one on the canvas, as in PowerPoint
   };
   const leaveDeck = async () => {
     if (!(await flushSave())) return;
