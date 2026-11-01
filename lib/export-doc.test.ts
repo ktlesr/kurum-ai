@@ -188,3 +188,31 @@ test("an ordinary reference link keeps its address; a table inside a quotation g
   assert.equal(sheets.filter((x) => x.headerRow).length, 2);
 });
 
+test("no way of writing a picture survives in a markdown file; links do", () => {
+  const cases = [
+    "![x](https://kotu.example/a)",
+    "![x][p]\n\n[p]: https://kotu.example/a",
+    "![logo]\n\n[logo]: https://kotu.example/a",
+    "![logo][]\n\n[logo]: https://kotu.example/a",
+    "![x]( <https://kotu.example/a> 'b' )",
+    "![a]\n[A]: https://kotu.example/a",
+    "[![x](https://kotu.example/a)](https://a.org)",
+    '<img src="https://kotu.example/a">',
+    '<div><img\nsrc="https://kotu.example/a"></div>',
+    "!![x](https://kotu.example/a)",
+    "![![x](https://kotu.example/a)](https://kotu.example/b)",
+    "<picture><source srcset=https://kotu.example/a></picture>",
+  ];
+  for (const c of cases) {
+    const md = toMarkdown(exportDoc([turnOf({ question: "S", answer: `Önce\n\n${c}\n\nSonra` })]));
+    assert.ok(!md.includes("kotu.example"), md);
+    assert.ok(md.includes("Önce") && md.includes("Sonra"), md);
+  }
+  // In a question too.
+  assert.ok(!toMarkdown(exportDoc([turnOf({ question: "![q](https://kotu.example/q)", answer: "A" })])).includes("kotu.example"));
+  // What is plain stays as it is, tables and code included.
+  const keep = "[rapor](https://a.org/r) ve [iki][r]\n\n[r]: https://a.org/i\n\n| a |\n|---|\n| 1 |\n\n```\n![kod](x)\n```";
+  const out = toMarkdown(exportDoc([turnOf({ answer: keep })]));
+  assert.ok(out.includes(keep), out);
+});
+

@@ -41,6 +41,7 @@ export interface ExportDoc { title: string; createdAt: number; turns: ExportTurn
 type Node = { type: string; value?: string; children?: Node[]; depth?: number; ordered?: boolean; start?: number; url?: string; lang?: string; align?: TableAlign[]; alt?: string };
 
 const parser = unified().use(remarkParse).use(remarkGfm);
+type Pos = { type: string; alt?: string; identifier?: string; children?: Pos[]; position?: { start: { offset: number }; end: { offset: number } } };
 
 function inlinesOf(nodes: Node[] | undefined, style: Omit<Inline, "text"> = {}): Inline[] {
   const out: Inline[] = [];
@@ -164,28 +165,44 @@ export function toText(doc: ExportDoc): string {
   return `${out.join("\n").trimEnd()}\n`;
 }
 
-/** A preview of the file would fetch pictures by itself, sending what is in their address away: they stay as words. */
+/**
+ * A preview of the file would fetch pictures by itself, sending what is in their address away: they stay as words. Found by
+ * the same parser that reads the answer, not by pattern, so every way of writing a picture is one; ordinary links stay as written.
+ */
 export function withoutPictures(markdown: string): string {
-  // Only the addresses pictures use: an ordinary [link][ref] keeps its own.
-  const used = new Set<string>();
-  const text = markdown
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt: string) => `[görsel: ${alt || "adsız"}]`)
-    .replace(/!\[([^\]]*)\]\[([^\]]*)\]/g, (_, alt: string, ref: string) => {
-      used.add((ref || alt).trim().toLocaleLowerCase("tr"));
-      return `[görsel: ${alt || "adsız"}]`;
-    })
-    .replace(/<img\b[^>]*>/gi, "[görsel]");
-  return text.replace(/^[ \t]{0,3}\[([^\]]+)\]:[ \t]*\S.*$/gm, (line, ref: string) => (used.has(ref.trim().toLocaleLowerCase("tr")) ? "" : line));
+  let text = markdown;
+  // Again until nothing is left: taking one away can make what was around it read as another.
+  for (let round = 0; round < 8; round++) {
+    const cuts: { from: number; to: number; put: string }[] = [];
+    const pictures = new Set<string>();
+    const definitions: Pos[] = [];
+    const walk = (n: Pos) => {
+      const at = n.position;
+      if (n.type === "definition") definitions.push(n);
+      else if (at && (n.type === "image" || n.type === "imageReference")) {
+        if (n.identifier) pictures.add(n.identifier);
+        cuts.push({ from: at.start.offset, to: at.end.offset, put: `(görsel: ${(n.alt ?? "").replace(/[[\]!<>()]/g, " ").trim() || "adsız"})` });
+      } else if (at && n.type === "html") cuts.push({ from: at.start.offset, to: at.end.offset, put: "" });
+      else n.children?.forEach(walk);
+    };
+    walk(parser.parse(text) as Pos);
+    for (const d of definitions) if (d.position && pictures.has(d.identifier ?? "")) cuts.push({ from: d.position.start.offset, to: d.position.end.offset, put: "" });
+    if (!cuts.length) return text;
+    for (const c of cuts.sort((a, b) => b.from - a.from)) text = text.slice(0, c.from) + c.put + text.slice(c.to);
+  }
+  // Still something after that many: nothing here may read as markup.
+  return text.replace(/[!<\[\]]/g, " ");
 }
 
 export function toMarkdown(doc: ExportDoc): string {
   const out = [`# ${doc.title}`, "", `*Zafer AI · ${dateText(doc.createdAt)}*`, ""];
   for (const t of doc.turns) {
     if (t.question) out.push(`> **Soru:** ${t.question.replace(/\n/g, "\n> ")}`, "");
-    out.push(withoutPictures(t.answer).trim(), "");
-    if (sourceLines(t).length) out.push("**Kaynaklar**", "", ...t.sources.map((s) => `- ${s}`), ...t.web.map((w) => `- [${w.title.replace(/[[\]]/g, "")}](${w.url})`), "");
+    out.push(t.answer.trim(), "");
+    if (sourceLines(t).length) out.push("**Kaynaklar**", "", ...t.sources.map((s) => `- ${s}`), ...t.web.map((w) => `- [${w.title.replace(/[[\]]/g, "")}](${w.url.replace(/[()\s<>]/g, encodeURIComponent)})`), "");
   }
-  return `${out.join("\n").trimEnd()}\n`;
+  // The whole file: a question or a source's name can hold a picture as well as the answer can.
+  return `${withoutPictures(out.join("\n")).trimEnd()}\n`;
 }
 
 export function toJson(doc: ExportDoc): string {
