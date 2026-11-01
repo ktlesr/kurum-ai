@@ -119,7 +119,7 @@ export function parseStory(answer: string, kind: StoryKind, count: number, known
   pages = pages.map((p, i) => {
     if (i === 0) return { ...p, role: "acilis" as const };
     // A post may end on a real quotation; a video always ends on what to do next.
-    if (i === last && pages.length > 2 && !(kind === "album" && p.role === "soz" && has(p.title))) return { ...p, role: "kapanis" as const };
+    if (i === last && (kind === "reels" || pages.length > 2) && !(kind === "album" && p.role === "soz" && has(p.title))) return { ...p, role: "kapanis" as const };
     if (p.role === "acilis" || p.role === "kapanis") return { ...p, role: "bilgi" as const };
     if (p.role === "rakam" && !figures(p.title).some((n) => stated.has(n))) return { ...p, role: "bilgi" as const };
     if (p.role === "soz" && !has(p.title)) return { ...p, role: "bilgi" as const, tag: "" };
@@ -129,6 +129,8 @@ export function parseStory(answer: string, kind: StoryKind, count: number, known
   const steps = pages.filter((p) => p.role === "adim").length;
   let step = 0;
   pages = pages.map((p) => (p.role !== "adim" ? p : steps < 2 ? { ...p, role: "bilgi" as const } : { ...p, tag: String(++step) }));
+  // In a video these templates have no place for the detail: what it says (a date, a place) goes under the title instead of being lost.
+  if (kind === "reels") pages = pages.map((p) => (["acilis", "bilgi", "adim"].includes(p.role) && p.detail ? { ...p, subtitle: `${p.subtitle}${p.subtitle ? " · " : ""}${p.detail}`.slice(0, LIMITS.subtitle), detail: "" } : p));
   const unverified = pages.flatMap((p, i) => (figures(`${p.title} ${p.subtitle} ${p.detail}`).some((n) => !stated.has(n)) ? [i] : []));
   return { pages, cut, unverified };
 }

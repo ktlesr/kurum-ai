@@ -85,3 +85,14 @@ test("the images of a post share the chosen template, figures and quotations the
   assert.match(storySize("reels", 5), /Tam 5 sahne/);
   assert.match(storySize("album", 0), /arasında/);
 });
+
+test("in a video nothing the model wrote is lost to a template without a place for it", () => {
+  const two = parseStory(json([row("acilis", "Kayıtlar açıldı"), row("kapanis", "Kayıt olun", "", "zafer.org.tr")]), "reels", 2, "zafer.org.tr")!;
+  assert.deepEqual(two.pages.map((p) => p.role), ["acilis", "kapanis"]);
+  assert.equal(two.pages[1].detail, "zafer.org.tr");
+  const r = parseStory(json([row("acilis", "A"), row("bilgi", "B", "Panel ve atölye", "12 Kasım saat 10.00"), row("kapanis", "C")]), "reels", 0, "12 Kasım saat 10.00")!;
+  assert.equal(r.pages[1].subtitle, "Panel ve atölye · 12 Kasım saat 10.00");
+  assert.equal(r.pages[1].detail, "");
+  // A post's templates show it where it is.
+  assert.equal(parseStory(json([row("acilis", "A"), row("bilgi", "B", "x", "12 Kasım"), row("kapanis", "C")]), "album", 0, "12 Kasım")!.pages[1].detail, "12 Kasım");
+});
