@@ -29,13 +29,14 @@ export function ShapeGrid({ style, onPick, verb, compact, current }: { style: Sh
       className={compact ? "grid grid-cols-6 gap-1" : "grid grid-cols-4 gap-1.5"}
       onKeyDown={(e) => {
         // Arrows walk the grid as it looks; everything else is the menu's.
-        const step = compact ? { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -6, ArrowDown: 6 }[e.key] : undefined;
+        const step = compact ? ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -6, ArrowDown: 6 } as Record<string, number>)[e.key] : undefined;
         if (!step) return;
         const all = [...e.currentTarget.querySelectorAll("button")];
         const next = all[all.indexOf(document.activeElement as HTMLButtonElement) + step];
+        if (!next) return; // past the edge of the grid: the menu goes on to the tabs above
         e.preventDefault();
         e.stopPropagation();
-        next?.focus();
+        next.focus();
       }}
     >
       {(Object.keys(SHAPES) as ShapeId[]).filter((id) => style !== "holder" || SHAPES[id].shape !== "line").map((id) => (
