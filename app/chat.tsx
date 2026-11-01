@@ -1,5 +1,6 @@
 "use client";
 
+import { ProfilePicker, type Profile } from "./profile-picker";
 import { TopLinks } from "./top-links";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -34,12 +35,6 @@ type UploadEvent =
  * auto = the server decides between whole-doc and search; fast = a too-large document is always searched (no classifier
  * call) except for quick tasks, which always need it whole; deep = always the whole document.
  */
-type Profile = "auto" | "fast" | "deep";
-const PROFILES: { id: Profile; label: string; hint: string }[] = [
-  { id: "auto", label: "Otomatik", hint: "Soruya göre ilgili bölümleri ya da tüm belgeyi kullanır; düşünme adımı yok." },
-  { id: "fast", label: "Hızlı", hint: "Serbest sorularda en hızlı cevap; büyük belgede ilgili bölümleri kullanır. Hazır işler yine tüm belgeyi kapsar." },
-  { id: "deep", label: "Derin analiz", hint: "Belgenin tamamını kullanır; daha yavaş, daha kapsamlı." },
-];
 
 const MAX_CHAT_DOCS = 20; // LIMITS.files in lib/validate
 const ACCEPT = ".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.html,.htm,.png,.jpg,.jpeg,.webp";
@@ -435,15 +430,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             ))}
           </div>
         )}
-        <div className="flex items-end gap-2 p-2">
-          <button
-            onClick={() => fileInput.current?.click()}
-            className="grid size-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-subtle hover:text-fg"
-            aria-label="Belge ekle"
-            title="Belge ya da görsel ekle (PDF, DOCX, XLSX, CSV, TXT, PNG, JPG · en fazla 25 MB) · ekran görüntüsü yapıştırılabilir"
-          >
-            <Paperclip size={18} />
-          </button>
+        <div className="p-2">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -464,8 +451,19 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             rows={1}
             aria-label="Soru"
             placeholder={ready.length ? "Belgeleriniz hakkında soru sorun, karşılaştırma ya da yorum isteyin…" : "Bir soru sorun ya da belge ekleyin…"}
-            className="field-sizing-content max-h-48 min-h-9 flex-1 resize-none bg-transparent px-1 py-1.5 text-[15px] outline-none placeholder:text-muted disabled:cursor-not-allowed"
+            className="composer-input field-sizing-content max-h-48 min-h-9 w-full resize-none bg-transparent px-1.5 py-1.5 text-[15px] outline-none placeholder:text-muted disabled:cursor-not-allowed"
           />
+          <div className="mt-1 flex items-center gap-1">
+          <button
+            onClick={() => fileInput.current?.click()}
+            className="grid size-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-subtle hover:text-fg"
+            aria-label="Belge ekle"
+            title="Belge ya da görsel ekle (PDF, DOCX, XLSX, CSV, TXT, PNG, JPG · en fazla 25 MB) · ekran görüntüsü yapıştırılabilir"
+          >
+            <Paperclip size={18} />
+          </button>
+            <span className="flex-1" />
+            <ProfilePicker value={profile} onChange={chooseProfile} />
           {streaming ? (
             <button onClick={() => abortRef.current?.abort()} className="grid size-9 shrink-0 place-items-center rounded-lg bg-fg text-bg" aria-label="Durdur (Esc)" title="Durdur (Esc)">
               <Square size={14} fill="currentColor" />
@@ -481,6 +479,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
               <ArrowUp size={17} />
             </button>
           )}
+          </div>
         </div>
       </div>
       <input ref={fileInput} type="file" multiple accept={ACCEPT} hidden onChange={(e) => { if (e.target.files) upload(e.target.files); e.target.value = ""; }} />
@@ -509,13 +508,6 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Sohbetlerde ara" aria-label="Sohbetlerde ara" className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted" />
         </label>
       </div>
-
-      <label className="mx-3 mt-2 flex items-center gap-2 text-xs text-muted sm:hidden">
-        İşlem profili
-        <select value={profile} onChange={(e) => chooseProfile(e.target.value as Profile)} className="h-8 flex-1 rounded-lg border border-line bg-panel px-2 text-sm text-fg">
-          {PROFILES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-        </select>
-      </label>
 
       <nav aria-label="Sohbet geçmişi" className="mt-3 min-h-0 flex-1 overflow-y-auto px-2">
         <p className="px-2 pb-1 text-xs font-medium text-muted">Sohbetler</p>
@@ -636,20 +628,6 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           </button>
           <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{current?.title ?? "Yeni sohbet"}</h1>
           <TopLinks studio isAdmin={isAdmin} />
-          <div role="radiogroup" aria-label="İşlem profili" className="hidden rounded-lg border border-line bg-subtle p-0.5 sm:flex">
-            {PROFILES.map((p) => (
-              <button
-                key={p.id}
-                role="radio"
-                aria-checked={profile === p.id}
-                title={p.hint}
-                onClick={() => chooseProfile(p.id)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${profile === p.id ? "bg-panel text-fg shadow-card" : "text-muted hover:text-fg"}`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
           <select
             aria-label="Model"
             value={model}
