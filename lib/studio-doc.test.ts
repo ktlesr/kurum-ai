@@ -130,6 +130,16 @@ test("part of a text: its own style, kept through typing, wrapped, drawn and rea
   // From a file: bad values go, the good stay.
   const [clean] = cleanEls([{ ...bold, runs: [{ from: 0, to: 5, weight: 700, color: "url(x)", font: "a b" }, { from: 9, to: 2 }, "x"] }]) as TextEl[];
   assert.deepEqual(clean.runs, [{ from: 0, to: 5, weight: 700, color: "#14263d" }]);
+  // A long word shrinks and is cut to the box, as plain text is.
+  const long = setTextStyle({ ...base, w: 100, h: 48, auto: true, text: "x".repeat(15) }, { weight: 700 }, { from: 0, to: 2 });
+  const lp = draw([long], m)[0];
+  assert.ok(lp.kind === "text" && lp.rich);
+  assert.ok(lp.size < 40);
+  assert.ok(lp.rich[0].segs.reduce((w, q) => w + m(q.text, q.size, q.weight, q.font), 0) <= 100);
+  assert.ok(lp.lines[0].endsWith("…"));
+  // The default font on a part of a text in another font is said out loud.
+  const def = setTextStyle({ ...base, font: "inter" }, { font: undefined }, { from: 0, to: 5 });
+  assert.ok(/<tspan[^>]*font-family:KaiStudio[^>]*>kalın</.test(svgOf("kare", [def], m)));
   // Without runs nothing changes for plain text.
   const plain = draw([base], m)[0];
   assert.ok(plain.kind === "text" && !plain.rich);

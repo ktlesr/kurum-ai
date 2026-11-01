@@ -803,10 +803,22 @@ function richFit(e: TextEl, measure: Measure) {
   const room = e.auto ? Math.max(1, e.h + 0.5) : Math.max(e.size * e.leading, e.h + 0.5);
   const tall = (ls: { size: number }[]) => ls.reduce((sum, l) => sum + l.size * e.leading, 0);
   let scale = 1;
+  const wide = (segs: RichSeg[]) => segs.reduce((w, s) => w + measure(s.text, s.size, s.weight, s.font) + e.tracking * scale * s.text.length, 0);
+  const box = Math.max(1, e.w);
   let lines = richLayout(e, measure, scale);
-  while (tall(lines) > room && scale > min) {
+  while ((tall(lines) > room || lines.some((l) => wide(l.segs) > box)) && scale > min) {
     scale = Math.max(min, scale * 0.94);
     lines = richLayout(e, measure, scale);
+  }
+  // One word longer than the box even at the smallest size: cut, as plain text does.
+  for (const l of lines) {
+    if (wide(l.segs) <= box) continue;
+    while (wide(l.segs) > box && (l.segs.length > 1 || l.segs[0].text.length > 1)) {
+      const last = l.segs[l.segs.length - 1];
+      const body = last.text.replace(/…$/, "");
+      if (body.length <= 1 && l.segs.length > 1) l.segs.pop();
+      else last.text = `${body.slice(0, -1)}…`;
+    }
   }
   let keep = lines.length;
   while (keep > 1 && tall(lines.slice(0, keep)) > room) keep--;
@@ -986,7 +998,7 @@ export function svgOf(format: FormatId, els: El[], measure: Measure, css = ""): 
       body.push(`<g${common(p)}>${img}</g>`);
     } else {
       // y is the top of the first line; the baseline sits ~0.9 em below it (Geist's ascent).
-      const part = (s: RichSeg, at: string) => `<tspan${at} font-size="${n(s.size)}" font-weight="${s.weight}" fill="${s.color}"${s.italic ? ` font-style="italic"` : ""}${s.underline ? ` text-decoration="underline"` : ""}${s.font && safeFontId(s.font) ? ` style="font-family:${familyOf(s.font)}"` : ""}>${esc(s.text)}</tspan>`;
+      const part = (s: RichSeg, at: string) => `<tspan${at} font-size="${n(s.size)}" font-weight="${s.weight}" fill="${s.color}"${s.italic ? ` font-style="italic"` : ""}${s.underline ? ` text-decoration="underline"` : ""}${s.font === "" || safeFontId(s.font) ? ` style="font-family:${familyOf(s.font)}"` : ""}>${esc(s.text)}</tspan>`;
       const spans = p.rich
         ? p.rich.map((l) => l.segs.map((s, i) => part(s, i ? "" : ` x="${n(p.x)}" y="${n(l.baseline)}"`)).join("")).join("")
         : p.lines.map((line, i) => `<tspan x="${n(p.x)}" y="${n(p.y + p.size * (0.9 + i * p.leading))}">${esc(line)}</tspan>`).join("");

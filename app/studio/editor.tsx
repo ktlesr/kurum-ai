@@ -173,11 +173,16 @@ function TextBox({ el, scale, onText, onDone, onSel }: { el: TextEl; scale: numb
   const box = useRef<HTMLDivElement>(null);
   const drawn = useRef<string | null>(null);
   const sel = useRef<{ from: number; to: number } | null>(null);
+  const lastText = useRef(el.text);
   const report = useRef(onSel);
   const done = useRef(onDone);
   useLayoutEffect(() => {
     report.current = onSel;
     done.current = onDone;
+  });
+  // After the drawing below has compared.
+  useEffect(() => {
+    lastText.current = el.text;
   });
   const HL = (globalThis as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
   const Highlight = (globalThis as { Highlight?: new (r: Range) => unknown }).Highlight;
@@ -195,6 +200,11 @@ function TextBox({ el, scale, onText, onDone, onSel }: { el: TextEl; scale: numb
     if (drawn.current === key) return;
     const first = drawn.current === null;
     drawn.current = key;
+    // The text itself changed from outside (the panel's text field): the old offsets would mean other characters.
+    if (!first && sel.current && lastText.current !== el.text) {
+      sel.current = null;
+      report.current?.(null);
+    }
     const focused = document.activeElement === b;
     b.textContent = "";
     let at = 0;

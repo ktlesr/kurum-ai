@@ -25,9 +25,6 @@ export default function ContextMenu({ x, y, items, onClose }: { x: number; y: nu
     setPos({ x: Math.max(4, Math.min(x, innerWidth - r.width - 4)), y: Math.max(4, Math.min(y, innerHeight - r.height - 4)) });
   }, [x, y, sub]);
   useEffect(() => {
-    ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-  }, [sub]);
-  useEffect(() => {
     back.current = document.activeElement as HTMLElement | null;
     const out = (e: Event) => !ref.current?.contains(e.target as Node) && close.current();
     // Not on scroll: the menu is fixed on screen, and panels scroll on their own (focus moving in the layer list).
@@ -46,6 +43,10 @@ export default function ContextMenu({ x, y, items, onClose }: { x: number; y: nu
       if (restore?.isConnected && (!at || at === document.body || menu?.contains(at))) restore.focus();
     };
   }, []);
+  // After the effect above has noted where focus came from.
+  useEffect(() => {
+    ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }, [sub]);
 
   const onKey = (e: React.KeyboardEvent) => {
     e.stopPropagation(); // the studio's own shortcuts don't run under the menu

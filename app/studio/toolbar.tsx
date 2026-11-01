@@ -12,7 +12,7 @@ const btn = "grid size-8 shrink-0 place-items-center rounded-md text-muted trans
 const on = "bg-accent-soft text-accent";
 /** A press on a button leaves the text selection being edited where it is. */
 export const keepSelection = (e: React.MouseEvent) => {
-  if (!(e.target as Element).closest("input, select, label")) e.preventDefault();
+  if (!(e.target as Element).closest("input, textarea, select, label")) e.preventDefault();
 };
 const Sep = () => <span className="mx-1 h-5 w-px shrink-0 bg-line" aria-hidden />;
 
