@@ -137,6 +137,12 @@ test("part of a text: its own style, kept through typing, wrapped, drawn and rea
   assert.ok(lp.size < 40);
   assert.ok(lp.rich[0].segs.reduce((w, q) => w + m(q.text, q.size, q.weight, q.font), 0) <= 100);
   assert.ok(lp.lines[0].endsWith("…"));
+  // Cut by height too: the "…" stays inside the width.
+  const two = setTextStyle({ ...base, w: 100, h: 48, text: "abcde fghij" }, { weight: 700 }, { from: 0, to: 5 });
+  const tp = draw([two], m)[0];
+  assert.ok(tp.kind === "text" && tp.rich);
+  assert.equal(tp.rich.length, 1);
+  assert.ok(tp.rich[0].segs.reduce((w, q) => w + m(q.text, q.size, q.weight, q.font), 0) <= 100);
   // The default font on a part of a text in another font is said out loud.
   const def = setTextStyle({ ...base, font: "inter" }, { font: undefined }, { from: 0, to: 5 });
   assert.ok(/<tspan[^>]*font-family:KaiStudio[^>]*>kalın</.test(svgOf("kare", [def], m)));

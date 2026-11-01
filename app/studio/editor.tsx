@@ -226,6 +226,7 @@ function TextBox({ el, scale, onText, onDone, onSel }: { el: TextEl; scale: numb
       piece(Math.min(r.to, el.text.length), r);
     }
     piece(el.text.length);
+    if (el.text.endsWith("\n")) b.append("\n"); // what the caret stands on, as the browser does; reading drops it
     if (first) {
       b.focus();
       const end = rangeOf(b, el.text.length, el.text.length);

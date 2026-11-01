@@ -810,6 +810,13 @@ function richFit(e: TextEl, measure: Measure) {
     scale = Math.max(min, scale * 0.94);
     lines = richLayout(e, measure, scale);
   }
+  let keep = lines.length;
+  while (keep > 1 && tall(lines.slice(0, keep)) > room) keep--;
+  if (keep < lines.length) {
+    lines = lines.slice(0, keep);
+    const segs = lines[keep - 1].segs;
+    segs[segs.length - 1] = { ...segs[segs.length - 1], text: `${segs[segs.length - 1].text}…` };
+  }
   // One word longer than the box even at the smallest size: cut, as plain text does.
   for (const l of lines) {
     if (wide(l.segs) <= box) continue;
@@ -819,13 +826,6 @@ function richFit(e: TextEl, measure: Measure) {
       if (body.length <= 1 && l.segs.length > 1) l.segs.pop();
       else last.text = `${body.slice(0, -1)}…`;
     }
-  }
-  let keep = lines.length;
-  while (keep > 1 && tall(lines.slice(0, keep)) > room) keep--;
-  if (keep < lines.length) {
-    lines = lines.slice(0, keep);
-    const segs = lines[keep - 1].segs;
-    segs[segs.length - 1] = { ...segs[segs.length - 1], text: `${segs[segs.length - 1].text}…` };
   }
   return { scale, lines };
 }
