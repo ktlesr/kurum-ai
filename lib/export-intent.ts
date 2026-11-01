@@ -27,13 +27,19 @@ export function exportRequest(message: string): ExportRequest | null {
   const text = message.trim();
   if (!text || text.length > 2000) return null;
   const q = text.toLocaleLowerCase("tr");
-  if (NOT_A_REQUEST.test(q)) return null;
+  // Asking about a format is judged in its own sentence: "Bu nasıl çalışır? PDF olarak ver" asks for a file.
+  const sentenceAround = (at: number) => {
+    const before = Math.max(q.lastIndexOf(".", at - 1), q.lastIndexOf("?", at - 1), q.lastIndexOf("!", at - 1), q.lastIndexOf("\n", at - 1));
+    const ends = [".", "?", "!", "\n"].map((c) => q.indexOf(c, at)).filter((i) => i >= 0);
+    return q.slice(before + 1, ends.length ? Math.min(...ends) : q.length);
+  };
   const spans: [number, number][] = [];
   const asked: FileFormat[] = [];
   // The file request itself: the format, what joins it, the verb.
   for (const [format, names] of NAMES) {
     const re = new RegExp(`(?<![${L}.])(?:${names})${JOIN}`, "gu");
     for (const m of q.matchAll(re)) {
+      if (NOT_A_REQUEST.test(sentenceAround(m.index + 1))) continue;
       asked.push(format);
       spans.push([m.index, m.index + m[0].length]);
     }

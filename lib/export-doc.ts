@@ -38,11 +38,13 @@ export interface ExportTurn {
 }
 export interface ExportDoc { title: string; createdAt: number; turns: ExportTurn[] }
 
-type Node = { type: string; value?: string; children?: Node[]; depth?: number; ordered?: boolean; start?: number; url?: string; lang?: string; align?: TableAlign[]; alt?: string };
+type Node = { type: string; identifier?: string; value?: string; children?: Node[]; depth?: number; ordered?: boolean; start?: number; url?: string; lang?: string; align?: TableAlign[]; alt?: string };
 
 const parser = unified().use(remarkParse).use(remarkGfm);
 type Pos = { type: string; value?: string; alt?: string; identifier?: string; children?: Pos[]; position?: { start: { offset: number }; end: { offset: number } } };
 
+/** The addresses of [text][ref] links in the text being read. */
+let definitions = new Map<string, string>();
 function inlinesOf(nodes: Node[] | undefined, style: Omit<Inline, "text"> = {}): Inline[] {
   const out: Inline[] = [];
   for (const n of nodes ?? []) {
@@ -56,6 +58,9 @@ function inlinesOf(nodes: Node[] | undefined, style: Omit<Inline, "text"> = {}):
       // Only ordinary web addresses stay links in a file someone may open elsewhere.
       const safe = /^https?:\/\//i.test(n.url ?? "") ? { link: n.url } : {};
       out.push(...inlinesOf(n.children, { ...style, ...safe }));
+    } else if (n.type === "linkReference") {
+      const url = definitions.get(n.identifier ?? "");
+      out.push(...inlinesOf(n.children, { ...style, ...(url && /^https?:\/\//i.test(url) ? { link: url } : {}) }));
     } else if (n.type === "image") out.push({ text: n.alt ? `[görsel: ${n.alt}]` : "[görsel]", ...style });
     else if (n.type === "html") out.push({ text: (n.value ?? "").replace(/<[^>]*>/g, ""), ...style });
     else if (n.children) out.push(...inlinesOf(n.children, style));
@@ -88,7 +93,20 @@ function blocksOf(nodes: Node[] | undefined): Block[] {
   });
 }
 
-export const parseAnswer = (markdown: string): Block[] => blocksOf((parser.parse(markdown) as Node).children);
+export function parseAnswer(markdown: string): Block[] {
+  const tree = parser.parse(markdown) as Node;
+  definitions = new Map();
+  const find = (n: Node) => {
+    if (n.type === "definition" && n.identifier && n.url && !definitions.has(n.identifier)) definitions.set(n.identifier, n.url);
+    n.children?.forEach(find);
+  };
+  find(tree);
+  return blocksOf(tree.children);
+}
+/** Every table, wherever it stands: inside a quotation or a list item too. */
+function tablesIn(blocks: Block[]): Extract<Block, { kind: "table" }>[] {
+  return blocks.flatMap((b) => (b.kind === "table" ? [b] : b.kind === "quote" ? tablesIn(b.blocks) : b.kind === "list" ? b.items.flatMap(tablesIn) : []));
+}
 export const textOf = (inlines: Inline[]) => inlines.map((i) => i.text).join("");
 
 /** What goes in a file: the answer and, if there are any, where it came from. */
@@ -223,7 +241,7 @@ export function toJson(doc: ExportDoc): string {
       ...(t.at ? { askedAt: new Date(t.at).toISOString() } : {}),
       answer: t.answer,
       // The tables as data, not only as text: this is what a program reading the file wants.
-      tables: t.blocks.flatMap((b) => (b.kind !== "table" ? [] : [{ columns: b.header.map(textOf), rows: cells(b.rows), records: cells(b.rows).map((r) => Object.fromEntries(b.header.map((h, c) => [textOf(h) || `Sütun ${c + 1}`, r[c] ?? ""]))) }])),
+      tables: tablesIn(t.blocks).map((b) => ({ columns: b.header.map(textOf), rows: cells(b.rows), records: cells(b.rows).map((r) => Object.fromEntries(b.header.map((h, c) => [textOf(h) || `Sütun ${c + 1}`, r[c] ?? ""]))) })),
       sources: t.sources,
       web: t.web,
     })),

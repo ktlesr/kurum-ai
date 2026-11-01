@@ -219,3 +219,14 @@ test("no way of writing a picture survives in a markdown file; links do", () => 
   assert.ok(out.includes(keep), out);
 });
 
+test("reference links keep their address, tables in a quotation are data, a question beside a request stays", () => {
+  const b = parseAnswer("[rapor][r]\n\n[r]: https://a.org/r");
+  assert.ok(b[0].kind === "paragraph" && b[0].inlines[0].link === "https://a.org/r");
+  const j = JSON.parse(toJson(exportDoc([turnOf({ answer: "> |İl|Tutar|\n> |-|-|\n> |Uşak|3|" })])));
+  assert.equal(j.turns[0].tables[0].records[0]["İl"], "Uşak");
+  const r = exportRequest("Bu nasıl çalışır? PDF olarak ver");
+  assert.deepEqual(r, { formats: ["pdf"], rest: "Bu nasıl çalışır?" });
+  assert.equal(exportRequest("pdf olarak nasıl veririm"), null);
+  assert.ok(exportRequest("bunu pdf olarak verir misin?")?.formats.includes("pdf"));
+});
+
