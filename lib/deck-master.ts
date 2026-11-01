@@ -3,7 +3,7 @@
 // on all slides, and PPTX puts them in a real slide master. A logo comes in two versions, and each slide takes the one that
 // reads on its own background. Pure.
 import { contrast, luminance } from "./deck-design.ts";
-import { newId, safePicture, type El, type ImageEl, type Picture, type ShapeEl, type TextEl } from "./studio.ts";
+import { newId, storedPicture, type El, type ImageEl, type Picture, type ShapeEl, type TextEl } from "./studio.ts";
 
 export type MasterPick = "auto" | "color" | "white" | "none";
 export interface MasterLogo { color: Picture; white?: Picture }
@@ -26,7 +26,7 @@ export function cleanMaster(raw: unknown): DeckMaster {
   const text = (v: unknown) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 120) : "");
   return {
     logos: (Array.isArray(m.logos) ? m.logos : []).slice(0, 6).flatMap((l): MasterLogo[] => {
-      const color = safePicture(l?.color), white = safePicture(l?.white);
+      const color = storedPicture(l?.color), white = storedPicture(l?.white); // from a file or storage: real size checked too
       return color ? [{ color, ...(white ? { white } : {}) }] : [];
     }),
     corner: (["tr", "br", "tl", "bl"] as const).find((c) => c === m.corner) ?? "tr",
