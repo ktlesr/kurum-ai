@@ -3,7 +3,7 @@
 // the answers are validated against it. A document is the user's own and stays on the institution's model.
 import { admission, busy, tooMany } from "@/lib/admission";
 import { requireApiUser } from "@/lib/auth";
-import { PLAN_PROMPT, SECTION_PROMPT, completeGroups, parseBlocks, parsePlan, pickSource, sampleSource, verifyBlocks } from "@/lib/deck-doc";
+import { PLAN_PROMPT, SECTION_NO_DOC, SECTION_PROMPT, completeGroups, parseBlocks, parsePlan, pickSource, sampleSource, verifyBlocks } from "@/lib/deck-doc";
 import { FROM_DOC, OUTLINE_PROMPT, SLIDE_PROMPT, parseOutline, parseSlide, type LayoutSlot } from "@/lib/deck";
 import { readLimited } from "@/lib/filetype";
 import { NUM_CTX, modelConfig, providerOf } from "@/lib/model-config";
@@ -14,6 +14,7 @@ const MAX_BODY = 96 * 1024;
 const WHOLE_DOC = 14_000;
 /** A section's source and answer share the model's context: long lists need room to be written out whole. */
 const SECTION_ANSWER = 5_000;
+const MAX_SOURCES = 5;
 const SECTION_SOURCE = Math.min(24_000, Math.floor((NUM_CTX - SECTION_ANSWER - 1_000) * 2.2)); // 2.2: the cautious characters per token
 const fail = (error: string, status: number) => Response.json({ error }, { status });
 const clean = (s: string) => s.replace(/<\/?(konu|belge|slayt|duzenler|istek|basliklar|bolum|diger)/gi, "< $1");
@@ -37,7 +38,11 @@ export async function POST(req: Request) {
   const docId = typeof b.docId === "string" && b.docId.length <= 64 ? b.docId : "";
   const doc = docId ? getDoc(user.id, docId) : undefined;
   if (docId && !doc) return fail("Belge bulunamadı. Asistan sayfasından yeniden yükleyin.", 404);
-  if (!brief && !doc) return fail("Sunumun konusunu yazın ya da bir belge seçin.", 400);
+  // Several sources for one deck; each must be this user's.
+  const docIds = (Array.isArray(b.docIds) ? b.docIds : docId ? [docId] : []).slice(0, MAX_SOURCES).filter((d): d is string => typeof d === "string" && d.length <= 64);
+  const sources = docIds.flatMap((d) => getDoc(user.id, d) ?? []);
+  if (sources.length !== docIds.length) return fail("Belge bulunamadı. Asistan sayfasından yeniden yükleyin.", 404);
+  if (!brief && !doc && !sources.length) return fail("Sunumun konusunu yazın ya da bir belge seçin.", 400);
 
   const cfg = await modelConfig();
   const chat = providerOf(cfg.chat);
@@ -57,26 +62,35 @@ export async function POST(req: Request) {
 
   try {
     if (b.step === "plan") {
-      if (!doc) return fail("Belge bulunamadı.", 400);
-      const heads = doc.text.split("\n").filter((l) => /^#{1,3}\s/.test(l)).slice(0, 60).join("\n") || doc.text.slice(0, 6_000); // no headings: its beginning
-      const plan = parsePlan(await ask(PLAN_PROMPT, `<istek>\n${brief || "Belgenin ana konularını anlatan bir sunum"}\n</istek>\n\n<basliklar>\n${clean(heads)}\n</basliklar>`, 1000));
+      const target = Number(b.count);
+      const size = Number.isFinite(target) && target >= 2 ? `\nKullanıcı yaklaşık ${Math.min(60, Math.floor(target))} slayt istiyor; bölüm sayısını buna göre ayarla.` : "\nKullanıcı slayt sayısı belirtmedi: içeriğe göre gereken kadar bölüm çıkar.";
+      const heads = sources.map((d) => {
+        const h = d.text.split("\n").filter((l) => /^#{1,3}\s/.test(l)).slice(0, 40).join("\n") || d.text.slice(0, 4_000); // no headings: its beginning
+        return `[${d.name}]\n${h}`;
+      }).join("\n\n");
+      const plan = parsePlan(await ask(PLAN_PROMPT, `<istek>\n${clean(brief) || "Belgenin ana konularını anlatan bir sunum"}${size}\n</istek>\n\n<basliklar>\n${clean(heads)}\n</basliklar>`, 1000));
       // A plan cut at the length limit has lost topics the user asked for.
       return plan && !truncated ? Response.json({ plan }) : fail("Model uygun bir plan döndürmedi. Tekrar deneyin.", 502);
     }
     if (b.step === "section") {
-      if (!doc) return fail("Belge bulunamadı.", 400);
       const title = str(b.title, 120);
       const query = `${title} ${str(b.query, 200)}`;
       if (!title) return fail("Bölüm adı yok.", 400);
       const others = (Array.isArray(b.others) ? b.others : []).slice(0, 20).map((o) => str(o, 120)).filter(Boolean).join("; ");
-      const asked = (part: string) => ask(SECTION_PROMPT, `<bolum>${title}</bolum>\n<diger>${others}</diger>\n\n<belge>\n${clean(part)}\n</belge>`, SECTION_ANSWER);
-      let parsed = parseBlocks(await asked(pickSource(doc.text, query, SECTION_SOURCE)));
-      // The search can miss (the document in another language, other words): one more look over all of it before saying "not there".
-      if (parsed && !parsed.blocks.length) {
-        parsed = parseBlocks(await asked(sampleSource(doc.text, SECTION_SOURCE))) ?? parsed;
+      if (!sources.length) {
+        const parsed = parseBlocks(await ask(SECTION_NO_DOC, `<konu>\n${brief}\n</konu>\n<bolum>${title}</bolum>\n<diger>${others}</diger>`, SECTION_ANSWER));
+        if (!parsed) return fail("Model bu bölüm için uygun içerik döndürmedi.", 502);
+        return Response.json({ title, source: "", blocks: parsed.blocks, dropped: [], cut: truncated || parsed.capped });
       }
+      const share = Math.floor(SECTION_SOURCE / sources.length);
+      const named = (pick: (text: string) => string) => sources.map((d) => (sources.length > 1 ? `[Kaynak: ${d.name}]\n` : "") + pick(d.text)).join("\n\n");
+      const asked = (part: string) => ask(SECTION_PROMPT, `<bolum>${title}</bolum>\n<diger>${others}</diger>\n\n<belge>\n${clean(part)}\n</belge>`, SECTION_ANSWER);
+      let parsed = parseBlocks(await asked(named((t) => pickSource(t, query, share))));
+      // The search can miss (the document in another language, other words): one more look over all of it before saying "not there".
+      if (parsed && !parsed.blocks.length) parsed = parseBlocks(await asked(named((t) => sampleSource(t, share)))) ?? parsed;
       if (!parsed) return fail("Model bu bölüm için uygun içerik döndürmedi.", 502);
-      const { blocks, dropped } = verifyBlocks(completeGroups(parsed.blocks, doc.text, query), doc.text);
+      const all = sources.map((d) => d.text).join("\n\n");
+      const { blocks, dropped } = verifyBlocks(completeGroups(parsed.blocks, all, query), all);
       return Response.json({ title, source: parsed.source, blocks, dropped, cut: truncated || parsed.capped });
     }
     if (b.step === "outline") {

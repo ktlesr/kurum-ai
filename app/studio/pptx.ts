@@ -74,8 +74,42 @@ export async function downloadPptx(slides: El[][], measure: Measure, name: strin
   const { default: PptxGen } = await import("pptxgenjs");
   const pptx = new PptxGen();
   pptx.layout = "LAYOUT_WIDE"; // 13.33 x 7.5 in
-  for (const els of slides) {
-    const slide = pptx.addSlide();
+  // Each different set of master elements is one slide master, as PowerPoint's "Asıl Slayt" view shows them.
+  const masters = new Map<string, string>();
+  const isFull = (e: El | undefined) => !!e && e.kind === "shape" && e.x <= 0.5 && e.y <= 0.5 && e.w >= FORMATS.yatay.w - 0.5 && e.h >= FORMATS.yatay.h - 0.5;
+  const plainGround = (e: El | undefined) => (isFull(e) && e?.kind === "shape" && (e.shape ?? "rect") === "rect" && !e.radius && !e.stroke && !e.shadow && !e.noFill && !e.picFill && e.fill.kind === "solid" && (e.opacity ?? 1) >= 1 && !e.rotation ? e.fill.color : null);
+  const masterName = async (items: El[]) => {
+    const key = JSON.stringify(items.filter((e) => !(e.kind === "shape")).map((e) => (e.kind === "image" ? [e.pic.src, e.x, e.y, e.w, e.h] : e.kind === "text" ? [e.name, e.name === "Sayfa numarası" ? "#" : e.text, e.x, e.y, e.color, e.font] : [])));
+    const known = masters.get(key);
+    if (known) return known;
+    const title = `Asıl Slayt ${masters.size + 1}`;
+    const objects: Record<string, unknown>[] = [];
+    let slideNumber: Record<string, unknown> | undefined;
+    for (const e of items) {
+      const box = { x: e.x * PX, y: e.y * PX, w: e.w * PX, h: e.h * PX };
+      if (e.kind === "image") objects.push({ image: { ...box, data: await pictureBox(e) } });
+      else if (e.kind === "text") {
+        const style = { fontFace: family(e.font), fontSize: e.size * 0.5, color: hex(e.color), align: "right" };
+        if (e.name === "Sayfa numarası") slideNumber = { ...box, ...style };
+        else objects.push({ text: { text: e.text, options: { ...box, ...style, margin: 0 } } });
+      }
+    }
+    pptx.defineSlideMaster({ title, objects: objects as never, ...(slideNumber ? { slideNumber: slideNumber as never } : {}) });
+    masters.set(key, title);
+    return title;
+  };
+  for (const raw of slides) {
+    // Master content lies under the slide's in PowerPoint: a plain full-page ground becomes the slide's background so it can't
+    // hide it. Over any other ground (a picture, a gradient) the items go on the slide itself, where they stay visible.
+    const ground = plainGround(raw[0]);
+    const items = raw.filter((e) => e.master && e.name !== "Asıl slayt");
+    // Only directly above the ground can they live in the master: anything of the slide's own under them must stay under.
+    const firstOwn = raw.findIndex((e, i) => !e.master && !(ground && i === 0));
+    const firstItem = raw.findIndex((e) => e.master && e.name !== "Asıl slayt");
+    const useMaster = (!!ground || !isFull(raw[0])) && (firstOwn < 0 || firstItem < 0 || firstItem < firstOwn);
+    const slide = useMaster && items.length ? pptx.addSlide({ masterName: await masterName(items) }) : pptx.addSlide();
+    if (ground) slide.background = { color: hex(ground) };
+    const els = raw.filter((e, i) => !(ground && i === 0) && !(e.master && (useMaster || e.name === "Asıl slayt")));
     for (const e of els) {
       const box = { x: e.x * PX, y: e.y * PX, w: e.w * PX, h: e.h * PX, rotate: e.rotation ?? 0 };
       const shadow = e.shadow ? { type: "outer" as const, color: hex(e.shadow.color), blur: e.shadow.blur / 2, offset: Math.hypot(e.shadow.x, e.shadow.y) / 2, angle: Math.round(((Math.atan2(e.shadow.y, e.shadow.x) * 180) / Math.PI + 360) % 360), opacity: e.shadow.opacity } : undefined;

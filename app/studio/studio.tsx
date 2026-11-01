@@ -17,9 +17,13 @@ import Toolbar from "./toolbar";
 import Editor from "./editor";
 import ContextMenu, { type MenuItem } from "./context-menu";
 import ArtPicker from "./art-picker";
-import { DeckPanel, LayoutPicker, SlideStrip, loadTemplate } from "./deck-panel";
+import { DeckPanel, DesignList, DesignPreview, LayoutPicker, SlideStrip, loadDesign, loadTemplate, type DeckContent } from "./deck-panel";
+import { MasterPanel } from "./master-panel";
+import { composeDeck } from "@/lib/deck-compose";
+import { DESIGNS, type DeckDesign } from "@/lib/deck-design";
+import { DEFAULT_MASTER, applyMaster, masterOn, setPick, splitMaster, withoutMaster, type DeckMaster } from "@/lib/deck-master";
 import { downloadPptx } from "./pptx";
-import { MAX_SLIDES, rethemeSlides, slideFrom, type DeckTemplate, type Layout, type TemplateInfo } from "@/lib/deck";
+import { MAX_SLIDES, rethemeSlides, slideFrom, type DeckTemplate, type Layout } from "@/lib/deck";
 import FontPicker from "./font-picker";
 import { THEMES, type Theme } from "@/lib/themes";
 import { OPEN_COLOR } from "@/lib/studio-assets";
@@ -31,7 +35,7 @@ import { tintSvg } from "@/lib/studio-assets";
 import { BACKDROPS, ENTRANCES, MAX_SCENES, REELS_PACKS, SCENE_SECONDS, TRANSITIONS, cleanVideo, type Backdrop, type Entrance, type ReelsPack, type SavedVideo, type Transition } from "@/lib/studio-video";
 import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, type Work, patchVideo } from "./works";
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
-import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont } from "./media";
+import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont, whiteLogo } from "./media";
 import {
   DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, MAX_PIC_ZOOM, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, isHolder, type GradientDir, type ShapeId, type ShapeStyle,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
@@ -48,6 +52,7 @@ const HISTORY = 100;
 const AUTOSAVE_MS = 1500;
 const TOOLS = {
   deck: { label: "Sunum", Icon: Presentation },
+  master: { label: "Asıl slayt", Icon: LayoutTemplate },
   scenes: { label: "Sahneler", Icon: Clapperboard },
   templates: { label: "Şablon", Icon: LayoutTemplate },
   ai: { label: "Yapay zekâ", Icon: Sparkles },
@@ -61,7 +66,7 @@ const TOOLS = {
 type Tool = keyof typeof TOOLS;
 const RAIL: Record<Mode, Tool[]> = {
   gorsel: ["templates", "ai", "text", "elements", "images", "brand", "layers", "edit"],
-  sunum: ["deck", "text", "elements", "images", "brand", "layers", "edit"],
+  sunum: ["deck", "master", "text", "elements", "images", "brand", "layers", "edit"],
   video: ["scenes", "templates", "ai", "text", "elements", "images", "brand", "layers", "edit"],
 };
 type Snap = { els: El[]; format: FormatId; primary: string; accent: string };
@@ -137,7 +142,10 @@ export default function Studio({ username }: { username: string }) {
   const [picked, setPicked] = useState<string[]>([]);
   const [activeTheme, setActiveTheme] = useState("");
   // Sunum mode: `els` is the slide on the canvas; the others wait here (slides[at] is out of date until saved back).
-  const [deck, setDeck] = useState<{ template: DeckTemplate; slides: El[][]; at: number; primary: string; theme?: Theme } | null>(null);
+  const [deck, setDeck] = useState<{ template: DeckTemplate; slides: El[][]; at: number; primary: string; theme?: Theme; design?: DeckDesign; master?: DeckMaster; content?: DeckContent } | null>(null);
+  const [deckDesign, setDeckDesign] = useState<DeckDesign>(DESIGNS[0]); // the one chosen before a deck exists
+  const [designPreview, setDesignPreview] = useState<DeckDesign | null>(null);
+  const [deckBefore, setDeckBefore] = useState<NonNullable<typeof deck> | null>(null); // one step back from applying a design
   const [layoutsOpen, setLayoutsOpen] = useState(false);
   const [artOpen, setArtOpen] = useState(false);
   const [alignCanvas, setAlignCanvas] = useState(false); // several chosen: to each other, or to the canvas
@@ -267,9 +275,17 @@ export default function Studio({ username }: { username: string }) {
   const push = (s: Snap) => setHist((h) => ({ past: [...h.past.slice(-HISTORY + 1), s], future: [] }));
 
   /** A new design state; `commit` makes it one undo step (from where the current gesture started). */
+  /** A slide after any change to it: which logo version reads depends on what is on it now. */
+  const remaster = (list: El[]) => {
+    if (!deck?.master || !list.some((e) => e.master)) return list;
+    const total = deck.slides.length;
+    const covered = !deck.master.onCovers && total > 1 && (deck.at === 0 || deck.at === total - 1);
+    return masterOn(list, deck.master, deck.at + 1, covered, (deck.theme?.body ?? deck.design?.bodyFont));
+  };
   const change = (raw: El[], commit = true) => {
     setMenu(null); // its actions belong to the design before this change
-    const next = font ? hug(raw, font.measure) : raw;
+    const measured = font ? hug(raw, font.measure) : raw;
+    const next = commit ? remaster(measured) : measured;
     if (!commit) {
       gesture.current ??= snap();
       setEls(next);
@@ -313,7 +329,7 @@ export default function Studio({ username }: { username: string }) {
   };
 
   const patch = (id: string, p: Partial<El>, commit = true) => change(view.map((e) => (e.id === id ? ({ ...e, ...p } as El) : e)), commit);
-  const sel = view.find((e) => e.id === selected) ?? null;
+  const sel = view.find((e) => e.id === selected && !e.master) ?? null; // the master is changed in its own panel
 
   const saveBrand = (b: Brand) => {
     setBrand(b);
@@ -337,7 +353,9 @@ export default function Studio({ username }: { username: string }) {
     const next = { ...brand, primary: t.primary, accent: t.accent };
     if (deck) {
       // Every slide (lib/deck rethemeSlides); fonts were loaded above.
-      const all = rethemeSlides(slidesNow(), t, deckRoles(deck));
+      const recoloured = rethemeSlides(slidesNow(), t, deckRoles(deck));
+      // The ground may have gone from dark to light: each slide's logo version is chosen again.
+      const all = deck.master ? applyMaster(recoloured, deck.master, t.body) : recoloured;
       setDeck({ ...deck, slides: all, primary: t.primary, theme: t });
       setEls(all[deck.at]);
       setHist({ past: [], future: [] });
@@ -566,7 +584,7 @@ export default function Studio({ username }: { username: string }) {
   };
 
   /** Ids that may change: the given ones that aren't locked. */
-  const free = (ids: string[]) => ids.filter((id) => view.some((e) => e.id === id && !e.locked));
+  const free = (ids: string[]) => ids.filter((id) => view.some((e) => e.id === id && !e.locked && !e.master));
   const remove = (ids: string[]) => {
     const gone = new Set(free(ids));
     if (!gone.size) return;
@@ -614,7 +632,7 @@ export default function Studio({ username }: { username: string }) {
 
   const copyEl = (ids: string[]) => {
     const list = view.filter((e) => ids.includes(e.id));
-    if (list.length) setClip(list);
+    if (list.length) setClip(list.filter((e) => !e.master));
   };
   /** Cut: only what can be removed goes to the clipboard (locked ones stay, and aren't copied either). */
   const cut = (ids: string[]) => {
@@ -701,7 +719,7 @@ export default function Studio({ username }: { username: string }) {
     ["bottom", "Alta hizala", <AlignEndHorizontal key="b" size={14} />],
   ];
   const menuItems = (id: string | null): MenuItem[] => {
-    const e = id ? view.find((x) => x.id === id) : undefined;
+    const e = id ? view.find((x) => x.id === id && !x.master) : undefined;
     if (!e)
       return [
         { label: "Yapıştır", icon: <ClipboardPaste size={14} />, keys: "Ctrl+V", run: paste, disabled: !clip },
@@ -884,6 +902,7 @@ export default function Studio({ username }: { username: string }) {
   };
   const slidesNow = () => (deck ? deck.slides.map((s, i) => (i === deck.at ? view : s)) : []);
   const startDeck = (template: DeckTemplate, primary: string, slides: El[][], theme?: Theme) => {
+    setDeckBefore(null);
     cancelSuggest();
     setDeck({ template, slides, at: 0, primary, theme });
     setMode("sunum");
@@ -896,8 +915,13 @@ export default function Studio({ username }: { username: string }) {
     Promise.allSettled([...fonts].map((id) => ensureFont(id, username))).then(() => setFontTick((n) => n + 1));
   };
   const openDeck = async (d: SavedDeck) => {
+    const design = d.design ? await loadDesign(d.design) : undefined;
     const t = await loadTemplate(d.template);
-    startDeck(t, d.primary, d.slides, THEMES.find((x) => x.name === d.theme));
+    // A theme chosen on top of the design is what the deck wears now.
+    const theme = THEMES.find((x) => x.name === d.theme) ?? (design ? themeOf(design) : undefined);
+    const slides = d.master ? applyMaster(d.slides, d.master, theme?.body) : d.slides;
+    startDeck(t, d.primary, slides, theme);
+    setDeck({ template: t, slides, at: 0, primary: d.primary, theme, design, master: d.master, content: d.content ? { plan: d.content.plan, sections: d.content.sections, docName: d.content.docName } : undefined });
   };
   const goSlide = (i: number) => {
     if (!deck || i === deck.at) return;
@@ -907,10 +931,100 @@ export default function Studio({ username }: { username: string }) {
     clearEditing();
   };
   /** Slides changed as a list: the canvas shows slide `at` of them. */
-  const setSlides = (slides: El[][], at: number) => {
+  const setSlides = (raw: El[][], at: number) => {
     if (!deck) return;
+    // Numbers and which slides are covers follow the order.
+    const slides = deck.master ? applyMaster(raw, deck.master, (deck.theme?.body ?? deck.design?.bodyFont)) : raw;
     setDeck({ ...deck, slides, at });
     setEls(slides[at]);
+    clearEditing();
+  };
+  /** The master changed: rewritten on every slide, nothing else moves. */
+  const setMaster = (master: DeckMaster) => {
+    if (!deck) return;
+    const slides = applyMaster(slidesNow(), master, (deck.theme?.body ?? deck.design?.bodyFont));
+    setDeck({ ...deck, slides, master });
+    setEls(slides[deck.at]);
+    setHist({ past: [], future: [] }); // undo would bring a slide back with the old master
+    setPicked([]);
+  };
+  const setSlidePick = (pick: "auto" | "color" | "white" | "none") => {
+    if (!deck?.master) return;
+    const s = slidesNow();
+    s[deck.at] = setPick(s[deck.at], pick);
+    setSlides(s, deck.at);
+  };
+  const logoWhite = (l: SavedLogo, white: Picture) => {
+    const next = { ...l, white };
+    setLogos((x) => x.map((y) => (y.id === l.id ? next : y)));
+    void putLogo(username, next).catch(() => setNote({ kind: "error", text: "Beyaz sürüm kaydedilemedi (tarayıcı depolaması)." }));
+    const m = deck?.master;
+    if (m?.logos.some((x) => x.color.src === l.pic.src)) setMaster({ ...m, logos: m.logos.map((x) => (x.color.src === l.pic.src ? { ...x, white } : x)) });
+  };
+  // For what finishes after an await (a logo being read): the deck as it is by then.
+  const logoWhiteNow = useRef(logoWhite);
+  useLayoutEffect(() => {
+    logoWhiteNow.current = logoWhite;
+  });
+  const themeOf = (d: DeckDesign): Theme => ({ name: d.name, mood: d.mood, primary: d.primary, accent: d.accent, head: d.headFont, body: d.bodyFont });
+  /** A made deck: its look, its master and its content go with it, so the design can be changed later. */
+  const startComposed = async (d: DeckDesign, content: DeckContent, raw: El[][]) => {
+    const t = await loadTemplate(d.template);
+    const master = DEFAULT_MASTER;
+    await Promise.allSettled([d.headFont, d.bodyFont].map((id) => ensureFont(id, username)));
+    const slides = applyMaster(raw, master, d.bodyFont);
+    startDeck(t, d.primary, slides, themeOf(d));
+    setDeck({ template: t, slides, at: 0, primary: d.primary, theme: themeOf(d), design: d, master, content });
+    setDesignPreview(null);
+    setTool("deck");
+  };
+  const startBlank = async (d: DeckDesign) => {
+    const t = await loadTemplate(d.template);
+    const raw = [slideFrom(t.layouts[0], undefined, d.accent)];
+    const slides = rethemeSlides(raw, themeOf(d), t.roles ? [t.roles.primary, t.roles.accent] : []);
+    startDeck(t, d.primary, slides, themeOf(d));
+    setDeck({ template: t, slides, at: 0, primary: d.primary, theme: themeOf(d), design: d, master: DEFAULT_MASTER });
+    setDesignPreview(null);
+  };
+  /** The slides a design would give this deck: laid out anew from its content, or, without content, recoloured. */
+  const slidesIn = (d: DeckDesign): El[][] => {
+    if (!deck || !font) return [];
+    if (deck.content) return composeDeck(deck.content.plan, deck.content.sections, deck.content.docName, font.measure, d).slides;
+    return rethemeSlides(withoutMaster(slidesNow()), themeOf(d), deckRoles(deck));
+  };
+  const applyDesign = async (d: DeckDesign, thenDownload = false) => {
+    if (!deck || !font) return;
+    // Every open counts on this token: a work opened while the fonts load keeps its own deck.
+    const turn = ++restoring.current;
+    await Promise.allSettled([d.headFont, d.bodyFont].map((id) => ensureFont(id, username)));
+    const t = await loadTemplate(d.template);
+    if (turn !== restoring.current) return;
+    setDeckBefore({ ...deck, slides: slidesNow() });
+    const master = deck.master ?? DEFAULT_MASTER;
+    const slides = applyMaster(slidesIn(d), master, d.bodyFont);
+    setDeck({ ...deck, template: t, slides, at: Math.min(deck.at, slides.length - 1), primary: d.primary, theme: themeOf(d), design: d, master });
+    setEls(slides[Math.min(deck.at, slides.length - 1)]);
+    clearEditing();
+    setDesignPreview(null);
+    if (thenDownload) {
+      setBusy("export");
+      try {
+        const ready = await Promise.all(slides.map(fontsReady));
+        await downloadPptx(ready, font.measure, `kurum-sunum-${d.id}.pptx`, await familyNames(username));
+      } catch (e) {
+        console.error(e);
+        setNote({ kind: "error", text: "PPTX oluşturulamadı." });
+      } finally {
+        setBusy("");
+      }
+    }
+  };
+  const undoDesign = () => {
+    const was = deckBefore;
+    if (!was) return;
+    setDeckBefore(null);
+    setDeck(was);
+    setEls(was.slides[was.at]);
     clearEditing();
   };
   const slideRoom = () => {
@@ -944,6 +1058,7 @@ export default function Studio({ username }: { username: string }) {
   const leaveDeck = async () => {
     if (!(await flushSave())) return;
     setDeck(null);
+    setDeckBefore(null);
     setEls(null);
     clearEditing();
     setWorkId(null);
@@ -962,7 +1077,7 @@ export default function Studio({ username }: { username: string }) {
       setBusy("");
     }
   };
-  const savedDeck = (): SavedDeck | undefined => (deck ? { template: deck.template.id, primary: deck.primary, slides: slidesNow(), ...(deck.theme ? { theme: deck.theme.name } : {}) } : undefined);
+  const savedDeck = (): SavedDeck | undefined => (deck ? { template: deck.template.id, primary: deck.primary, slides: withoutMaster(slidesNow()), ...(deck.theme ? { theme: deck.theme.name } : {}), ...(deck.design ? { design: deck.design.id } : {}), ...(deck.master ? { master: deck.master } : {}), ...(deck.content ? { content: deck.content } : {}) } : undefined);
 
   /** A font chosen for these (arrives after loading: applied to the design as it is then). */
   const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => (e.kind === "text" && ids.includes(e.id) && !e.locked ? (font ? fitPill({ ...e, font: f }, font.measure) : { ...e, font: f }) : e)));
@@ -1212,6 +1327,7 @@ export default function Studio({ username }: { username: string }) {
     cancelSuggest();
     setMode(null);
     setDeck(null);
+    setDeckBefore(null);
     setEls(null); // nothing is open on the first screen: nothing can be saved over a work from there
     clearEditing();
     setWorkId(null);
@@ -1227,6 +1343,7 @@ export default function Studio({ username }: { username: string }) {
     setMode(m);
     setTool(RAIL[m][0]);
     setDeck(null);
+    setDeckBefore(null);
     setEls(null);
     clearEditing();
     setWorkId(null);
@@ -1234,6 +1351,8 @@ export default function Studio({ username }: { username: string }) {
     setOwnText(false);
     setPhoto(undefined);
     restoring.current++; // an open still on its way must not land on the new design
+    setDesignPreview(null);
+    setDeckBefore(null);
     sceneOwner.current = null; // scenes waiting from the last video go with the next one saved
     const first: TemplateId = m === "video" ? "kanca" : "atlas";
     setTemplate(first);
@@ -1275,6 +1394,8 @@ export default function Studio({ username }: { username: string }) {
       setMode((m) => (m === "video" || w.video ? "video" : "gorsel"));
       setTool((t) => t ?? "templates");
       setDeck(null);
+      setDeckBefore(null);
+    setDeckBefore(null);
       setEditingScene(null);
       setFormat(w.format);
       change(w.els);
@@ -1329,6 +1450,8 @@ export default function Studio({ username }: { username: string }) {
       setMode((m) => (m === "video" || video ? "video" : "gorsel"));
       setTool((t) => t ?? "templates");
       setDeck(null);
+      setDeckBefore(null);
+    setDeckBefore(null);
       setEditingScene(null);
       setFormat(j.format as FormatId);
       change(next);
@@ -1557,7 +1680,7 @@ export default function Studio({ username }: { username: string }) {
     if (open === "layers") return (
       <section className={section}>
         <ul className="space-y-0.5">
-          {[...view].reverse().map((e) => (
+          {[...view].reverse().filter((e) => !e.master).map((e) => (
             <li key={e.id} className={`flex items-center gap-1 rounded-md pr-1 text-sm ${picked.includes(e.id) ? "bg-accent-soft text-fg" : "hover:bg-subtle"}`}>
               <button
                 className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
@@ -1769,14 +1892,48 @@ export default function Studio({ username }: { username: string }) {
           {/* Stays mounted: it works for minutes on a deck, and leaving the panel mustn't cancel that. */}
           {mode === "sunum" && !deck && (
             <section className={`${section} ${open === "deck" ? "" : "hidden"}`}>
-              <DeckPanel docs={docs} measure={font?.measure} username={username} onStart={(t: DeckTemplate, i: TemplateInfo, s: El[][]) => startDeck(t, i.primary, s)} onNote={(kind, text) => setNote({ kind, text })} />
+              <DeckPanel docs={docs} measure={font?.measure} username={username} design={deckDesign} onDesign={(d) => { setDeckDesign(d); setDesignPreview(d); }} onStart={(d, c, s) => void startComposed(d, c, s)} onBlank={(d) => void startBlank(d)} onNote={(kind, text) => setNote({ kind, text })} />
             </section>
           )}
+          {mode === "sunum" && deck && open === "deck" && (
+            <section className={section}>
+              <h3 className={heading}>Tasarım</h3>
+              <p className="text-xs text-muted">Bir tasarıma tıklayın: bu sunum o tasarımla sağda önizlenir.</p>
+              <DesignList current={deck.design?.id} onPick={setDesignPreview} />
+              {deckBefore && <button onClick={undoDesign} className="h-8 w-full rounded-md border border-line text-xs hover:border-accent hover:text-accent">Önceki tasarıma dön</button>}
+              <button onClick={() => void exportDeck()} disabled={busy === "export"} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-50"><Download size={15} /> PowerPoint indir</button>
+            </section>
+          )}
+          {mode === "sunum" && open === "master" && (deck ? (
+            <MasterPanel
+              master={deck.master ?? DEFAULT_MASTER}
+              logos={logos}
+              at={deck.at}
+              total={deck.slides.length}
+              pick={splitMaster(view).pick}
+              onChange={setMaster}
+              onPick={setSlidePick}
+              onWhiteFile={(l, f) => { if (f) void readPicture(f, "logo").then((p) => logoWhiteNow.current(l, p), (e) => setNote({ kind: "error", text: (e as Error).message })); }}
+              onWhiteAuto={(l) => void whiteLogo(l.pic).then((p) => (p ? logoWhiteNow.current(l, p) : setNote({ kind: "error", text: "Bu logonun zemini saydam değil, otomatik beyaz sürüm beyaz kutu olurdu. Beyaz sürümü yükleyin." })), () => setNote({ kind: "error", text: "Beyaz sürüm üretilemedi." }))}
+            />
+          ) : <section className={section}><p className="text-xs text-muted">Önce bir sunum başlatın; asıl slayt ayarları sunumla birlikte saklanır.</p></section>)}
           {panel()}
         </aside>
 
         <main className="order-1 flex min-h-[50vh] min-w-0 flex-1 flex-col lg:order-3">
-          {showCanvas ? (
+          {designPreview && font ? (
+            <DesignPreview
+              design={designPreview}
+              content={deck?.content}
+              slides={deck && !deck.content ? slidesIn(designPreview) : undefined}
+              measure={font.measure}
+              master={deck?.master ?? DEFAULT_MASTER}
+              username={username}
+              onApply={deck ? () => void applyDesign(designPreview) : undefined}
+              onApplyDownload={deck ? () => void applyDesign(designPreview, true) : undefined}
+              onClose={() => setDesignPreview(null)}
+            />
+          ) : showCanvas ? (
             <>
               <Toolbar
                 el={sel}

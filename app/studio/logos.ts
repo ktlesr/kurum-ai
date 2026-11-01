@@ -4,7 +4,8 @@
 // too much for local storage to hold many). What comes back is validated like any stored picture.
 import { storedPicture, type Picture } from "@/lib/studio";
 
-export interface SavedLogo { id: string; name: string; pic: Picture; addedAt: number }
+/** `white`: its version for dark backgrounds. */
+export interface SavedLogo { id: string; name: string; pic: Picture; addedAt: number; white?: Picture }
 export const MAX_LOGOS = 40;
 const STORE = "logos";
 
@@ -35,7 +36,8 @@ export async function listLogos(user: string): Promise<SavedLogo[]> {
     return all
       .flatMap((x): SavedLogo[] => {
         const pic = storedPicture(x?.pic);
-        return pic && typeof x.id === "string" ? [{ id: x.id, name: typeof x.name === "string" ? x.name.slice(0, 80) : "Logo", pic, addedAt: typeof x.addedAt === "number" ? x.addedAt : 0 }] : [];
+        const white = storedPicture(x?.white);
+        return pic && typeof x.id === "string" ? [{ id: x.id, name: typeof x.name === "string" ? x.name.slice(0, 80) : "Logo", pic, addedAt: typeof x.addedAt === "number" ? x.addedAt : 0, ...(white ? { white } : {}) }] : [];
       })
       .sort((a, b) => a.addedAt - b.addedAt);
   } finally {

@@ -130,3 +130,25 @@ export function useStudioFont() {
   }, []);
   return { font, error };
 }
+
+/**
+ * A white version of a logo: its shape, every pixel white, its transparency kept. Null when the logo has no transparent
+ * background, because that would come out as a white box; then the user adds their own white version.
+ */
+export async function whiteLogo(p: Picture): Promise<Picture | null> {
+  const img = await imageOf(p.src, false);
+  const scale = Math.min(1, 1600 / Math.max(p.w, p.h));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(p.w * scale));
+  c.height = Math.max(1, Math.round(p.h * scale));
+  const ctx = c.getContext("2d")!;
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  const data = ctx.getImageData(0, 0, c.width, c.height);
+  const px = data.data;
+  let clear = 0;
+  for (let i = 3; i < px.length; i += 4) if (px[i] < 16) clear++;
+  if (clear < (px.length / 4) * 0.05) return null;
+  for (let i = 0; i < px.length; i += 4) px[i] = px[i + 1] = px[i + 2] = 255;
+  ctx.putImageData(data, 0, 0);
+  return { src: c.toDataURL("image/png"), w: c.width, h: c.height };
+}

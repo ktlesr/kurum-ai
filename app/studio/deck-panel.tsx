@@ -4,7 +4,9 @@
 // edited by the studio's canvas and inspector.
 import { memo, useId, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Copy, Loader2, Plus, Presentation, Sparkles, Trash2, X } from "lucide-react";
-import { composeDeck } from "@/lib/deck-compose";
+import { SAMPLE_DECK, composeDeck } from "@/lib/deck-compose";
+import { DESIGNS, designFromFamily, type DeckDesign } from "@/lib/deck-design";
+import { applyMaster, type DeckMaster } from "@/lib/deck-master";
 import type { DeckPlan, SectionContent } from "@/lib/deck-doc";
 import { slideFrom, type DeckTemplate, type Layout, type TemplateInfo } from "@/lib/deck";
 import { draw, type El, type Measure } from "@/lib/studio";
@@ -43,95 +45,153 @@ async function step<T>(body: unknown, signal: AbortSignal): Promise<T> {
   }
 }
 
-export function DeckPanel({ docs, measure, username, onStart, onNote }: {
+/** Every design: our own, then each library family as one. */
+export async function loadDesign(id: string): Promise<DeckDesign> {
+  const own = DESIGNS.find((d) => d.id === id);
+  if (own) return own;
+  const index = (await (await fetch("/slides/index.json")).json()) as TemplateInfo[];
+  const info = index.find((t) => t.id === id);
+  if (!info) return DESIGNS[0];
+  return designFromFamily(info, await loadTemplate(id));
+}
+
+/** The designs to choose from; clicking one previews it, here and after a deck is made. */
+export function DesignList({ current, onPick }: { current?: string; onPick: (d: DeckDesign) => void }) {
+  const [library, setLibrary] = useState<TemplateInfo[]>([]);
+  useEffect(() => {
+    let live = true;
+    fetch("/slides/index.json").then((r) => r.json()).then((l: TemplateInfo[]) => live && setLibrary(l.filter((t) => !DESIGNS.some((d) => d.id === t.id)))).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  const item = "flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left text-xs";
+  const on = (id: string) => (id === current ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-accent");
+  return (
+    <div className="space-y-2" role="group" aria-label="Sunum tasarımı">
+      <div className="grid grid-cols-2 gap-1.5">
+        {DESIGNS.map((d) => (
+          <button key={d.id} onClick={() => onPick(d)} aria-pressed={d.id === current} title={d.mood} className={`${item} ${on(d.id)}`}>
+            <span className="flex h-6 w-9 shrink-0 overflow-hidden rounded border border-line" style={{ background: d.bg }} aria-hidden>
+              <span className="w-1/2" style={{ background: d.primary }} /><span className="m-auto size-2 rounded-full" style={{ background: d.accent }} />
+            </span>
+            <span className="min-w-0 flex-1 truncate font-medium">{d.name}</span>
+          </button>
+        ))}
+      </div>
+      <details>
+        <summary className="cursor-pointer text-xs text-muted">Kütüphane ({library.length})</summary>
+        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+          {library.map((t) => (
+            <button key={t.id} onClick={() => void loadDesign(t.id).then(onPick)} aria-pressed={t.id === current} title={t.desc} className={`${item} ${on(t.id)}`}>
+              <span className="size-3.5 shrink-0 rounded-full border border-line" style={{ background: t.primary }} aria-hidden />
+              <span className="min-w-0 flex-1 truncate font-medium">{t.name}</span>
+            </button>
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+export interface DeckContent { plan: DeckPlan; sections: SectionContent[]; docName: string }
+
+/** A design shown large: the real deck if there is one, the sample otherwise. Nothing changes until it is applied. */
+export function DesignPreview({ design, content, slides, measure, master, username, onApply, onApplyDownload, onClose }: {
+  design: DeckDesign; content?: DeckContent; slides?: El[][]; measure: Measure; master: DeckMaster; username: string;
+  onApply?: () => void; onApplyDownload?: () => void; onClose: () => void;
+}) {
+  const [shown, setShown] = useState<{ id: string; slides: El[][] } | null>(null);
+  useEffect(() => {
+    let live = true;
+    void Promise.allSettled([design.headFont, design.bodyFont].map((id) => ensureFont(id, username))).then(() => {
+      if (!live) return;
+      const out = slides ?? composeDeck((content ?? SAMPLE_DECK).plan, (content ?? SAMPLE_DECK).sections, content?.docName ?? "Örnek içerik", measure, design).slides;
+      setShown({ id: design.id, slides: applyMaster(out, master, design.bodyFont) });
+    });
+    return () => {
+      live = false;
+    };
+  }, [design, content, slides, measure, master, username]);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line bg-panel px-3 py-2">
+        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{design.name} <span className="font-normal text-muted">· {onApply ? "önizleme" : "örnek içerikle önizleme"}{shown ? ` · ${shown.slides.length} slayt` : ""}</span></h2>
+        {onApply && <button onClick={onApply} className="h-8 rounded-md bg-accent px-3 text-sm font-medium text-accent-fg hover:opacity-90">Bu tasarımı uygula</button>}
+        {onApplyDownload && <button onClick={onApplyDownload} className="h-8 rounded-md border border-line px-3 text-sm hover:border-accent hover:text-accent">Uygula ve PowerPoint indir</button>}
+        <button onClick={onClose} className="grid size-8 place-items-center rounded-md text-muted hover:bg-subtle hover:text-fg" aria-label="Önizlemeyi kapat"><X size={15} /></button>
+      </div>
+      {onApply && <p className="bg-subtle px-3 py-1.5 text-xs text-muted">Uygulayınca slaytlar bu tasarımla yeniden kurulur; elle yaptığınız düzenlemeler taşınmaz. Sol panelden önceki hâline dönebilirsiniz.</p>}
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {shown?.id === design.id ? (
+          <ol className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]" aria-label="Slayt önizlemeleri">
+            {shown.slides.map((els, i) => (
+              <li key={i} className="overflow-hidden rounded border border-line shadow-sm"><SlideThumb els={els} measure={measure} /></li>
+            ))}
+          </ol>
+        ) : (
+          <p className="flex items-center gap-2 text-sm text-muted" role="status"><Loader2 size={14} className="animate-spin" /> Hazırlanıyor…</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const MAX_SOURCES = 5;
+
+export function DeckPanel({ docs, measure, username, design, onDesign, onStart, onBlank, onNote }: {
   measure?: Measure;
   username?: string;
   docs: { id: string; name: string }[];
-  onStart: (template: DeckTemplate, info: TemplateInfo, slides: El[][]) => void;
+  design: DeckDesign;
+  onDesign: (d: DeckDesign) => void;
+  onStart: (design: DeckDesign, content: DeckContent, slides: El[][]) => void;
+  onBlank: (design: DeckDesign) => void;
   onNote: (kind: "ok" | "error", text: string) => void;
 }) {
-  const [index, setIndex] = useState<TemplateInfo[]>([]);
-  const [tpl, setTpl] = useState("zafer");
   const [brief, setBrief] = useState("");
-  const [docId, setDocId] = useState("");
-  const [count, setCount] = useState(8);
+  const [docIds, setDocIds] = useState<string[]>([]);
+  const [count, setCount] = useState(0); // 0: the content decides
   const [progress, setProgress] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
-  useEffect(() => {
-    let live = true;
-    fetch("/slides/index.json").then((r) => r.json()).then((l: TemplateInfo[]) => live && setIndex(l)).catch(() => {});
-    return () => {
-      live = false;
+  useEffect(
+    () => () => {
       abort.current?.abort();
-    };
-  }, []);
-  const info = index.find((t) => t.id === tpl);
+    },
+    [],
+  );
 
-  const blank = async () => {
-    if (!info) return;
-    try {
-      const t = await loadTemplate(tpl);
-      onStart(t, info, [slideFrom(t.layouts[0], undefined, info.primary)]);
-    } catch {
-      onNote("error", "Şablon yüklenemedi.");
-    }
-  };
-  /** From a document: its sections, each taken from the document and checked, then laid out by the content. */
-  const fromDoc = async (ac: AbortController) => {
-    const zafer = index.find((t) => t.id === "zafer");
-    if (!zafer || !measure) throw new Error("Tasarım henüz yüklenmedi; biraz sonra tekrar deneyin.");
-    setProgress("Bölümler belirleniyor…");
-    await Promise.allSettled(["playfair-display", "work-sans"].map((id) => ensureFont(id, username ?? "")));
-    const { plan } = await step<{ plan: DeckPlan }>({ step: "plan", brief, docId }, ac.signal);
-    const sections: SectionContent[] = [];
-    for (const [i, s] of plan.sections.entries()) {
-      setProgress(`Bölüm ${i + 1} / ${plan.sections.length}: ${s.title}`);
-      const others = plan.sections.filter((o) => o !== s).map((o) => o.title);
-      try {
-        sections.push(await step<SectionContent>({ step: "section", docId, title: s.title, query: s.query, others }, ac.signal));
-      } catch (e) {
-        if (ac.signal.aborted) throw e;
-        sections.push({ title: s.title, source: "", blocks: [], dropped: [] }); // said below; the others aren't lost with it
-      }
-    }
-    const name = docs.find((d) => d.id === docId)?.name.replace(/\.[^.]+$/, "") ?? "";
-    const { slides, missing, left } = composeDeck(plan, sections, name, measure);
-    const dropped = sections.reduce((n, s) => n + s.dropped.length, 0);
-    if (missing.length === plan.sections.length) throw new Error("Belgede istenen konularda bilgi bulunamadı.");
-    onStart(await loadTemplate("zafer"), zafer, slides);
-    const notes = [
-      `${slides.length} slayt hazır. İçerik belgeden alındı; göndermeden önce kontrol edin.`,
-      missing.length ? `Belgede bulunamayan bölümler: ${missing.join(", ")}.` : "",
-      left.length ? `Slayt sınırına ulaşıldı, sunuma tam sığmayan bölümler: ${left.join(", ")}.` : "",
-      dropped ? `Belgeyle uyuşmayan ${dropped} bilgi çıkarıldı.` : "",
-      sections.some((s) => s.cut) ? `Şu bölümler model sınırına takıldı, eksik olabilir: ${sections.filter((s) => s.cut).map((s) => s.title).join(", ")}.` : "",
-    ];
-    onNote(missing.length || left.length || sections.some((s) => s.cut) ? "error" : "ok", notes.filter(Boolean).join(" "));
-  };
   const generate = async () => {
-    if (!info) return;
+    if (!measure) return;
     const ac = (abort.current = new AbortController());
-    setProgress("Taslak hazırlanıyor…");
+    setProgress("Bölümler belirleniyor…");
     try {
-      if (docId) return await fromDoc(ac);
-      const t = await loadTemplate(tpl);
-      const { slides } = await step<{ slides: { layout: string; title: string; points: string[] }[] }>({ step: "outline", brief, docId: docId || undefined, count, layouts: t.layouts.map((l) => ({ id: l.id, desc: l.desc })) }, ac.signal);
-      const out: El[][] = [];
-      for (const [i, s] of slides.entries()) {
-        setProgress(`Slayt ${i + 1} / ${slides.length}: ${s.title}`);
-        const layout = t.layouts.find((l) => l.id === s.layout) ?? t.layouts[i % t.layouts.length];
-        // One slide failing doesn't lose the others: it stays with its title in the layout's first text.
-        let values: Record<string, string>;
+      await Promise.allSettled([design.headFont, design.bodyFont].map((id) => ensureFont(id, username ?? "")));
+      const { plan } = await step<{ plan: DeckPlan }>({ step: "plan", brief, docIds, ...(count ? { count } : {}) }, ac.signal);
+      const sections: SectionContent[] = [];
+      for (const [i, s] of plan.sections.entries()) {
+        setProgress(`Bölüm ${i + 1} / ${plan.sections.length}: ${s.title}`);
+        const others = plan.sections.filter((o) => o !== s).map((o) => o.title);
         try {
-          ({ values } = await step<{ values: Record<string, string> }>({ step: "fill", brief, docId: docId || undefined, slide: s, slots: layout.slots }, ac.signal));
+          sections.push(await step<SectionContent>({ step: "section", brief, docIds, title: s.title, query: s.query, others }, ac.signal));
         } catch (e) {
           if (ac.signal.aborted) throw e;
-          values = { [layout.slots[0].key]: s.title.slice(0, layout.slots[0].max) };
+          sections.push({ title: s.title, source: "", blocks: [], dropped: [] }); // said below; the others aren't lost with it
         }
-        out.push(slideFrom(layout, values, info.primary));
       }
-      onStart(t, info, out);
-      onNote("ok", `${out.length} slayt hazır. Metinler modelin önerisidir: göndermeden önce kontrol edin.`);
+      const docName = docIds.map((id) => docs.find((d) => d.id === id)?.name.replace(/\.[^.]+$/, "") ?? "").filter(Boolean).join(", ").slice(0, 120);
+      const { slides, missing, left } = composeDeck(plan, sections, docName, measure, design);
+      const dropped = sections.reduce((n, s) => n + s.dropped.length, 0);
+      if (missing.length === plan.sections.length) throw new Error(docIds.length ? "Seçilen kaynaklarda istenen konularda bilgi bulunamadı." : "Model içerik üretemedi. Tekrar deneyin.");
+      onStart(design, { plan, sections, docName }, slides);
+      const notes = [
+        docIds.length ? `${slides.length} slayt hazır. İçerik kaynaklardan alındı; kullanmadan önce kontrol edin.` : `${slides.length} slayt hazır. İçerik modelin genel bilgisinden yazıldı, kaynağa dayanmıyor: kullanmadan önce kontrol edin.`,
+        missing.length ? `İçerik bulunamayan bölümler: ${missing.join(", ")}.` : "",
+        left.length ? `Slayt sınırına ulaşıldı, sunuma tam sığmayan bölümler: ${left.join(", ")}.` : "",
+        dropped ? `Kaynakla uyuşmayan ${dropped} bilgi çıkarıldı.` : "",
+        sections.some((s) => s.cut) ? `Şu bölümler model sınırına takıldı, eksik olabilir: ${sections.filter((s) => s.cut).map((s) => s.title).join(", ")}.` : "",
+      ];
+      onNote(missing.length || left.length || sections.some((s) => s.cut) ? "error" : "ok", notes.filter(Boolean).join(" "));
     } catch (e) {
       if (!ac.signal.aborted) onNote("error", (e as Error).message || "Sunum hazırlanamadı.");
     } finally {
@@ -142,26 +202,33 @@ export function DeckPanel({ docs, measure, username, onStart, onNote }: {
   const field = "w-full rounded-lg border border-line bg-panel px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent";
   return (
     <div className="space-y-2.5">
-      <p className="text-xs text-muted">{index.length} şablon, her biri onlarca hazır sayfa düzeni. Düzenlenebilir PowerPoint (PPTX) olarak indirilir.</p>
-      <div className="grid grid-cols-2 gap-1.5" role="group" aria-label="Sunum şablonu">
-        {index.map((t) => (
-          <button key={t.id} onClick={() => setTpl(t.id)} aria-pressed={t.id === tpl} title={t.desc} className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left text-xs ${t.id === tpl ? "border-accent bg-accent-soft" : "border-line hover:border-accent"}`}>
-            <span className="size-3.5 shrink-0 rounded-full border border-line" style={{ background: t.primary }} />
-            <span className="min-w-0 flex-1 truncate font-medium">{t.name}</span>
-            <span className="text-[11px] text-muted">{t.layouts}</span>
-          </button>
-        ))}
-      </div>
-      <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={3} maxLength={2000} placeholder="Sunumun konusu, hedef kitlesi, öne çıkacak noktalar" aria-label="Sunumun konusu" className={`${field} resize-y`} lang="tr" />
+      <p className="text-xs text-muted">Bir tasarıma tıklayın, önizlemesi sağda açılır. Sunum oluştuktan sonra da değiştirebilirsiniz.</p>
+      <DesignList current={design.id} onPick={onDesign} />
+      <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={3} maxLength={2000} placeholder="Sunumun konusu, hedef kitlesi, öne çıkacak noktalar" aria-label="Sunumun konusu" className={`${field} resize-y`} />
       {docs.length > 0 && (
-        <select value={docId} onChange={(e) => setDocId(e.target.value)} aria-label="Belgeden sunum" className={field}>
-          <option value="">Belge kullanma</option>
-          {docs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
+        <fieldset className="rounded-lg border border-line p-2">
+          <legend className="px-1 text-xs text-muted">Kaynaklar (en fazla {MAX_SOURCES})</legend>
+          <ul className="max-h-36 space-y-1 overflow-y-auto">
+            {docs.map((d) => {
+              const on = docIds.includes(d.id);
+              return (
+                <li key={d.id}>
+                  <label className="flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={on} disabled={!on && docIds.length >= MAX_SOURCES} onChange={() => setDocIds((x) => (on ? x.filter((y) => y !== d.id) : [...x, d.id]))} />
+                    <span className="min-w-0 flex-1 truncate" title={d.name}>{d.name}</span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </fieldset>
       )}
       <label className="flex items-center justify-between gap-2 text-xs text-muted">
         Slayt sayısı
-        <input type="number" min={2} max={20} value={count} onChange={(e) => setCount(Math.min(20, Math.max(2, +e.target.value || 2)))} className="h-8 w-16 rounded-md border border-line bg-panel px-2 text-sm text-fg" />
+        <select value={count} onChange={(e) => setCount(+e.target.value)} className="h-8 rounded-md border border-line bg-panel px-2 text-sm text-fg">
+          <option value={0}>Otomatik (içeriğe göre)</option>
+          {[5, 8, 10, 15, 20, 30].map((n) => <option key={n} value={n}>Yaklaşık {n}</option>)}
+        </select>
       </label>
       {progress ? (
         <div className="flex items-center gap-2 rounded-lg bg-subtle px-3 py-2 text-xs" role="status">
@@ -169,14 +236,14 @@ export function DeckPanel({ docs, measure, username, onStart, onNote }: {
           <button onClick={() => abort.current?.abort()} className="font-medium text-accent">İptal</button>
         </div>
       ) : (
-        <button onClick={generate} disabled={!info || (!brief.trim() && !docId)} className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-accent text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-40">
+        <button onClick={generate} disabled={!measure || (!brief.trim() && !docIds.length)} className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-accent text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-40">
           <Sparkles size={15} /> Sunumu oluştur
         </button>
       )}
-      <button onClick={blank} disabled={!info} className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-line text-sm hover:border-accent hover:text-accent disabled:opacity-40">
+      <button onClick={() => onBlank(design)} className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-line text-sm hover:border-accent hover:text-accent">
         <Presentation size={15} /> Boş sunumla başla
       </button>
-      <p className="text-[11px] text-muted">Konu ve seçilen belge yalnızca kurum sunucusundaki modele gider. Zafer ailesi kuruma özeldir; diğer şablonlar: presenton (Apache-2.0).</p>
+      <p className="text-[11px] text-muted">Konu ve seçilen kaynaklar yalnızca kurum sunucusundaki modele gider. Kütüphane düzenleri: presenton (Apache-2.0).</p>
     </div>
   );
 }

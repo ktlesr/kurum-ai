@@ -1,8 +1,11 @@
 // Run: pnpm test. A deck from a document: what the model says is typed, checked against the document, laid out in full.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { completeGroups, parseBlocks, parsePlan, pickSource, sampleSource, verifyBlocks } from "./deck-doc.ts";
-import { composeDeck, dropRepeats } from "./deck-compose.ts";
+import { cleanContent, completeGroups, parseBlocks, parsePlan, pickSource, sampleSource, verifyBlocks } from "./deck-doc.ts";
+import { SAMPLE_DECK, composeDeck, dropRepeats } from "./deck-compose.ts";
+import { DESIGNS, contrast, designFromFamily } from "./deck-design.ts";
+import { DEFAULT_MASTER, applyMaster, cleanMaster, setPick, splitMaster, withoutMaster } from "./deck-master.ts";
+import { cleanEls, type El } from "./studio.ts";
 
 const DOC = `# Amaç
 Madde 1- (1) Bu Kararın amacı üretimi artırmaktır.
@@ -151,5 +154,79 @@ test("composeDeck: long points are never cut; past the slide limit the sections 
   assert.equal(r.slides.length, 100);
   assert.ok(r.left.length > 0);
   assert.ok(r.slides[99].some((e) => e.kind === "text" && e.text === "Teşekkürler"));
+});
+
+const PIC = (c: string) => ({ src: `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="${c}"/></svg>`)}`, w: 20, h: 10 });
+
+test("designs: every design lays out the same content inside the slide, with text that reads on what it stands on", () => {
+  for (const d of DESIGNS) {
+    const { slides } = composeDeck(SAMPLE_DECK.plan, SAMPLE_DECK.sections, "Belge", measure, d);
+    assert.ok(slides.length >= 5, d.id);
+    for (const e of slides.flat()) if (e.kind === "text") assert.ok(e.y + e.h <= 1081 && e.x + e.w <= 1921, `${d.id}: ${e.text.slice(0, 20)}`);
+    assert.ok(contrast(d.ink, d.bg) >= 4.5 && contrast(d.heading, d.bg) >= 3 && contrast(d.onPrimary, d.primary) >= 4.5, d.id);
+  }
+});
+
+test("designFromFamily: a panel stands out from the page and has readable text, even on a dark or pale family", () => {
+  for (const info of [{ id: "a", name: "A", primary: "#bff4ff", background: "#bff4ff" }, { id: "b", name: "B", primary: "#c24d12", background: "#171717" }, { id: "c", name: "C", primary: "#000000", background: "#ececec" }]) {
+    const d = designFromFamily(info, { layouts: [] });
+    assert.ok(contrast(d.primary, d.bg) >= 3, info.id);
+    assert.ok(contrast(d.onPrimary, d.primary) >= 4.5, info.id);
+    assert.ok(contrast(d.ink, d.bg) >= 4.5, info.id);
+  }
+});
+
+test("master: covers stay clean; the logo version follows the ground; a slide can insist; re-applying doesn't pile up", () => {
+  const master = { ...DEFAULT_MASTER, logos: [{ color: PIC("#ff0000"), white: PIC("#ffffff") }], footer: "Kurum" };
+  const paper = [{ id: "z", kind: "shape", name: "Zemin", x: 0, y: 0, w: 1920, h: 1080, fill: { kind: "solid", color: "#ffffff" } }] as El[];
+  const night = [{ id: "n", kind: "shape", name: "Zemin", x: 0, y: 0, w: 1920, h: 1080, fill: { kind: "solid", color: "#0f1724" } }] as El[];
+  const on = applyMaster([paper, paper, night, paper], master);
+  const logoOf = (s: El[]) => s.find((e) => e.kind === "image" && e.master) as Extract<El, { kind: "image" }> | undefined;
+  assert.equal(logoOf(on[0]), undefined);
+  assert.equal(logoOf(on[3]), undefined);
+  assert.equal(logoOf(on[1])?.pic.src, master.logos[0].color.src);
+  assert.equal(logoOf(on[2])?.pic.src, master.logos[0].white.src);
+  // right above the ground, so the slide's own content stays on top
+  assert.equal(on[1][0].id, "z");
+  assert.ok(on[1].slice(1).every((e) => e.master));
+  assert.ok(on[1].some((e) => e.kind === "text" && e.name === "Sayfa numarası" && e.text === "2"));
+  const again = applyMaster(on, master);
+  assert.equal(again[1].length, on[1].length);
+  const white = setPick(on[1], "white");
+  assert.equal(logoOf(applyMaster([paper, white, paper], master)[1])?.pic.src, master.logos[0].white.src);
+  assert.equal(logoOf(applyMaster([paper, setPick(on[1], "none"), paper], master)[1]), undefined);
+});
+
+test("master: stored without its pictures, and a slide's choice survives", () => {
+  const master = { ...DEFAULT_MASTER, logos: [{ color: PIC("#ff0000") }] };
+  const paper = [{ id: "z", kind: "shape", name: "Zemin", x: 0, y: 0, w: 1920, h: 1080, fill: { kind: "solid", color: "#ffffff" } }] as El[];
+  const on = applyMaster([paper, paper, paper], master);
+  const stored = withoutMaster([on[0], setPick(on[1], "none"), on[2]]);
+  assert.ok(!JSON.stringify(stored).includes("base64"));
+  const back = cleanEls(JSON.parse(JSON.stringify(stored[1])));
+  assert.equal(splitMaster(back).pick, "none");
+  assert.deepEqual(cleanMaster({ logos: [{ color: { src: "https://evil/x.png", w: 1, h: 1 } }], size: 9999, corner: "x" }).logos, []);
+  assert.equal(cleanMaster({ size: 9999 }).size, 140);
+});
+
+test("cleanContent: saved content lays out again; bad parts go", () => {
+  const c = cleanContent({ plan: { title: "T" }, docName: "D", sections: [{ title: "A", source: "M1", blocks: [{ kind: "figures", title: "", items: [{ value: "%5", label: "x" }] }, { kind: "kötü" }, null] }, { nope: 1 }] });
+  assert.equal(c?.sections.length, 1);
+  assert.deepEqual(c?.sections[0].blocks.map((b) => b.kind), ["figures"]);
+  assert.equal(cleanContent({ sections: "x" }), undefined);
+  assert.ok(composeDeck(c!.plan, c!.sections, c!.docName, measure, DESIGNS[2]).slides.length >= 3);
+});
+
+test("master: a panel of the slide's own over the logo's corner doesn't hide it, and the white version is taken", () => {
+  const master = { ...DEFAULT_MASTER, logos: [{ color: PIC("#ff0000"), white: PIC("#ffffff") }] };
+  const slide = [
+    { id: "z", kind: "shape", name: "Zemin", x: 0, y: 0, w: 1920, h: 1080, fill: { kind: "solid", color: "#ffffff" } },
+    { id: "p", kind: "shape", name: "Panel", x: 0, y: 0, w: 1920, h: 400, fill: { kind: "solid", color: "#0f4c5c" } },
+  ] as El[];
+  const on = applyMaster([slide, slide, slide], master)[1];
+  const at = (id: string) => on.findIndex((e) => e.id === id);
+  const logo = on.findIndex((e) => e.kind === "image");
+  assert.ok(logo > at("p"), "above the panel");
+  assert.equal((on[logo] as { pic: { src: string } }).pic.src, master.logos[0].white.src);
 });
 

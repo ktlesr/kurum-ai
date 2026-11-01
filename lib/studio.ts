@@ -343,6 +343,8 @@ export type Stroke = { color: string; width: number; dash?: "dash" | "dot" };
 export type Shadow = { color: string; blur: number; x: number; y: number; opacity: number };
 type Common = {
   id: string; name: string; x: number; y: number; w: number; h: number; locked?: boolean; opacity?: number;
+  /** Comes from the deck's slide master (lib/deck-master); on the marker, the slide's choice of logo version. */
+  master?: boolean; masterPick?: "auto" | "color" | "white" | "none";
   /** Degrees clockwise around the box centre; flips mirror pictures and shapes (not text). */
   rotation?: number; flipX?: boolean; flipY?: boolean; shadow?: Shadow;
 };
@@ -838,6 +840,8 @@ export function cleanEls(raw: unknown): El[] {
       ...(num(r.rotation) % 360 ? { rotation: num(r.rotation) % 360 } : {}),
       ...(r.flipX === true && r.kind !== "text" ? { flipX: true } : {}),
       ...(r.flipY === true && r.kind !== "text" ? { flipY: true } : {}),
+      ...(r.master === true ? { master: true } : {}),
+      ...(r.masterPick === "auto" || r.masterPick === "color" || r.masterPick === "white" || r.masterPick === "none" ? { masterPick: r.masterPick as "auto" | "color" | "white" | "none" } : {}),
       ...(sh && typeof sh === "object" ? { shadow: { color: safeColor(sh.color, "#000000"), blur: Math.min(200, Math.max(0, num(sh.blur, 20))), x: Math.min(200, Math.max(-200, num(sh.x))), y: Math.min(200, Math.max(-200, num(sh.y, 8))), opacity: Math.min(1, Math.max(0, num(sh.opacity, 0.3))) } } : {}),
     };
     if (r.kind === "text") {
