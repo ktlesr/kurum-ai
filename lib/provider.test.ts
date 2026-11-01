@@ -119,8 +119,8 @@ test("an embedding model counts as installed though it can't chat", async () => 
     assert.deepEqual(await p.models(), ["gemma4:12b"], "chat list as before");
     assert.deepEqual(await p.embedModels(), ["embeddinggemma:latest", "nomic-embed-text:latest"]);
     // An Ollama that doesn't report capabilities.
-    tags.models = [{ name: "gemma4:12b" }, { name: "embeddinggemma:latest" }] as typeof tags.models;
-    assert.deepEqual(await p.embedModels(), ["embeddinggemma:latest"]);
+    tags.models = [{ name: "gemma4:12b" }, { name: "bge-m3:latest" }] as typeof tags.models;
+    assert.deepEqual(await p.embedModels(), ["gemma4:12b", "bge-m3:latest"]);
   } finally {
     globalThis.fetch = real;
   }

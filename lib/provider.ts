@@ -102,8 +102,8 @@ function ollama(base: string, numCtx: number): Provider {
     async embedModels() {
       const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3000), cache: "no-store" });
       const { models } = (await res.json()) as { models: { name: string; remote_host?: string; capabilities?: string[] }[] };
-      // An Ollama too old to report capabilities: by name, all common ones say "embed".
-      return models.filter((m) => !m.remote_host && (m.capabilities ? m.capabilities.includes("embedding") : /embed/i.test(m.name))).map((m) => m.name);
+      // Without capabilities in the answer nothing tells them apart (bge-m3 has no "embed" in its name): all may be.
+      return models.filter((m) => !m.remote_host && (m.capabilities?.includes("embedding") ?? true)).map((m) => m.name);
     },
     healthy: () => fetch(`${base}/api/version`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false),
   };
