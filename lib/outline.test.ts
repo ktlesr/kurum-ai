@@ -105,3 +105,14 @@ MERKEZ
   assert.ok(items.some((t) => t.startsWith("MADDE 10 — ")));
 });
 
+
+test("what a first review found", () => {
+  for (const q of ["İçindekiler tablosu ile metin tutarlı mı?", "Tüm başlıklar altında belirtilen riskleri karşılaştır."]) assert.ok(!asksForOutline(q), q);
+  const texts = (t: string) => docOutline(t).map((i) => i.text);
+  assert.ok(texts("## Giriş\n## Sonuç\u001eBOZUK").every((t) => !/[\u0000-\u001f]/.test(t)), "stream separators can't pass");
+  assert.deepEqual(texts("--- Sayfa 1 ---\nGİRİŞ\nSONUÇ\n\n--- Sayfa 2 ---\nGİRİŞ\n\n--- Sayfa 9 ---\nSONUÇ"), ["GİRİŞ", "SONUÇ", "GİRİŞ", "SONUÇ"]);
+  assert.deepEqual(texts("RAPOR BAŞLIĞI\n\n1. Giriş\n\n2. Yöntem\n\nSONUÇ"), ["RAPOR BAŞLIĞI", "1. Giriş", "2. Yöntem", "SONUÇ"]);
+  assert.deepEqual(texts("EK MADDE 1- Ek hüküm\nMükerrer Madde 3- Diğer hüküm\nGEÇİCİ MADDE 2- Geçiş"), ["EK MADDE 1 — Ek hüküm", "MÜKERRER MADDE 3 — Diğer hüküm", "GEÇİCİ MADDE 2 — Geçiş"]);
+  assert.deepEqual(texts("Ek 1 kapsamında inceleme yapılmıştır\nGeçici madde 2 uyarınca işlem yapılır.\nikinci bölüm uyarınca\n(1) sayılı liste uyarınca"), []);
+  assert.deepEqual(texts("EK-1\nEk 2: Formlar\nİKİNCİ BÖLÜM\n(3) SAYILI CETVEL"), ["EK-1", "Ek 2: Formlar", "İKİNCİ BÖLÜM", "(3) SAYILI CETVEL"]);
+});

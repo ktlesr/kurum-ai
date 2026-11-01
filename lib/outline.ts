@@ -24,13 +24,18 @@ function cut(s: string): string {
   return `${s.slice(0, at > 40 ? at : MAX_LEN)}…`;
 }
 /** Letters of the document can't act as markup in the list. */
-const plain = (s: string) => s.replace(/[`*_<>[\]|\\]/g, "").replace(/\s+/g, " ").trim();
+// eslint-disable-next-line no-control-regex -- control characters are the chat stream's own separators: they can't pass
+const plain = (s: string) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/[`*_<>[\]|\\]/g, "").replace(/\s+/g, " ").trim();
 
 // The number as OCR left it: "52W/A" is an article with a misread digit, which must stay in the list and say so.
-const ARTICLE = /^madde\s+(\d[\d\p{Lu}]{0,5}(?:\/[\p{Lu}])?)\s*(?:[-–—:.]\s*|(?=\())(.*)$/iu;
+const ARTICLE = /^((?:(?:ek|geçici|GEÇİCİ|gecici|mükerrer)\s+)?madde)\s+(\d[\d\p{Lu}]{0,5}(?:\/[\p{Lu}])?)\s*(?:[-–—:.]\s*|(?=\())(.*)$/iu;
 const WORDS_ALONE = /^(?:GİRİŞ|SONUÇ|ÖZET|ÖNSÖZ|KAYNAKÇA|KAYNAKLAR|EKLER?|İÇİNDEKİLER|AMAÇ|KAPSAM|DAYANAK|TANIMLAR|ABSTRACT)$/u;
-const PART = /^(?:(?:birinci|ikinci|üçüncü|dördüncü|beşinci|altıncı|yedinci|sekizinci|dokuzuncu|onuncu|\d+\.?)\s+(?:bölüm|kısım|kitap)|(?:bölüm|kısım)\s+\d+|ek\s*[-–:]?\s*\d+\b|\(\d+\)?\s*sayılı\s+(?:liste|cetvel)(?!\p{L})|geçici\s+madde\s+\d+)/iu;
+// Written with their capitals, and a part's list or annex standing alone or with its title: "Ek 1 kapsamında" and "ikinci
+// bölüm uyarınca" are sentences.
+const PART = /^(?:(?:BİRİNCİ|İKİNCİ|ÜÇÜNCÜ|DÖRDÜNCÜ|BEŞİNCİ|ALTINCI|YEDİNCİ|SEKİZİNCİ|DOKUZUNCU|ONUNCU|Birinci|İkinci|Üçüncü|Dördüncü|Beşinci|Altıncı|Yedinci|Sekizinci|Dokuzuncu|Onuncu|\d+\.?)\s+(?:BÖLÜM|KISIM|KİTAP|Bölüm|Kısım|Kitap)|(?:BÖLÜM|KISIM|Bölüm|Kısım)\s+\d+|(?:EK|Ek)\s*[-–:]?\s*\d+\s*(?:$|[-–:.]\s*\S|\p{Lu})|\(\d+\)?\s*(?:SAYILI|Sayılı|sayılı)\s+(?:LİSTE|Liste|liste|CETVEL|Cetvel|cetvel)\s*$)/u;
 const NUMBERED = new RegExp(`^\\d+(?:\\.\\d+)+\\.?\\s+[^${lower}\\s]`, "u");
+/** "1. Giriş": short, and words a misread line ("4. Bn i i n") doesn't have. */
+const isNumberedTitle = (s: string) => s.length <= 60 && /^\d+\.\s+\p{Lu}/u.test(s) && s.replace(/^\d+\.\s+/, "").split(/\s+/).every((w) => w.length >= 2);
 const FINAL_STOP = /[.;,:]$/;
 
 function isCaps(s: string): boolean {
@@ -46,13 +51,13 @@ function headingOf(raw: string): { text: string; weak?: boolean } | null {
   if (!s || s.startsWith("|") || s.startsWith("(Önceki") || s.startsWith("[") || s.startsWith(">")) return null;
   const article = ARTICLE.exec(s);
   if (article) {
-    const unsure = /\p{Lu}/u.test(article[1].split("/")[0]) ? " (numara okunamamış olabilir, asıl belgeden kontrol edin)" : "";
-    return { text: `MADDE ${article[1]}${unsure}${article[2] ? ` — ${article[2]}` : ""}` };
+    const unsure = /\p{Lu}/u.test(article[2].split("/")[0]) ? " (numara okunamamış olabilir, asıl belgeden kontrol edin)" : "";
+    return { text: `${article[1].toLocaleUpperCase("tr").replace(/\s+/g, " ")} ${article[2]}${unsure}${article[3] ? ` — ${article[3]}` : ""}` };
   }
-  if (s.length <= MAX_LEN && PART.test(s)) return { text: s };
+  if (s.length <= MAX_LEN && !/[.;,]$/.test(s) && PART.test(s)) return { text: s };
   if (marked) return s.includes(" : ") ? null : { text: s };
   if (s.length > MAX_LEN || FINAL_STOP.test(s)) return null;
-  if (NUMBERED.test(s)) return { text: s };
+  if (NUMBERED.test(s) || isNumberedTitle(s)) return { text: s };
   return isCaps(s) ? { text: s, weak: true } : null;
 }
 
@@ -81,14 +86,15 @@ export function docOutline(text: string): OutlineItem[] {
   const times = new Map<string, number>();
   for (const f of found) times.set(f.text, (times.get(f.text) ?? 0) + 1);
   // Capitals alone that come back are labels of a form or table too.
-  const kept = found.filter((f) => (pagesOf.get(f.text)?.size ?? 0) < repeats && !(f.weak && times.get(f.text)! > 1));
+  const kept = found.filter((f) => (pagesOf.get(f.text)?.size ?? 0) < repeats && !(f.weak && times.get(f.text)! > 1 && !WORDS_ALONE.test(f.text)));
   return kept.filter((f, i) => !(kept[i - 1]?.text === f.text && kept[i - 1]?.page === f.page)).map(({ page, text }) => ({ page, text }));
 }
 
 /** Asked for the list of a document's headings, not for what some heading says. */
 export function asksForOutline(question: string): boolean {
   const q = question.toLocaleLowerCase("tr");
-  return /içindekiler|(?:ana|tüm|bütün)\s+başlık|başlıkların[ıi]\s+(?:ve\s+\S+\s+)?(?:\S+\s+){0,3}(?:listele|sırala|çıkar|göster|yaz)|başlıklar[ıi]?\s+ne(?:ler)?\b/u.test(q);
+  // The headings themselves, a word asking for them, and nothing to do with them: analysis needs the model.
+  return /içindekiler|başlıklar/u.test(q) && /listele|sırala|çıkar|göster|yaz|\bver|neler|\bne\b/u.test(q) && !/altında|tutarlı|karşılaştır|özetle|açıkla|değerlendir|analiz|yorumla|anlat|içerik|kaç\b|hangi/u.test(q);
 }
 
 export function outlineMarkdown(docs: { name: string; items: OutlineItem[] }[]): string {
