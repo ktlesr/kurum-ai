@@ -362,7 +362,11 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     }
   };
   const setColors = (primary: string, accent: string) => {
-    if (deck?.album) slideStep(slidesNow().map((page) => recolor(page, brand, { ...brand, primary, accent })), deck.at);
+    if (deck?.album) {
+      slideStep(slidesNow().map((page) => recolor(page, brand, { ...brand, primary, accent })), deck.at);
+      // Pages made from now on wear these colours in the theme's fonts; it is no longer the named theme.
+      setDeck((d) => d && { ...d, primary, ...(d.theme ? { theme: { ...d.theme, name: "", primary, accent } } : {}) });
+    }
     else if (els) change(recolor(els, brand, { ...brand, primary, accent }));
     saveBrand({ ...brand, primary, accent });
   };
@@ -1268,6 +1272,8 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   };
   const leaveDeck = async () => {
     if (!(await flushSave())) return;
+    restoring.current++; // what is still on its way belonged to what is being left
+    cancelSuggest();
     setDeck(null);
     setDeckBefore(null);
     setEls(null);
