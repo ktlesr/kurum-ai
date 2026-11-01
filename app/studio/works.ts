@@ -11,7 +11,7 @@ import { cleanVideo, type SavedVideo } from "@/lib/studio-video";
 import { FORMATS, cleanEls, safeColor, type El, type FormatId, type TemplateId, TEMPLATES } from "@/lib/studio";
 
 /** A presentation: its slides (`els` is the first one, for the list) and the layouts' template. */
-export interface SavedDeck { /** A post of several images, not a presentation: any format, no layouts or master. */ album?: boolean; template: string; primary: string; slides: El[][]; theme?: string; design?: string; master?: DeckMaster; content?: NonNullable<ReturnType<typeof cleanContent>> }
+export interface SavedDeck { /** A post of several images, not a presentation: any format, no layouts or master. */ album?: boolean; /** Colours changed by hand on top of its theme. */ colors?: { primary: string; accent: string }; template: string; primary: string; slides: El[][]; theme?: string; design?: string; master?: DeckMaster; content?: NonNullable<ReturnType<typeof cleanContent>> }
 export interface Work { id: string; name: string; format: FormatId; template: TemplateId; els: El[]; thumb: string; updatedAt: number; deck?: SavedDeck; video?: SavedVideo }
 const STORE = "works";
 const MAX_WORKS = 200;
@@ -40,7 +40,7 @@ export function cleanDeck(raw: unknown): SavedDeck | undefined {
   const d = raw as Partial<SavedDeck> | null | undefined;
   if (!d || typeof d.template !== "string" || !/^[\w-]{1,40}$/.test(d.template) || !Array.isArray(d.slides)) return undefined;
   const slides = d.slides.slice(0, MAX_SLIDES).map((s) => cleanEls(s));
-  return slides.length ? { ...(d.album === true ? { album: true } : {}), template: d.template, primary: safeColor(d.primary, "#14263d"), slides, ...(typeof d.design === "string" && /^[\w-]{1,40}$/.test(d.design) ? { design: d.design } : {}), ...(d.master ? { master: cleanMaster(d.master) } : {}), ...(cleanContent(d.content) ? { content: cleanContent(d.content) } : {}), ...(THEMES.some((t) => t.name === d.theme) ? { theme: d.theme } : {}) } : undefined;
+  return slides.length ? { ...(d.album === true ? { album: true } : {}), ...(d.colors && typeof d.colors === "object" ? { colors: { primary: safeColor(d.colors.primary, "#14263d"), accent: safeColor(d.colors.accent, "#2e5e8c") } } : {}), template: d.template, primary: safeColor(d.primary, "#14263d"), slides, ...(typeof d.design === "string" && /^[\w-]{1,40}$/.test(d.design) ? { design: d.design } : {}), ...(d.master ? { master: cleanMaster(d.master) } : {}), ...(cleanContent(d.content) ? { content: cleanContent(d.content) } : {}), ...(THEMES.some((t) => t.name === d.theme) ? { theme: d.theme } : {}) } : undefined;
 }
 
 /** A stored record → Work, or null if it isn't one (another version, a hand-edited database). */

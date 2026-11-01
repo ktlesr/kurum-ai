@@ -364,8 +364,8 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   const setColors = (primary: string, accent: string) => {
     if (deck?.album) {
       slideStep(slidesNow().map((page) => recolor(page, brand, { ...brand, primary, accent })), deck.at);
-      // Pages made from now on wear these colours in the theme's fonts; it is no longer the named theme.
-      setDeck((d) => d && { ...d, primary, ...(d.theme ? { theme: { ...d.theme, name: "", primary, accent } } : {}) });
+      // Pages made from now on wear these colours in the theme's fonts.
+      setDeck((d) => d && { ...d, primary, ...(d.theme ? { theme: { ...d.theme, primary, accent } } : {}) });
     }
     else if (els) change(recolor(els, brand, { ...brand, primary, accent }));
     saveBrand({ ...brand, primary, accent });
@@ -1112,7 +1112,10 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     Promise.allSettled([...new Set(slides.flat().flatMap((e) => (e.kind === "text" ? fontsOfText(e) : [])))].map((id) => ensureFont(id, username))).then(() => setFontTick((n) => n + 1));
   };
   const openDeck = async (d: SavedDeck, f?: FormatId) => {
-    if (d.album) return startAlbum(d.slides, f ?? "kare", d.primary, THEMES.find((x) => x.name === d.theme));
+    if (d.album) {
+      const named = THEMES.find((x) => x.name === d.theme);
+      return startAlbum(d.slides, f ?? "kare", d.primary, named && d.colors ? { ...named, ...d.colors } : named);
+    }
     const design = d.design ? await loadDesign(d.design) : undefined;
     const t = await loadTemplate(d.template);
     // A theme chosen on top of the design is what the deck wears now.
@@ -1298,7 +1301,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
       setBusy("");
     }
   };
-  const savedDeck = (): SavedDeck | undefined => (deck ? { ...(deck.album ? { album: true } : {}), template: deck.template.id, primary: deck.primary, slides: withoutMaster(slidesNow()), ...(deck.theme ? { theme: deck.theme.name } : {}), ...(deck.design ? { design: deck.design.id } : {}), ...(deck.master ? { master: deck.master } : {}), ...(deck.content ? { content: deck.content } : {}) } : undefined);
+  const savedDeck = (): SavedDeck | undefined => (deck ? { ...(deck.album ? { album: true, ...(deck.theme ? { colors: { primary: deck.theme.primary, accent: deck.theme.accent } } : {}) } : {}), template: deck.template.id, primary: deck.primary, slides: withoutMaster(slidesNow()), ...(deck.theme ? { theme: deck.theme.name } : {}), ...(deck.design ? { design: deck.design.id } : {}), ...(deck.master ? { master: deck.master } : {}), ...(deck.content ? { content: deck.content } : {}) } : undefined);
 
   /** A font chosen for these (arrives after loading: applied to the design as it is then). */
   const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => {
