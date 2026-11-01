@@ -33,6 +33,7 @@ export function ProfilePicker({ value, onChange }: { value: Profile; onChange: (
     button.current?.focus();
   };
   const onKey = (e: React.KeyboardEvent) => {
+    if (!open) return;
     if (e.key === "Escape") {
       e.stopPropagation(); // Esc also stops an answer being written: here it only closes the list
       return close();
@@ -60,7 +61,7 @@ export function ProfilePicker({ value, onChange }: { value: Profile; onChange: (
         <now.Icon size={15} /> {now.label} <ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div role="menu" aria-label="İşlem profili" className="absolute bottom-full right-0 z-30 mb-1.5 w-72 max-w-[calc(100vw-2.5rem)] rounded-xl border border-line bg-panel p-1 shadow-card">
+        <div role="menu" aria-label="İşlem profili" className="absolute bottom-full right-0 z-30 mb-1.5 w-72 max-w-[calc(100vw-5.5rem)] rounded-xl border border-line bg-panel p-1 shadow-card">
           {PROFILES.map((p) => (
             <button
               key={p.id}
