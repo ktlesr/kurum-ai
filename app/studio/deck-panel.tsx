@@ -303,10 +303,18 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
         endDrag();
       }
     };
+    // Let go outside the bar before it became a drag: the press is over all the same.
+    const released = () => {
+      if (press.current && !dragging.current) endDrag();
+    };
+    window.addEventListener("pointerup", released);
+    window.addEventListener("pointercancel", released);
     ol?.addEventListener("touchmove", hold, { passive: false });
     window.addEventListener("keydown", cancel, true);
     return () => {
       ol?.removeEventListener("touchmove", hold);
+      window.removeEventListener("pointerup", released);
+      window.removeEventListener("pointercancel", released);
       window.removeEventListener("keydown", cancel, true);
       endDrag();
     };
