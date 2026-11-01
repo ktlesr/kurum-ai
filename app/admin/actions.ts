@@ -17,12 +17,15 @@ const endpoint = (server: Server) => {
 };
 
 /** What the chosen server serves right now (the admin page's checkboxes). Errors stay in the server log. */
-export async function listModels(server: Server): Promise<{ ok: boolean; models: string[] }> {
-  if (!(await admin()) || (server !== "vllm" && server !== "ollama")) return { ok: false, models: [] };
+export async function listModels(server: Server): Promise<{ ok: boolean; models: string[]; embeds: string[] }> {
+  if (!(await admin()) || (server !== "vllm" && server !== "ollama")) return { ok: false, models: [], embeds: [] };
   try {
-    return { ok: true, models: (await providerOf(endpoint(server)).models()).sort() };
-  } catch {
-    return { ok: false, models: [] };
+    const p = providerOf(endpoint(server));
+    const [models, embeds] = await Promise.all([p.models(), p.embedModels()]);
+    return { ok: true, models: models.sort(), embeds: embeds.sort() };
+  } catch (e) {
+    console.error(`models ${server} ${endpoint(server).url}: ${(e as Error).name}: ${(e as Error).message}`);
+    return { ok: false, models: [], embeds: [] };
   }
 }
 

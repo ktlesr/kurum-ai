@@ -104,3 +104,25 @@ test("openai (vLLM): embeddings keep input order, models, http errors", async ()
   routes["/v1/chat/completions"] = send(['data: {"error":{"message":"boom"}}\n\n']);
   await assert.rejects(p.chat({ model: "m1", messages: [], maxTokens: 1, signal }), /model_stream_error/);
 });
+
+test("an embedding model counts as installed though it can't chat", async () => {
+  const tags = { models: [
+    { name: "gemma4:12b", capabilities: ["completion", "vision"] },
+    { name: "embeddinggemma:latest", capabilities: ["embedding"] },
+    { name: "nomic-embed-text:latest", capabilities: ["embedding"] },
+    { name: "uzak:cloud", remote_host: "https://x", capabilities: ["embedding"] },
+  ] };
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify(tags))) as typeof fetch;
+  try {
+    const p = makeProvider("ollama", "http://h:11434", { numCtx: 1000 });
+    assert.deepEqual(await p.models(), ["gemma4:12b"], "chat list as before");
+    assert.deepEqual(await p.embedModels(), ["embeddinggemma:latest", "nomic-embed-text:latest"]);
+    // An Ollama that doesn't report capabilities.
+    tags.models = [{ name: "gemma4:12b" }, { name: "embeddinggemma:latest" }] as typeof tags.models;
+    assert.deepEqual(await p.embedModels(), ["embeddinggemma:latest"]);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+

@@ -30,6 +30,8 @@ export interface Provider {
   embed(model: string, input: string[], signal: AbortSignal): Promise<number[][]>;
   /** Local models this server can chat with. */
   models(): Promise<string[]>;
+  /** What this server has for embeddings: `models()` lists only what can chat. */
+  embedModels(): Promise<string[]>;
   healthy(): Promise<boolean>;
 }
 
@@ -97,6 +99,12 @@ function ollama(base: string, numCtx: number): Provider {
       // Cloud models would send the document off this machine (belt and braces with the allowlist).
       return models.filter((m) => !m.remote_host && (m.capabilities ?? ["completion"]).includes("completion")).map((m) => m.name);
     },
+    async embedModels() {
+      const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3000), cache: "no-store" });
+      const { models } = (await res.json()) as { models: { name: string; remote_host?: string; capabilities?: string[] }[] };
+      // An Ollama too old to report capabilities: by name, all common ones say "embed".
+      return models.filter((m) => !m.remote_host && (m.capabilities ? m.capabilities.includes("embedding") : /embed/i.test(m.name))).map((m) => m.name);
+    },
     healthy: () => fetch(`${base}/api/version`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false),
   };
 }
@@ -162,6 +170,10 @@ function openai(base: string, apiKey: string | undefined): Provider {
     async models() {
       const res = await fetch(`${base}/models`, { headers, signal: AbortSignal.timeout(3000), cache: "no-store" });
       return ((await res.json()) as { data: { id: string }[] }).data.map((m) => m.id);
+    },
+    async embedModels() {
+      const res = await fetch(`${base}/models`, { headers, signal: AbortSignal.timeout(3000), cache: "no-store" });
+      return ((await res.json()) as { data: { id: string }[] }).data.map((m) => m.id).filter((m) => /embed/i.test(m));
     },
     healthy: () => fetch(`${base}/models`, { headers, signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false),
   };
