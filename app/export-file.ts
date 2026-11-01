@@ -3,7 +3,7 @@
 // A chat answer as a real file, made here in the browser (chats live here; nothing leaves for this). Word and PDF lay out the
 // blocks of lib/export-doc: headings, lists, tables, code, page numbers. Their libraries are heavy, so they load when first
 // asked for.
-import { FILE_FORMATS, dateText, fileNameOf, sheetsOf, toJson, toMarkdown, toText, type Block, type ExportDoc, type FileFormat, type Inline } from "@/lib/export-doc";
+import { FILE_FORMATS, dateText, fileNameOf, sheetsOf, textOf, toJson, toMarkdown, toText, type Block, type ExportDoc, type FileFormat, type Inline } from "@/lib/export-doc";
 
 const INK = "14263D", ACCENT = "2E5E8C", MUTED = "4E6075", LINE = "D8E2EC", SOFT = "EDF3F8";
 
@@ -149,7 +149,8 @@ function pdfBlocks(blocks: Block[], width: number): PdfNode[] {
     const size = cols > 7 ? 7.5 : cols > 4 ? 8.5 : 9.5;
     return {
       table: {
-        headerRows: 1, dontBreakRows: true, widths: Array(cols).fill("*"),
+        // Rows stay whole on a page, unless one is too tall for any page: unbroken, it would vanish.
+        headerRows: 1, dontBreakRows: !b.rows.some((r) => r.some((c) => textOf(c).length > (cols > 4 ? 400 : 900))), widths: Array(cols).fill("*"),
         body: [
           b.header.map((h, c) => ({ text: pdfInlines(h), bold: true, fillColor: `#${SOFT}`, alignment: alignOf(c), fontSize: size })),
           ...b.rows.map((r) => b.header.map((_, c) => ({ text: pdfInlines(r[c] ?? []), alignment: alignOf(c), fontSize: size }))),
@@ -174,7 +175,8 @@ async function toPdf(doc: ExportDoc): Promise<Blob> {
   ];
   doc.turns.forEach((t, n) => {
     if (t.question) content.push({ table: { widths: ["*"], body: [[{ text: [{ text: "Soru: ", bold: true, color: `#${ACCENT}` }, ...lettered(t.question)] }]] }, layout: { hLineWidth: () => 0, vLineWidth: () => 0, fillColor: () => `#${SOFT}`, paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 6, paddingBottom: () => 6 }, margin: [0, 0, 0, 12], ...(n > 0 ? { pageBreak: "before" } : {}) });
-    content.push(...pdfBlocks(t.blocks, width));
+    // One by one: a very long answer would be too many arguments for a call.
+    for (const n of pdfBlocks(t.blocks, width)) content.push(n);
     if (t.sources.length || t.web.length) {
       content.push({ text: "Kaynaklar", bold: true, fontSize: 9.5, color: `#${MUTED}`, margin: [0, 10, 0, 3] });
       content.push({ ul: [...t.sources.map((s) => ({ text: lettered(s), fontSize: 9, color: `#${MUTED}` })), ...t.web.map((w) => ({ text: lettered(w.title), link: w.url, fontSize: 9, color: `#${ACCENT}`, decoration: "underline" }))] });

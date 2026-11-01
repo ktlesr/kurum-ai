@@ -13,7 +13,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
 import { useChats } from "./use-chats";
 import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, plainNumbering, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
-import { searchChats, titleFrom, type Message, type StoredChat } from "@/lib/local-store";
+import { keepMessages, searchChats, titleFrom, type Message, type StoredChat } from "@/lib/local-store";
 import { FILE_FORMATS, exportDoc, turnOf, type ExportDoc } from "@/lib/export-doc";
 import { exportRequest } from "@/lib/export-intent";
 import { DownloadMenu, FileCards } from "./export-ui";
@@ -282,7 +282,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     const q = text.trim();
     if (!q || streaming || docsWait) return;
     // An edited question replaces itself and everything after it.
-    const earlier = messages.slice(0, editOf).filter((m) => !m.error);
+    const earlier = keepMessages(messages.slice(0, editOf), (m) => !m.error);
     const history: Message[] = [...earlier, { role: "user", content: q, at: Date.now() }];
     const wish = exportRequest(q);
     // Only a file of the answer before it: no model has anything to do here, so it works when the model is busy or down too.
@@ -327,7 +327,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       local.upsert(id, (cur) => ({
         ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
         updatedAt: Date.now(), model, docIds,
-        messages: msgs.filter((m) => m.content || m.error).map(stored),
+        messages: keepMessages(msgs, (m) => !!(m.content || m.error)).map(stored),
       }));
     setChatId(id);
     persist(history);
@@ -708,7 +708,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             <div className="flex-1 overflow-y-auto">
               <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-8">
                 {messages.map((m, i) => (
-                  <Bubble key={i} m={m} live={streaming && i === messages.length - 1} busy={streaming || docsWait} onEdit={(t) => send(t, undefined, i)} onSource={openSource} doc={() => answerDoc(messages, m.fileOf ?? i, current?.title)} />
+                  <Bubble key={i} m={m} fileReady={m.fileOf === undefined || messages[m.fileOf]?.role === "assistant"} live={streaming && i === messages.length - 1} busy={streaming || docsWait} onEdit={(t) => send(t, undefined, i)} onSource={openSource} doc={() => answerDoc(messages, m.fileOf ?? i, current?.title)} />
                 ))}
                 <div ref={bottomRef} />
               </div>
@@ -956,7 +956,7 @@ const chatDoc = (messages: Message[], title?: string): ExportDoc =>
     messages.find((m) => m.role === "user")?.local ? titleFrom(messages.find((m) => m.role === "user" && !m.local)?.content ?? "Sohbet") : (title ?? "Sohbet"),
   );
 
-function Bubble({ m, live, busy, onEdit, onSource, doc }: { m: Message; live: boolean; busy: boolean; onEdit: (text: string) => void; onSource: (chip: string, doc?: string) => void; doc: () => ExportDoc }) {
+function Bubble({ m, fileReady, live, busy, onEdit, onSource, doc }: { m: Message; fileReady: boolean; live: boolean; busy: boolean; onEdit: (text: string) => void; onSource: (chip: string, doc?: string) => void; doc: () => ExportDoc }) {
   // Only links made by linkPages (they carry this nonce) open the source panel.
   const [nonce] = useState(() => crypto.randomUUID().slice(0, 8));
   const pagePlugins = useMemo(() => [remarkGfm, linkPages(m.meta, nonce)], [m.meta, nonce]);
@@ -1005,7 +1005,7 @@ function Bubble({ m, live, busy, onEdit, onSource, doc }: { m: Message; live: bo
         </p>
       )}
       {!live && m.meta && <MetaNotes meta={m.meta} onSource={onSource} />}
-      {!live && !!m.files?.length && <FileCards doc={doc} formats={m.files} />}
+      {!live && !!m.files?.length && fileReady && <FileCards doc={doc} formats={m.files} />}
       {!live && m.content && !m.local && (
         <div className="mt-2 flex items-center gap-3">
           <CopyButton text={m.content} />

@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { makeBackup, mergeChats, parseBackup, searchChats, sortChats, titleFrom, type StoredChat } from "./local-store.ts";
+import { keepMessages, type Message, makeBackup, mergeChats, parseBackup, searchChats, sortChats, titleFrom, type StoredChat } from "./local-store.ts";
 
 const chat = (id: string, updatedAt: number, extra: Partial<StoredChat> = {}): StoredChat => ({
   id, title: id, createdAt: 1, updatedAt, docIds: [], messages: [{ role: "user", content: `soru ${id}` }], ...extra,
@@ -74,3 +74,21 @@ test("parseBackup keeps valid answer timings and drops malformed ones", () => {
   const [back] = parseBackup(JSON.stringify(makeBackup([c]))) as StoredChat[];
   assert.deepEqual(back.messages.map((m) => m.timing), [{ total: 9, first: 3 }, { total: 5 }, undefined]);
 });
+
+test("a file card follows its answer when messages before it go", () => {
+  const list: Message[] = [
+    { role: "user", content: "a" },
+    { role: "assistant", content: "" },
+    { role: "user", content: "b" },
+    { role: "assistant", content: "cevap" },
+    { role: "user", content: "pdf yap", local: true },
+    { role: "assistant", content: "hazır", files: ["pdf"], fileOf: 3, local: true },
+    { role: "assistant", content: "hazır", files: ["pdf"], fileOf: 1, local: true },
+  ];
+  const kept = keepMessages(list, (m) => !!m.content);
+  assert.equal(kept[2].content, "cevap");
+  assert.equal(kept[4].fileOf, 2);
+  assert.equal(kept[5].fileOf, undefined, "its answer is gone");
+  assert.equal(kept[5].files, undefined);
+});
+

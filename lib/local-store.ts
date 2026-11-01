@@ -10,6 +10,24 @@ const BACKUP_KIND = "kurum-ai-yedek";
 export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 const MAX_CHATS = 5000;
 
+/**
+ * The messages that stay. `fileOf` points by position, so it follows its message; a file whose answer is gone goes with it.
+ */
+export function keepMessages(messages: Message[], keep: (m: Message) => boolean): Message[] {
+  const moved = new Map<number, number>();
+  let n = 0;
+  messages.forEach((m, i) => {
+    if (keep(m)) moved.set(i, n++);
+  });
+  return messages.filter(keep).map((m) => {
+    if (m.fileOf === undefined) return m;
+    const at = moved.get(m.fileOf);
+    if (at !== undefined) return { ...m, fileOf: at };
+    const { fileOf: _gone, files: _files, ...rest } = m;
+    return rest;
+  });
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;

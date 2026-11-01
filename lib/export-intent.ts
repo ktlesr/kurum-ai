@@ -12,7 +12,8 @@ const NAMES: [FileFormat, string][] = [
   ["json", "\\.json|json"],
 ];
 const L = "\\p{L}\\p{N}";
-const ACTION = "(?:ver|verin|verir|indir|indirt|hazırla|oluştur|çıkar|yap|kaydet|dönüştür|çevir|aktar|gönder|yaz|üret|istiyorum|isterim|al|dök|sun)[\\p{L}]*";
+// Whole words only: "verilerini" is not "ver", "yazılımı" is not "yaz".
+const ACTION = "(?:(?:ver|indir|indirt|hazırla|oluştur|çıkar|yap|kaydet|kayded|dönüştür|çevir|aktar|gönder|yaz|üret|al|dök|sun)(?:[ıiuü]n|[ıiuü]r|[ae]r|[ıiuü]n[ıiuü]z|ebilir|abilir|ebilirsin|abilirsin|ir misin|[ıiuü]r m[ıiuü]s[ıiuü]n)?|istiyorum|isterim)";
 /** After the format's name: "… olarak", "… formatında", "… dosyası", then or without those a verb that makes something. */
 const JOIN = "(?:['’]?(?:y?[ae]|[ıiuü]))?\\s*(?:(?:olarak|formatında|formatinda|biçiminde|biciminde|dosyası olarak|dosyasi olarak|belgesi olarak|çıktısı olarak)(?:\\s+" + ACTION + ")?(?=[^\\p{L}]|$)|(?:dosyası|dosyasi|belgesi|belgesini|dosyasını|çıktısı|çıktı)\\s+" + ACTION + "(?=[^\\p{L}]|$)|" + ACTION + "(?=[^\\p{L}]|$))";
 /** Questions about the formats, or a file already there. */

@@ -157,17 +157,25 @@ export function toText(doc: ExportDoc): string {
   const out = [doc.title, "=".repeat(Math.min(70, doc.title.length)), `Zafer AI · ${dateText(doc.createdAt)}`, ""];
   for (const t of doc.turns) {
     if (t.question) out.push(`Soru: ${t.question}`, "");
-    out.push(...plainBlocks(t.blocks));
+    // One by one: a very long answer would be too many arguments for a call.
+    for (const l of plainBlocks(t.blocks)) out.push(l);
     if (sourceLines(t).length) out.push("Kaynaklar:", ...sourceLines(t).map((s) => `- ${s}`), "");
   }
   return `${out.join("\n").trimEnd()}\n`;
 }
 
+/** A preview of the file would fetch pictures by itself, sending what is in their address away: they stay as words. */
+export const withoutPictures = (markdown: string) =>
+  markdown
+    .replace(/!\[([^\]]*)\](?:\([^)]*\)|\[[^\]]*\])/g, (_, alt: string) => `[görsel: ${alt || "adsız"}]`)
+    .replace(/<img\b[^>]*>/gi, "[görsel]")
+    .replace(/^[ \t]{0,3}\[[^\]]+\]:[ \t]*\S.*$/gm, "");
+
 export function toMarkdown(doc: ExportDoc): string {
   const out = [`# ${doc.title}`, "", `*Zafer AI · ${dateText(doc.createdAt)}*`, ""];
   for (const t of doc.turns) {
     if (t.question) out.push(`> **Soru:** ${t.question.replace(/\n/g, "\n> ")}`, "");
-    out.push(t.answer.trim(), "");
+    out.push(withoutPictures(t.answer).trim(), "");
     if (sourceLines(t).length) out.push("**Kaynaklar**", "", ...t.sources.map((s) => `- ${s}`), ...t.web.map((w) => `- [${w.title.replace(/[[\]]/g, "")}](${w.url})`), "");
   }
   return `${out.join("\n").trimEnd()}\n`;
