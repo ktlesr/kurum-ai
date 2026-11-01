@@ -1114,6 +1114,8 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   const openDeck = async (d: SavedDeck, f?: FormatId) => {
     if (d.album) {
       const named = THEMES.find((x) => x.name === d.theme);
+      // The colours go back with the design, as on undo: changing them later looks for the ones it is really drawn in.
+      if (d.colors) saveBrand({ ...brandNow.current, ...d.colors });
       return startAlbum(d.slides, f ?? "kare", d.primary, named && d.colors ? { ...named, ...d.colors } : named);
     }
     const design = d.design ? await loadDesign(d.design) : undefined;
@@ -1301,7 +1303,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
       setBusy("");
     }
   };
-  const savedDeck = (): SavedDeck | undefined => (deck ? { ...(deck.album ? { album: true, ...(deck.theme ? { colors: { primary: deck.theme.primary, accent: deck.theme.accent } } : {}) } : {}), template: deck.template.id, primary: deck.primary, slides: withoutMaster(slidesNow()), ...(deck.theme ? { theme: deck.theme.name } : {}), ...(deck.design ? { design: deck.design.id } : {}), ...(deck.master ? { master: deck.master } : {}), ...(deck.content ? { content: deck.content } : {}) } : undefined);
+  const savedDeck = (): SavedDeck | undefined => (deck ? { ...(deck.album ? { album: true, colors: { primary: brand.primary, accent: brand.accent } } : {}), template: deck.template.id, primary: deck.primary, slides: withoutMaster(slidesNow()), ...(deck.theme ? { theme: deck.theme.name } : {}), ...(deck.design ? { design: deck.design.id } : {}), ...(deck.master ? { master: deck.master } : {}), ...(deck.content ? { content: deck.content } : {}) } : undefined);
 
   /** A font chosen for these (arrives after loading: applied to the design as it is then). */
   const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => {
