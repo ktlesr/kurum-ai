@@ -320,6 +320,10 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
       endDrag();
     };
   }, []);
+  // The list changed under a slide in hand (another finger or mouse on the buttons): its place no longer means anything.
+  useEffect(() => {
+    if (dragging.current) endDrag();
+  }, [slides.length, at]);
   // The current slide stays in view, and keyboard focus goes along with it.
   useEffect(() => {
     const ol = list.current;
