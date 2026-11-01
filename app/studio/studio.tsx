@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Logo } from "../logo";
 import { ThemeToggle } from "../theme-toggle";
+import { trackUsage } from "../presence";
 import Home, { type Mode } from "./home";
 import Toolbar, { keepSelection } from "./toolbar";
 import { LogoPicker } from "./logo-picker";
@@ -113,7 +114,7 @@ function recolor(els: El[], a: Brand, b: Brand): El[] {
   });
 }
 
-export default function Studio({ username }: { username: string }) {
+export default function Studio({ username, isAdmin }: { username: string; isAdmin?: boolean }) {
   const { font, error: fontError } = useStudioFont();
   const [mode, setMode] = useState<Mode | null>(null); // null: the first screen
   const [tool, setTool] = useState<Tool | null>(null); // the panel open beside the rail
@@ -899,7 +900,10 @@ export default function Studio({ username }: { username: string }) {
     setEditing(null);
     const svg = svgOf(format, await fontsReady(view), font.measure, font.css);
     const name = `kurum-gorsel-${template}-${format}.${e.ext}`;
-    if (e.ext === "svg") return download(new Blob([svg], { type: e.mime }), name);
+    if (e.ext === "svg") {
+      if (mode === "gorsel") trackUsage("social");
+      return download(new Blob([svg], { type: e.mime }), name);
+    }
     setBusy("export");
     try {
       const img = await imageOf(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
@@ -913,6 +917,7 @@ export default function Studio({ username }: { username: string }) {
       const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, e.mime, 0.92));
       if (!blob || blob.type !== e.mime) throw new Error(`Bu tarayıcı ${e.label} kaydedemiyor. PNG deneyin.`);
       download(blob, name);
+      if (mode === "gorsel") trackUsage("social");
     } catch (err) {
       setNote({ kind: "error", text: (err as Error).message || "Görsel kaydedilemedi." });
     } finally {
@@ -1096,6 +1101,7 @@ export default function Studio({ username }: { username: string }) {
     try {
       const ready = await Promise.all(slidesNow().map(fontsReady));
       await downloadPptx(ready, font.measure, `kurum-sunum-${deck.template.id}.pptx`, await familyNames(username));
+      trackUsage("deck");
       setNote({ kind: "ok", text: "PPTX indirildi. Yazı tipleri dosyaya gömülmez: bilgisayarda yoksa PowerPoint benzeriyle gösterir." });
     } catch (e) {
       console.error(e);
@@ -1210,6 +1216,7 @@ export default function Studio({ username }: { username: string }) {
       if (ac.signal.aborted) return; // cancelled or left at the very end: no URL nobody will free
       videoUrl.current = URL.createObjectURL(blob);
       setVideo({ progress: 1, url: videoUrl.current, ext });
+      trackUsage("reels");
     } catch (e) {
       setVideo(ac.signal.aborted ? null : { progress: 0, error: (e as Error).message || "Video oluşturulamadı." });
     }
@@ -1855,7 +1862,7 @@ export default function Studio({ username }: { username: string }) {
     <div className="flex h-dvh flex-col bg-bg">
       {mode === null ? (
         <div inert={blocked} className="flex min-h-0 flex-1 flex-col">
-          <Home recent={recent} onStart={begin} onOpen={openWork} onLibrary={openLibrary} onProject={openProject} />
+          <Home isAdmin={isAdmin} recent={recent} onStart={begin} onOpen={openWork} onLibrary={openLibrary} onProject={openProject} />
         </div>
       ) : (
       <>

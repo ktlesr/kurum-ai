@@ -36,6 +36,9 @@ const MIGRATIONS = [
   CREATE INDEX sessions_user ON sessions(user_id);`,
   // Admin-editable settings (admin page); a missing key falls back to its env default.
   `CREATE TABLE settings (key text PRIMARY KEY, value text NOT NULL);`,
+  // The admin dashboard: when a session was last seen (who is online), per-day totals (lib/usage); never who did what.
+  `ALTER TABLE sessions ADD COLUMN last_seen timestamptz;
+  CREATE TABLE usage_daily (day date NOT NULL, kind text NOT NULL, count bigint NOT NULL DEFAULT 0, PRIMARY KEY (day, kind));`,
 ];
 
 async function migrate(sql: postgres.Sql) {

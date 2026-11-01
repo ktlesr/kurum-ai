@@ -3,6 +3,7 @@ import { extractDir, holdExtract } from "@/lib/workspace";
 import { deleteDoc, dropExtractIfUnused, docsOf, getDoc, MAX_BYTES, MAX_DOCS_PER_USER, saveDoc, toMeta, uniqueName, type Doc } from "@/lib/server";
 import { docSections } from "@/lib/context";
 import { isSharedId, sharedDoc, sharedEntry } from "@/lib/library";
+import { countUsage } from "@/lib/usage";
 import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
 import { logError } from "@/lib/log";
@@ -101,6 +102,7 @@ async function accept(req: Request, user: User, releaseSlot: () => void): Promis
         const doc: Doc = { id: crypto.randomUUID(), ownerId: user.id, sourceHash, name: uniqueName(user.id, file.name), size: file.size, chars: parsed.text.length, ...parsed };
         if (!doc.chars && !doc.warning) doc.warning = "Dosyadan metin çıkarılamadı.";
         saveDoc(doc);
+        countUsage("upload");
         send({ type: "done", doc: toMeta(doc) });
       } catch (e) {
         if (req.signal.aborted) return;
@@ -159,5 +161,6 @@ export async function DELETE(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
   const found = deleteDoc(user.id, new URL(req.url).searchParams.get("id") ?? "");
+  if (found) countUsage("delete");
   return found ? new Response(null, { status: 204 }) : fail("Dosya bulunamadı.", 404);
 }

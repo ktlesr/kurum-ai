@@ -1,4 +1,5 @@
 import { requireApiUser } from "@/lib/auth";
+import { countUsage } from "@/lib/usage";
 import { cptFor, docsOf, getDoc, recordTokens, type Doc } from "@/lib/server";
 import { isSharedId, sharedDoc, sharedEntry, sharedList, type SharedEntry } from "@/lib/library";
 import { PICK_PROMPT, matchByName, parsePicked, wantsSources, type SourceEntry } from "@/lib/sources";
@@ -208,6 +209,7 @@ export async function POST(req: Request) {
     return fail("Dosya sunucuda bulunamadı. Dosyayı kaldırıp tekrar yükleyin.", 409);
   }
   if (!(await chat.healthy())) return fail("Model sunucusu çalışmıyor. Yöneticinize bildirin.", 503);
+  countUsage("query");
 
   const signal = req.signal; // Esc in the UI aborts generation on the model server too
   const history = messages.slice(-8); // ponytail: last 8 turns only; long chats could still overflow num_ctx

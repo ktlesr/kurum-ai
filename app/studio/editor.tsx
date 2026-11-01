@@ -280,8 +280,6 @@ function TextBox({ el, scale, onText, onDone, onSel }: { el: TextEl; scale: numb
     };
   }, [HL]);
   return (
-    <>
-      <style>{`::highlight(k-text-sel){background:rgb(59 130 246 / .35)}`}</style>
       <div
         ref={box}
         role="textbox"
@@ -314,7 +312,6 @@ function TextBox({ el, scale, onText, onDone, onSel }: { el: TextEl; scale: numb
           padding: el.bg ? `0 ${el.size * 0.8}px` : 0, overflow: "hidden", textTransform: el.upper ? "uppercase" : undefined,
         }}
       />
-    </>
   );
 }
 

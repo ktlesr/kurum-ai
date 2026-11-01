@@ -7,6 +7,7 @@ import { ArrowLeft, Clapperboard, FolderOpen, Image as ImageIcon, Library, Prese
 import { FORMATS, type FormatId } from "@/lib/studio";
 import { Logo } from "../logo";
 import { ThemeToggle } from "../theme-toggle";
+import { TopLinks } from "../top-links";
 import type { Work } from "./works";
 
 export type Mode = "gorsel" | "sunum" | "video";
@@ -17,7 +18,8 @@ const KINDS: { mode: Mode; title: string; text: string; tags: string; icon: Reac
   { mode: "video", title: "Video / Reels", text: "Tasarımlarınızı sahne sahne videoya çevirin", tags: "Müzik · altyazı", icon: <Clapperboard size={26} />, tone: "from-[#157a5b] to-[#0b4534]" },
 ];
 
-export default function Home({ recent, onStart, onOpen, onLibrary, onProject }: {
+export default function Home({ isAdmin, recent, onStart, onOpen, onLibrary, onProject }: {
+  isAdmin?: boolean;
   recent: Work[];
   onStart: (mode: Mode, format?: FormatId) => void;
   onOpen: (w: Work) => void;
@@ -40,6 +42,7 @@ export default function Home({ recent, onStart, onOpen, onLibrary, onProject }: 
           <FolderOpen size={16} /> <span className="hidden sm:inline">Dosya aç</span>
           <input type="file" accept=".json,application/json" className="sr-only" onChange={(e) => { onProject(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
+        <TopLinks isAdmin={isAdmin} />
         <ThemeToggle />
       </header>
 

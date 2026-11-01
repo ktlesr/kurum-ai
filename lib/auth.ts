@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
+import { notFound, redirect } from "next/navigation";
 import { db } from "./db";
 import { newToken, tokenHash } from "./password";
 
@@ -39,11 +40,23 @@ export const getUser = cache(async (): Promise<User | null> => {
   if (!token) return null;
   // Not `(await db())<User[]>`...``: SWC drops the parentheses there and calls db() as the tag.
   const sql = await db();
-  const [u] = await sql<User[]>`
-    SELECT u.id, u.username, u.role FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ${tokenHash(token)} AND s.expires_at > now() AND u.status = 'active'`;
-  return u ?? null;
+  const hash = tokenHash(token);
+  const [u] = await sql<(User & { fresh: boolean })[]>`
+    SELECT u.id, u.username, u.role, s.last_seen > now() - interval '1 minute' AS fresh FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ${hash} AND s.expires_at > now() AND u.status = 'active'`;
+  if (!u) return null;
+  // Who is online, for the dashboard: at most one write a minute per session, and nothing waits for it.
+  if (!u.fresh) void Promise.resolve(sql`UPDATE sessions SET last_seen = now() WHERE token_hash = ${hash}`).catch(() => {});
+  return { id: u.id, username: u.username, role: u.role };
 });
+
+/** For admin pages: the signed-in admin; others go to login, or get the same 404 as for any unknown page. */
+export async function requireAdmin(): Promise<User> {
+  const me = await getUser();
+  if (!me) redirect("/login");
+  if (me.role !== "admin") notFound();
+  return me;
+}
 
 /**
  * Scheme + host + port users reach us at. No X-Forwarded-* trust: a client that reaches the app directly could forge them.

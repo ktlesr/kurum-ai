@@ -1,11 +1,12 @@
 "use client";
 
+import { TopLinks } from "./top-links";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   AlertTriangle, ArrowUp, BookOpen, Check, ChevronDown, Copy, Download, File as FileIcon, FileSpreadsheet, FileText,
-  FileType, HardDrive, Image as ImageIcon, LogOut, Menu, Palette, Paperclip, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Upload, Users, X,
+  FileType, HardDrive, Image as ImageIcon, LogOut, Menu, Paperclip, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Upload, X,
 } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
@@ -503,9 +504,6 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         <button onClick={newChat} disabled={streaming} className="flex h-9 items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40">
           <Plus size={16} /> Yeni sohbet
         </button>
-        <a href="/studio" className="flex h-9 items-center justify-center gap-1.5 rounded-lg border border-line bg-panel text-sm font-medium transition-colors hover:border-accent hover:text-accent">
-          <Palette size={16} /> Görsel Stüdyo
-        </a>
         <label className="flex h-9 items-center gap-2 rounded-lg border border-line bg-panel px-2.5 text-sm focus-within:border-accent">
           <Search size={14} className="shrink-0 text-muted" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Sohbetlerde ara" aria-label="Sohbetlerde ara" className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted" />
@@ -606,11 +604,6 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       <div className="flex items-center gap-1 border-t border-line px-3 py-2.5 text-sm">
         <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent-soft text-xs font-semibold uppercase text-accent" aria-hidden>{username.slice(0, 1)}</span>
         <span className="min-w-0 flex-1 truncate pl-1" title={username}>{username}</span>
-        {isAdmin && (
-          <a href="/admin" className="rounded-md p-1.5 text-muted hover:bg-subtle hover:text-fg" aria-label="Kullanıcılar" title="Kullanıcılar">
-            <Users size={16} />
-          </a>
-        )}
         <form action={logout}>
           <button className="rounded-md p-1.5 text-muted hover:bg-subtle hover:text-fg" aria-label="Çıkış yap" title="Çıkış yap">
             <LogOut size={16} />
@@ -642,6 +635,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             <Menu size={18} />
           </button>
           <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{current?.title ?? "Yeni sohbet"}</h1>
+          <TopLinks studio isAdmin={isAdmin} />
           <div role="radiogroup" aria-label="İşlem profili" className="hidden rounded-lg border border-line bg-subtle p-0.5 sm:flex">
             {PROFILES.map((p) => (
               <button

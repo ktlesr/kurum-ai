@@ -2,13 +2,19 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
+import { ogMeta } from "@/lib/og";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "Zafer AI",
-  description: "Dokümanlarınız hakkında soru sorun. İşleme kurum sunucusunda yapılır; harici AI servisine gönderilmez.",
-  icons: { icon: "/logo.svg", apple: "/apple-icon.png" },
-};
+export function generateMetadata(): Metadata {
+  return {
+    // Shared links need full addresses to their pictures; the real address is known only when running.
+    metadataBase: new URL(process.env.APP_ORIGIN || "https://ai.zafer.gov.tr"),
+    title: "Zafer AI",
+    description: "Dokümanlarınız hakkında soru sorun. İşleme kurum sunucusunda yapılır; harici AI servisine gönderilmez.",
+    icons: { icon: "/logo.svg", apple: "/apple-icon.png" },
+    ...ogMeta("home"),
+  };
+}
 
 // Runs before paint. Light by default (plan §3.1); "system" follows the OS; the stored choice wins.
 const themeScript = `try{var t=localStorage.getItem("theme");if(t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.classList.add("dark")}catch(e){}`;
