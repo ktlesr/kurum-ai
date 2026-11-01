@@ -7,7 +7,7 @@ import type { ModelConfig, Server } from "@/lib/models";
 const select = "h-9 w-full rounded-lg border border-line bg-bg px-2.5 text-sm outline-none focus:border-accent";
 const btn = "rounded-md border border-line px-3 py-1.5 text-xs font-medium hover:bg-subtle disabled:opacity-50";
 
-type List = { ok: boolean; models: string[]; embeds: string[] } | null; // null: loading
+type List = { ok: boolean; models: string[]; embeds: string[] | null } | null; // null: loading
 
 /** Embedding-only models can't chat: kept out of the chat list (by name; all common ones say "embed"). */
 const chatty = (m: string) => !/embed/i.test(m);
@@ -42,7 +42,6 @@ export function ModelsForm({ cfg, server: initial, saved, custom }: { cfg: Model
       listModels(s).then((l) => {
         setLists((x) => ({ ...x, [s]: l }));
         const named = latest(l.models);
-        if (s === "ollama") setEmbed(latest(l.embeds));
         if (s === initial) {
           setModels((ms) => ms.map(named));
           setDef(named);
@@ -94,7 +93,8 @@ export function ModelsForm({ cfg, server: initial, saved, custom }: { cfg: Model
     });
   const save = () => run(() => saveModels({ server, models, defaultModel: def, embedModel: embed, visionModel: vision }));
 
-  const missingEmbed = ollama?.ok && !has(ollama.embeds, embed);
+  // The saved name stays as it is ("embeddinggemma" for "embeddinggemma:latest"): another name would mean embedding every document again.
+  const missingEmbed = ollama?.ok && ollama.embeds && !has(ollama.embeds, embed);
   const missingChat = list?.ok ? models.filter((m) => !has(list.models, m)) : [];
 
   return (
@@ -162,7 +162,7 @@ export function ModelsForm({ cfg, server: initial, saved, custom }: { cfg: Model
           <label className="flex flex-col gap-1 text-xs text-muted">
             Embedding modeli (Ollama; büyük belgelerde ilgili bölümleri bulur)
             <select value={embed} onChange={(e) => setEmbed(e.target.value)} className={select}>
-              {withCurrent(ollama?.embeds ?? [], embed).map((m) => <option key={m} value={m}>{m}</option>)}
+              {withCurrent((ollama?.embeds ?? []).filter((m) => m !== `${embed}:latest`), embed).map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </label>
         </div>
