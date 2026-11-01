@@ -39,7 +39,8 @@ export function exportRequest(message: string): ExportRequest | null {
   for (const [format, names] of NAMES) {
     const re = new RegExp(`(?<![${L}.])(?:${names})${JOIN}`, "gu");
     for (const m of q.matchAll(re)) {
-      if (NOT_A_REQUEST.test(fromThereOn(m.index))) continue;
+      // +1: a name can begin with the dot of ".pdf", which doesn't end a sentence. And "nasıl pdf olarak…" asks about it too.
+      if (NOT_A_REQUEST.test(fromThereOn(m.index + 1)) || /(?:^|\s)nasıl\s+(?:[^\s,.;:!?]+\s+){0,2}$/u.test(q.slice(0, m.index))) continue;
       asked.push(format);
       spans.push([m.index, m.index + m[0].length]);
     }

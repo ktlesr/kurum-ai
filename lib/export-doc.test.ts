@@ -235,5 +235,7 @@ test("a question in the text doesn't cancel the request for a file", () => {
   assert.deepEqual(exportRequest("Neden önemli olduğunu anlat ve word olarak hazırla"), { formats: ["docx"], rest: "Neden önemli olduğunu anlat" });
   assert.equal(exportRequest("pdf olarak nasıl kaydederim"), null);
   assert.equal(exportRequest("Bu pdf olarak verilebilir mi"), null);
+  assert.equal(exportRequest("Nasıl PDF olarak kaydederim?"), null);
+  assert.equal(exportRequest(".pdf olarak nasıl kaydederim?"), null);
 });
 
