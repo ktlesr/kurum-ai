@@ -17,6 +17,7 @@ import Home, { type Mode } from "./home";
 import Toolbar, { keepSelection } from "./toolbar";
 import { LogoPicker } from "./logo-picker";
 import { LayerList } from "./layer-list";
+import { STORY_RANGE, albumTemplate, reelsScene, reelsTransition, type StoryPage } from "@/lib/studio-story";
 import { ShapeChooser, ShapeGrid, ShapeStyleTabs, shapeIdOf } from "./shape-palette";
 import Editor from "./editor";
 import ContextMenu, { type MenuItem } from "./context-menu";
@@ -82,6 +83,8 @@ const MAX_PROJECT_BYTES = 60 * 1024 * 1024;
 const MAX_SCENE_CHARS = 50 * 1024 * 1024;
 const scenesTooBig = (lists: unknown[]) => lists.reduce<number>((n, l) => n + JSON.stringify(l).length, 0) > MAX_SCENE_CHARS;
 const SCENES_TOO_BIG = "Sahnelerdeki görseller çok büyük (toplam 50 MB sınırı). Daha küçük görsel kullanın ya da sahne sayısını azaltın.";
+/** What a post of several images keeps in the deck's place: it has no slide layouts. */
+const ALBUM_TEMPLATE: DeckTemplate = { id: "album", name: "Çoklu görsel", desc: "", layouts: [] };
 /** A deck's colours by role: the theme on it, or the ones its template states; none: lib/deck goes by how much each is used. */
 const deckRoles = (d: { theme?: Theme; template: DeckTemplate }) =>
   d.theme ? [d.theme.primary, d.theme.accent] : d.template.roles ? [d.template.roles.primary, d.template.roles.accent] : [];
@@ -140,7 +143,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   const [picked, setPicked] = useState<string[]>([]);
   const [activeTheme, setActiveTheme] = useState("");
   // Sunum mode: `els` is the slide on the canvas; the others wait here (slides[at] is out of date until saved back).
-  const [deck, setDeck] = useState<{ template: DeckTemplate; slides: El[][]; at: number; primary: string; theme?: Theme; design?: DeckDesign; master?: DeckMaster; content?: DeckContent } | null>(null);
+  const [deck, setDeck] = useState<{ album?: boolean; template: DeckTemplate; slides: El[][]; at: number; primary: string; theme?: Theme; design?: DeckDesign; master?: DeckMaster; content?: DeckContent } | null>(null);
   const [deckDesign, setDeckDesign] = useState<DeckDesign>(DESIGNS[0]); // the one chosen before a deck exists
   const [designPreview, setDesignPreview] = useState<DeckDesign | null>(null);
   const [deckBefore, setDeckBefore] = useState<NonNullable<typeof deck> | null>(null); // one step back from applying a design
@@ -154,6 +157,11 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   // The user's own uploaded documents (TASK-025): a poster can be written from one; each field shows its page.
   const [docs, setDocs] = useState<{ id: string; name: string }[]>([]);
   const [docIds, setDocIds] = useState<string[]>([]);
+  // The AI panel: a whole work (a video's scenes, a post's images) or the texts of the design on the canvas.
+  const [aiTab, setAiTab] = useState<"one" | "many" | null>(null); // null: what suits the kind of work
+  const [storyCount, setStoryCount] = useState(0); // 0: the content decides
+  const [storyReplace, setStoryReplace] = useState(false);
+  const [scenesBefore, setScenesBefore] = useState<typeof scenes | null>(null); // one step back from replacing them
   const [textSel, setTextSel] = useState<{ from: number; to: number } | null>(null); // the part of the text being edited that is selected
   // Each field's source with the exact text it was found for: shown only while the field still says that, so a
   // canvas edit, an undo or a new template never keeps a page that belongs to other words.
@@ -354,7 +362,8 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     }
   };
   const setColors = (primary: string, accent: string) => {
-    if (els) change(recolor(els, brand, { ...brand, primary, accent }));
+    if (deck?.album) slideStep(slidesNow().map((page) => recolor(page, brand, { ...brand, primary, accent })), deck.at);
+    else if (els) change(recolor(els, brand, { ...brand, primary, accent }));
     saveBrand({ ...brand, primary, accent });
   };
   /** A theme: its colours, its heading font on titles and tags, its body font on the rest (one undo step). */
@@ -400,6 +409,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   };
 
   const chooseTemplate = (t: TemplateId) => {
+    if (deck?.album) return void restyleAlbum(t);
     if (deck) return setNote({ kind: "error", text: "Sunumdayken sayfa düzenini alttaki + ile seçin." });
     cancelSuggest();
     setTemplate(t);
@@ -408,6 +418,11 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   };
   const chooseFormat = (f: FormatId) => {
     if (f === format) return;
+    if (deck?.album) {
+      // All the images move together, each with its edits.
+      slideStep(slidesNow().map((page) => refit(page, format, f)), deck.at);
+      return setFormat(f);
+    }
     if (deck) return setNote({ kind: "error", text: "Sunumlar 16:9 yatay formattadır." });
     // An edited design (or an opened work) moves to the new format with its edits; a template one is laid out anew.
     if (els) change(refit(els, format, f));
@@ -446,6 +461,91 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     }
   }
 
+  const aiMany = aiTab ? aiTab === "many" : mode === "video";
+  const storyRange = STORY_RANGE[mode === "video" ? "reels" : "album"];
+  /** A design made from a page of text: its fonts loaded, measured in them. */
+  const pageFrom = async (t: TemplateId, f: FormatId, c: Content) => {
+    await Promise.allSettled((TEMPLATES[t].fonts as readonly string[]).map((id) => ensureFont(id, username)));
+    return fontsReady(fromTemplate({ template: t, format: f, content: c, brand, photo }, font!.measure));
+  };
+  /** The whole work from the text: a video's scenes, or the images of a post. */
+  async function writeStory() {
+    if (!font) return;
+    abort.current?.abort();
+    const ac = (abort.current = new AbortController());
+    const kind = mode === "video" ? "reels" : "album";
+    setBusy("fill");
+    setNote(null);
+    try {
+      const r = await fetch("/api/studio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ template, brief, docIds, story: kind, count: storyCount }), signal: ac.signal });
+      const j = (await r.json().catch(() => ({}))) as { pages?: StoryPage[]; cut?: boolean; unverified?: number[]; error?: string };
+      if (ac.signal.aborted) return;
+      if (!r.ok || !j.pages?.length) throw new Error(j.error ?? "İçerik hazırlanamadı.");
+      const noun = kind === "reels" ? "sahne" : "görsel";
+      const warnings = [
+        j.unverified?.length ? `${j.unverified.map((i) => i + 1).join(", ")}. ${noun}teki rakamlar verdiğiniz metinde yok; kontrol edin.` : "",
+        j.cut ? "Model sınırına takıldı, son bölüm eksik kalmış olabilir." : "",
+        storyCount && j.pages.length < storyCount ? `İstenen ${storyCount} yerine ${j.pages.length} ${noun} çıktı: metindeki bilgi bu kadarına yetti.` : "",
+      ].filter(Boolean).join(" ");
+      if (kind === "reels") await putScenes(j.pages, ac.signal, warnings);
+      else await putImages(j.pages, ac.signal, warnings);
+    } catch (e) {
+      if (!ac.signal.aborted) setNote({ kind: "error", text: (e as Error).message });
+    } finally {
+      if (abort.current === ac) setBusy("");
+    }
+  }
+  async function putScenes(pages: StoryPage[], signal: AbortSignal, warnings: string) {
+    const replace = storyReplace && scenes.length > 0;
+    const f = sceneFormat ?? "hikaye";
+    const room = MAX_SCENES - (replace ? 0 : scenes.length);
+    if (room <= 0) return setNote({ kind: "error", text: `En fazla ${MAX_SCENES} sahne eklenebilir. Yerine koymayı seçin ya da sahne silin.` });
+    const fresh = await Promise.all(pages.slice(0, room).map(async (p) => {
+      const { template: t, caption, ...plan } = reelsScene(p);
+      const made = await pageFrom(t, f, p);
+      return { id: newId(), els: made, caption, format: f, thumb: sceneThumb(made, f), ...plan };
+    }));
+    if (signal.aborted) return;
+    if (scenesTooBig([...(replace ? [] : scenes.map((s) => s.els)), ...fresh.map((s) => s.els)])) return setNote({ kind: "error", text: SCENES_TOO_BIG });
+    setScenesBefore(replace ? scenes : null);
+    setScenes((s) => (replace ? fresh : [...s, ...fresh]).slice(0, MAX_SCENES));
+    if (replace) setEditingScene(null);
+    setTransition(reelsTransition(pages));
+    setTool("scenes");
+    // An empty canvas shows the first scene; one the person is working on stays.
+    if (!els) void editScene(fresh[0]);
+    else chooseFormat(f);
+    const total = fresh.reduce((n, s) => n + s.seconds, 0);
+    setNote(warnings ? { kind: "error", text: `${fresh.length} sahne hazır (${total} sn). ${warnings}` } : { kind: "ok", text: `${fresh.length} sahne hazır (${total} sn). Metinler verdiğiniz bilgilerden yazıldı; kullanmadan önce kontrol edin.` });
+  }
+  async function putImages(pages: StoryPage[], signal: AbortSignal, warnings: string) {
+    const classic = (TEMPLATES[template].kind as string) === "klasik";
+    const slides = await Promise.all(pages.map((p) => pageFrom(albumTemplate(p, template, classic), format, p)));
+    if (signal.aborted) return;
+    if (deck?.album) slideStep(slides, 0);
+    else {
+      if (!(await flushSave())) return; // what was on the canvas stays in Çalışmalarım
+      startAlbum(slides, format, brand.primary);
+    }
+    setNote(warnings ? { kind: "error", text: `${slides.length} görsel hazır. ${warnings}` } : { kind: "ok", text: `${slides.length} görsel hazır. Metinler verdiğiniz bilgilerden yazıldı; kullanmadan önce kontrol edin.` });
+  }
+  /** Another image in the post, after this one: the chosen template, ready to be written. */
+  const addAlbumPage = async () => {
+    if (!deck?.album || !font || !slideRoom()) return;
+    const s = slidesNow();
+    const made = await pageFrom(template, format, SAMPLE[template]);
+    slideStep([...s.slice(0, deck.at + 1), made, ...s.slice(deck.at + 1)], deck.at + 1);
+  };
+  /** Another template for the whole post: each image laid out anew with its own text (one undo step). */
+  const restyleAlbum = async (t: TemplateId) => {
+    if (!deck?.album || !font) return;
+    const textOf = (page: El[], r: Field) => (page.find((e) => e.kind === "text" && e.role === r) as TextEl | undefined)?.text ?? "";
+    const pages = await Promise.all(slidesNow().map((page) => pageFrom(t, format, { tag: textOf(page, "tag"), title: textOf(page, "title"), subtitle: textOf(page, "subtitle"), detail: textOf(page, "detail") })));
+    setTemplate(t);
+    slideStep(pages, deck.at);
+    setNote({ kind: "ok", text: "Şablon tüm görsellere uygulandı. Görsellere elle eklediklerinizi geri getirmek için Ctrl+Z." });
+  };
+
   const { w: W, h: H } = FORMATS[format];
   const u = Math.min(W, H) / 1080;
   /** A picture's box: `size` on its longer side, its own ratio. */
@@ -464,11 +564,12 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     setMenu({
       x: r.right - 220, y: r.bottom + 4, view,
       items: [
-        ...(deck ? [{ label: "PowerPoint (PPTX)", icon: <Presentation size={14} />, run: exportDeck } as MenuItem, "-" as const] : []),
+        ...(deck && !deck.album ? [{ label: "PowerPoint (PPTX)", icon: <Presentation size={14} />, run: exportDeck } as MenuItem, "-" as const] : []),
+        ...(deck?.album ? [...EXPORTS.map((e): MenuItem => ({ label: `Tüm görseller: ${e.label} (ZIP)`, icon: <Download size={14} />, run: () => void exportAlbum(e) })), "-" as const] : []),
         ...(mode === "video"
           ? [{ label: "Video oluştur", icon: <Film size={14} />, run: () => setTool("scenes") } as MenuItem, "-" as const]
-          : [{ label: deck ? "Bu slaydı video sahnesi yap" : "Video sahnesi olarak ekle", icon: <Clapperboard size={14} />, run: addScene } as MenuItem, "-" as const]),
-        ...EXPORTS.map((e): MenuItem => ({ label: deck ? `${e.label} (bu slayt)` : e.label, icon: <Download size={14} />, run: () => exportAs(e) })),
+          : [{ label: deck ? (deck.album ? "Bu görseli video sahnesi yap" : "Bu slaydı video sahnesi yap") : "Video sahnesi olarak ekle", icon: <Clapperboard size={14} />, run: addScene } as MenuItem, "-" as const]),
+        ...EXPORTS.map((e): MenuItem => ({ label: deck ? `${e.label} (${deck.album ? "bu görsel" : "bu slayt"})` : e.label, icon: <Download size={14} />, run: () => exportAs(e) })),
         "-",
         { label: "Proje dosyası olarak kaydet", icon: <Save size={14} />, run: saveProject },
         { label: "Proje dosyası aç…", icon: <FolderOpen size={14} />, run: () => projectInput.current?.click() },
@@ -507,7 +608,9 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     saveBrand({ ...was, logo: p });
     // Only the logo being replaced: a partner's logo added beside it stays.
     const cur = now.current.els;
-    if (cur && was.logo) change(cur.map((e) => (e.kind === "image" && e.logo && e.pic.src === was.logo?.src ? { ...e, pic: p, h: (e.w * p.h) / p.w } : e)));
+    const swap = (page: El[]) => page.map((e) => (e.kind === "image" && e.logo && e.pic.src === was.logo?.src ? { ...e, pic: p, h: (e.w * p.h) / p.w } : e));
+    if (deck?.album && was.logo) slideStep(slidesNow().map(swap), deck.at);
+    else if (cur && was.logo) change(swap(cur));
   };
   const [logoFor, setLogoFor] = useState<string | null>(null); // the logo element whose replacement is being chosen
   const logoForNow = useRef(logoFor); // a file still being read when the dialog closes goes only to the library
@@ -908,31 +1011,52 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     };
   }, [font, username]);
 
+  /** One design as a file. */
+  async function fileOf(list: El[], e: (typeof EXPORTS)[number]): Promise<Blob> {
+    const svg = svgOf(format, await fontsReady(list), font!.measure, font!.css);
+    if (e.ext === "svg") return new Blob([svg], { type: e.mime });
+    const img = await imageOf(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+    const c = document.createElement("canvas");
+    c.width = W;
+    c.height = H;
+    const ctx = c.getContext("2d")!;
+    ctx.fillStyle = "#ffffff"; // JPEG has no transparency
+    ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(img, 0, 0, W, H);
+    const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, e.mime, 0.92));
+    if (!blob || blob.type !== e.mime) throw new Error(`Bu tarayıcı ${e.label} kaydedemiyor. PNG deneyin.`);
+    return blob;
+  }
   async function exportAs(e: (typeof EXPORTS)[number]) {
     if (!font) return;
     setEditing(null);
-    const svg = svgOf(format, await fontsReady(view), font.measure, font.css);
-    const name = `kurum-gorsel-${template}-${format}.${e.ext}`;
-    if (e.ext === "svg") {
-      if (mode === "gorsel") trackUsage("social");
-      return download(new Blob([svg], { type: e.mime }), name);
-    }
     setBusy("export");
     try {
-      const img = await imageOf(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
-      const c = document.createElement("canvas");
-      c.width = W;
-      c.height = H;
-      const ctx = c.getContext("2d")!;
-      ctx.fillStyle = "#ffffff"; // JPEG has no transparency
-      ctx.fillRect(0, 0, W, H);
-      ctx.drawImage(img, 0, 0, W, H);
-      const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, e.mime, 0.92));
-      if (!blob || blob.type !== e.mime) throw new Error(`Bu tarayıcı ${e.label} kaydedemiyor. PNG deneyin.`);
-      download(blob, name);
+      const name = deck?.album ? `kurum-gorsel-${String(deck.at + 1).padStart(2, "0")}.${e.ext}` : `kurum-gorsel-${template}-${format}.${e.ext}`;
+      download(await fileOf(view, e), name);
       if (mode === "gorsel") trackUsage("social");
     } catch (err) {
       setNote({ kind: "error", text: (err as Error).message || "Görsel kaydedilemedi." });
+    } finally {
+      setBusy("");
+    }
+  }
+  /** Every image of the post, numbered in their order, in one file. */
+  async function exportAlbum(e: (typeof EXPORTS)[number]) {
+    if (!font || !deck?.album) return;
+    setEditing(null);
+    setBusy("export");
+    try {
+      const pages = slidesNow();
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      // One after another: each is a full-size picture in memory.
+      for (const [i, page] of pages.entries()) zip.file(`kurum-gorsel-${String(i + 1).padStart(2, "0")}.${e.ext}`, await fileOf(page, e));
+      download(await zip.generateAsync({ type: "blob" }), "kurum-gorseller.zip");
+      pages.forEach(() => trackUsage("social"));
+      setNote({ kind: "ok", text: `${pages.length} görsel indirildi.` });
+    } catch (err) {
+      setNote({ kind: "error", text: (err as Error).message || "Görseller kaydedilemedi." });
     } finally {
       setBusy("");
     }
@@ -959,7 +1083,19 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     const fonts = new Set([...slides.flat(), ...template.layouts.flatMap((l) => l.els)].flatMap((e) => [...(typeof (e as { font?: unknown }).font === "string" ? [(e as { font: string }).font] : []), ...(((e as TextEl).runs ?? []).flatMap((r) => (r.font ? [r.font] : [])))]));
     Promise.allSettled([...fonts].map((id) => ensureFont(id, username))).then(() => setFontTick((n) => n + 1));
   };
-  const openDeck = async (d: SavedDeck) => {
+  /** A post of several images: the deck's strip, undo and saving, in the format of the post. */
+  const startAlbum = (slides: El[][], f: FormatId, primary: string, theme?: Theme) => {
+    setDeckBefore(null);
+    setDeck({ album: true, template: ALBUM_TEMPLATE, slides, at: 0, primary, theme });
+    setMode("gorsel");
+    setFormat(f);
+    setEls(slides[0]);
+    clearEditing();
+    setWorkId(null);
+    Promise.allSettled([...new Set(slides.flat().flatMap((e) => (e.kind === "text" ? fontsOfText(e) : [])))].map((id) => ensureFont(id, username))).then(() => setFontTick((n) => n + 1));
+  };
+  const openDeck = async (d: SavedDeck, f?: FormatId) => {
+    if (d.album) return startAlbum(d.slides, f ?? "kare", d.primary, THEMES.find((x) => x.name === d.theme));
     const design = d.design ? await loadDesign(d.design) : undefined;
     const t = await loadTemplate(d.template);
     // A theme chosen on top of the design is what the deck wears now.
@@ -1143,7 +1279,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
       setBusy("");
     }
   };
-  const savedDeck = (): SavedDeck | undefined => (deck ? { template: deck.template.id, primary: deck.primary, slides: withoutMaster(slidesNow()), ...(deck.theme ? { theme: deck.theme.name } : {}), ...(deck.design ? { design: deck.design.id } : {}), ...(deck.master ? { master: deck.master } : {}), ...(deck.content ? { content: deck.content } : {}) } : undefined);
+  const savedDeck = (): SavedDeck | undefined => (deck ? { ...(deck.album ? { album: true } : {}), template: deck.template.id, primary: deck.primary, slides: withoutMaster(slidesNow()), ...(deck.theme ? { theme: deck.theme.name } : {}), ...(deck.design ? { design: deck.design.id } : {}), ...(deck.master ? { master: deck.master } : {}), ...(deck.content ? { content: deck.content } : {}) } : undefined);
 
   /** A font chosen for these (arrives after loading: applied to the design as it is then). */
   const applyFont = (ids: string[], f: string | undefined) => change(now.current.view.map((e) => {
@@ -1458,9 +1594,9 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     setZoom(1);
     setSaved("");
     if (w.deck) {
-      setMode("sunum");
+      setMode(w.deck.album ? "gorsel" : "sunum");
       setTool("text");
-      openDeck(w.deck).then(() => setWorkId(w.id), () => setNote({ kind: "error", text: "Sunumun şablonu yüklenemedi." }));
+      openDeck(w.deck, w.format).then(() => setWorkId(w.id), () => setNote({ kind: "error", text: "Sunumun şablonu yüklenemedi." }));
     } else {
       setMode((m) => (m === "video" || w.video ? "video" : "gorsel"));
       setTool((t) => t ?? "templates");
@@ -1509,9 +1645,9 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
       setWorkName(""); // a new work, not the one that was open
       const saved = cleanDeck(j.deck);
       if (saved) {
-        await openDeck(saved);
+        await openDeck(saved, j.format as FormatId);
         setTool("text");
-        return setNote({ kind: "ok", text: "Sunum açıldı." });
+        return setNote({ kind: "ok", text: saved.album ? "Çoklu görsel açıldı." : "Sunum açıldı." });
       }
       const next = cleanEls(j.els);
       if (!next.length && !cleanVideo(j.video)) throw new Error("Proje dosyasında öğe yok.");
@@ -1593,14 +1729,35 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     );
     if (open === "ai") return (
       <section className={section}>
+        <div role="group" aria-label="Ne oluşturulsun" className="grid grid-cols-2 gap-1 rounded-lg bg-subtle p-1">
+          {(mode === "video" ? ([["many", "Tüm sahneler"], ["one", "Bu sahnenin metni"]] as const) : ([["one", "Tek görsel"], ["many", "Çoklu görsel"]] as const)).map(([id, label]) => (
+            <button key={id} onClick={() => setAiTab(id)} aria-pressed={aiMany === (id === "many")} className={`h-8 rounded-md text-xs font-medium ${aiMany === (id === "many") ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"}`}>{label}</button>
+          ))}
+        </div>
         {docs.length > 0 && (
           <SourcePicker docs={docs} value={docIds} onChange={setDocIds} />
         )}
-        <textarea aria-label="Konu" value={brief} onChange={(e) => setBrief(e.target.value)} maxLength={2000} rows={4} placeholder="Konuyu anlatın: ör. 12 Kasım'da kongre salonunda yatırımcı buluşması, saat 10.00" className={`${field} resize-none`} />
+        <textarea aria-label="Konu" value={brief} onChange={(e) => setBrief(e.target.value)} maxLength={2000} rows={aiMany ? 6 : 4} placeholder={aiMany ? "Anlatmak istediğiniz metni yazın ya da yapıştırın: konu, tarih, yer, rakamlar, çağrı…" : "Konuyu anlatın: ör. 12 Kasım'da kongre salonunda yatırımcı buluşması, saat 10.00"} className={`${field} resize-none`} />
+        {aiMany && (
+          <label className="flex items-center justify-between gap-2 text-xs text-muted">
+            {mode === "video" ? "Sahne sayısı" : "Görsel sayısı"}
+            <select value={storyCount} onChange={(e) => setStoryCount(+e.target.value)} className="h-8 rounded-md border border-line bg-panel px-2 text-sm text-fg">
+              <option value={0}>Otomatik (içeriğe göre)</option>
+              {Array.from({ length: storyRange.max - storyRange.min + 1 }, (_, i) => storyRange.min + i).map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+        )}
+        {aiMany && mode === "video" && scenes.length > 0 && (
+          <div role="group" aria-label="Var olan sahneler" className="grid grid-cols-2 gap-1 rounded-lg bg-subtle p-1">
+            {([[false, "Sonuna ekle"], [true, "Yerine koy"]] as const).map(([v, label]) => (
+              <button key={label} onClick={() => setStoryReplace(v)} aria-pressed={storyReplace === v} className={`h-7 rounded-md text-xs font-medium ${storyReplace === v ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"}`}>{label}</button>
+            ))}
+          </div>
+        )}
         <div className="flex items-center gap-2">
-          <button onClick={suggest} disabled={(!brief.trim() && !docIds.length) || busy === "fill"} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40">
+          <button onClick={aiMany ? writeStory : suggest} disabled={(!brief.trim() && !docIds.length) || busy === "fill" || !font} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40">
             {busy === "fill" ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            {busy === "fill" ? "Yazılıyor…" : "Metinleri öner"}
+            {busy === "fill" ? "Yazılıyor…" : !aiMany ? "Metinleri öner" : mode === "video" ? "Sahneleri oluştur" : deck?.album ? "Görselleri yeniden oluştur" : "Görselleri oluştur"}
           </button>
           {busy === "fill" && (
             <button onClick={cancelSuggest} className="grid size-9 place-items-center rounded-lg border border-line text-muted hover:text-fg" aria-label="İptal">
@@ -1608,6 +1765,8 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
             </button>
           )}
         </div>
+        {scenesBefore && aiMany && mode === "video" && <button onClick={() => { setScenes(scenesBefore); setScenesBefore(null); setEditingScene(null); setTool("scenes"); }} className="text-xs text-accent hover:underline">Önceki sahnelere dön</button>}
+        {aiMany && <p className="text-xs text-muted">{mode === "video" ? "Her sahnenin metni, şablonu, süresi ve hareketi metne göre belirlenir; sonra Sahneler panelinden düzenleyebilirsiniz." : "Görseller seçili şablonla, aynı marka renkleriyle hazırlanır; alttaki şeritten gezip tek tek düzenleyebilir, hepsini ZIP olarak indirebilirsiniz. Yeniden oluşturmak Ctrl+Z ile geri alınır."}</p>}
         <p className="text-xs text-muted">{docIds.length ? "Metinler yalnızca seçilen kaynaklardaki bilgilerle yazılır; kaynaklar zaten kurum sunucusunda. " : "Yalnızca bu açıklama kurum sunucusundaki modele gider. "}Görselleriniz tarayıcınızda kalır.</p>
       </section>
     );
@@ -1669,7 +1828,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
         <button onClick={() => addLogo()} disabled={!brand.logo} title={brand.logo ? undefined : "Önce Marka panelinden logo ekleyin"} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm hover:border-accent hover:text-accent disabled:opacity-40">
           <Stamp size={15} /> Logoyu tasarıma ekle
         </button>
-        {!deck && (
+        {(!deck || deck.album) && (
           <>
             <h3 className={heading}>Şablonun fotoğrafı</h3>
             <Picker label={photo ? "Fotoğrafı değiştir" : "Fotoğraf seç"} accept=".png,.jpg,.jpeg,.webp" onPick={(f) => pick("photo", f)} preview={photo?.src} onClear={photo ? () => { setPhoto(undefined); if (!els) setSelected(null); } : undefined} />
@@ -2005,7 +2164,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
                   <p className="m-auto flex items-center gap-2 text-sm text-muted">{fontError || <><Loader2 size={16} className="animate-spin" /> Hazırlanıyor…</>}</p>
                 )}
               </div>
-              {deck && font && <SlideStrip slides={slidesNow()} at={deck.at} measure={font.measure} onGo={goSlide} onAdd={() => setLayoutsOpen(true)} onDuplicate={duplicateSlide} onDelete={deleteSlide} onMove={moveSlide} onReorder={reorderSlide} onClose={leaveDeck} />}
+              {deck && font && <SlideStrip slides={slidesNow()} at={deck.at} measure={font.measure} onGo={goSlide} onAdd={() => (deck.album ? addAlbumPage() : setLayoutsOpen(true))} {...(deck.album ? { noun: "Görsel", many: "Görseller", size: { w: W, h: H } } : {})} onDuplicate={duplicateSlide} onDelete={deleteSlide} onMove={moveSlide} onReorder={reorderSlide} onClose={leaveDeck} />}
               {mode === "video" && (
                 <div className="flex items-center gap-2 border-t border-line bg-panel px-3 py-2">
                   <ol className="flex min-w-0 flex-1 gap-2 overflow-x-auto py-0.5" aria-label="Sahneler">

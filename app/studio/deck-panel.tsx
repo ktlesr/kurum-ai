@@ -15,10 +15,10 @@ import { ensureFont } from "./fonts";
 import { PrimView } from "./editor";
 
 /** A slide drawn small: the same primitives as the canvas, with the fonts the page has loaded. */
-export const SlideThumb = memo(function SlideThumb({ els, measure }: { els: El[]; measure: Measure }) {
+export const SlideThumb = memo(function SlideThumb({ els, measure, size = { w: 1920, h: 1080 } }: { els: El[]; measure: Measure; size?: { w: number; h: number } }) {
   const uid = useId().replace(/:/g, "");
   return (
-    <svg viewBox="0 0 1920 1080" className="block w-full rounded bg-white" aria-hidden>
+    <svg viewBox={`0 0 ${size.w} ${size.h}`} className="block w-full rounded bg-white" aria-hidden>
       {draw(els, measure).map((p, i) => <PrimView key={i} p={p} k={i} uid={uid} />)}
     </svg>
   );
@@ -256,7 +256,9 @@ export function DeckPanel({ docs, measure, username, design, onDesign, onStart, 
   );
 }
 
-export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDelete, onMove, onReorder, onClose }: {
+export function SlideStrip({ slides, at, measure, size, noun = "Slayt", many = "Slaytlar", onGo, onAdd, onDuplicate, onDelete, onMove, onReorder, onClose }: {
+  /** Not 16:9 (a post's images): the page's size. `noun`, `many`: what the items are called. */
+  size?: { w: number; h: number }; noun?: string; many?: string;
   slides: El[][]; at: number; measure: Measure; onGo: (i: number) => void; onAdd: () => void; onDuplicate: () => void; onDelete: () => void; onMove: (d: -1 | 1) => void;
   /** The slide at `from` dropped into the gap before slide `gap` (the slide count: after the last). */
   onReorder: (from: number, gap: number) => void; onClose: () => void;
@@ -282,16 +284,18 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
     else onGo(to);
   };
   const btn = "grid size-8 place-items-center rounded-md text-muted hover:bg-subtle hover:text-fg disabled:opacity-30";
+  // The same height for every shape of page; 16:9 comes out as wide as it always was.
+  const itemWidth = { width: size ? Math.max(40, Math.round((63 * size.w) / size.h)) + 4 : 112 };
   return (
     <div className="flex items-center gap-2 border-t border-line bg-panel px-3 py-2">
       <div className="flex shrink-0 flex-col">
-        <button className={btn} onClick={onAdd} aria-label="Slayt ekle" title="Slayt ekle"><Plus size={15} /></button>
-        <button className={btn} onClick={onDuplicate} aria-label="Slaytı çoğalt" title="Çoğalt"><Copy size={14} /></button>
+        <button className={btn} onClick={onAdd} aria-label={`${noun} ekle`} title={`${noun} ekle`}><Plus size={15} /></button>
+        <button className={btn} onClick={onDuplicate} aria-label={`${noun}ı çoğalt`} title="Çoğalt"><Copy size={14} /></button>
       </div>
       <ol
         ref={list}
         className="flex min-w-0 flex-1 gap-2 overflow-x-auto px-1 py-0.5"
-        aria-label="Slaytlar. Yön tuşlarıyla geçin, Ctrl ile birlikte slaytı taşıyın."
+        aria-label={`${many}. Yön tuşlarıyla geçin, Ctrl ile birlikte taşıyın.`}
         onKeyDown={onKey}
         {...listProps}
       >
@@ -300,28 +304,29 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
             key={i}
             {...itemProps(i)}
             title="Sürükleyerek taşıyın"
-            className={`relative w-28 shrink-0 cursor-grab select-none active:cursor-grabbing [-webkit-touch-callout:none] ${drag?.from === i ? "opacity-40" : ""}`}
+            style={itemWidth}
+            className={`relative shrink-0 cursor-grab select-none active:cursor-grabbing [-webkit-touch-callout:none] ${drag?.from === i ? "opacity-40" : ""}`}
           >
             {/* Where it will land; no mark where it would stay put. */}
             {drag && drag.gap === i && i !== drag.from && i !== drag.from + 1 && <span className="absolute -left-[5px] inset-y-0 w-0.5 rounded bg-accent" aria-hidden />}
             {drag && drag.gap === slides.length && i === slides.length - 1 && i !== drag.from && <span className="absolute -right-[5px] inset-y-0 w-0.5 rounded bg-accent" aria-hidden />}
-            <button onClick={() => !justDropped() && onGo(i)} aria-current={i === at ? "true" : undefined} aria-label={`Slayt ${i + 1}`} className={`block w-full cursor-[inherit] overflow-hidden rounded border-2 ${i === at ? "border-accent" : "border-line hover:border-accent/50"}`}>
-              <SlideThumb els={els} measure={measure} />
+            <button onClick={() => !justDropped() && onGo(i)} aria-current={i === at ? "true" : undefined} aria-label={`${noun} ${i + 1}`} className={`block w-full cursor-[inherit] overflow-hidden rounded border-2 ${i === at ? "border-accent" : "border-line hover:border-accent/50"}`}>
+              <SlideThumb els={els} measure={measure} size={size} />
             </button>
             <span className="block text-center text-[11px] text-muted">{i + 1}</span>
           </li>
         ))}
       </ol>
       {drag && slides[drag.from] && (
-        <div className="pointer-events-none fixed z-50 w-28 -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded border-2 border-accent opacity-90 shadow-xl" style={{ left: drag.x, top: drag.y }} aria-hidden>
-          <SlideThumb els={slides[drag.from]} measure={measure} />
+        <div className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded border-2 border-accent opacity-90 shadow-xl" style={{ ...itemWidth, left: drag.x, top: drag.y }} aria-hidden>
+          <SlideThumb els={slides[drag.from]} measure={measure} size={size} />
         </div>
       )}
       <div className="grid shrink-0 grid-cols-2">
-        <button className={btn} disabled={at === 0} onClick={() => onMove(-1)} aria-label="Slaytı sola taşı" title="Öne al"><ArrowLeft size={14} /></button>
-        <button className={btn} disabled={at === slides.length - 1} onClick={() => onMove(1)} aria-label="Slaytı sağa taşı" title="Sona al"><ArrowRight size={14} /></button>
-        <button className={`${btn} hover:text-danger`} disabled={slides.length < 2} onClick={onDelete} aria-label="Slaytı sil" title="Sil"><Trash2 size={14} /></button>
-        <button className={btn} onClick={onClose} aria-label="Sunumdan çık" title="Sunumdan çık"><X size={15} /></button>
+        <button className={btn} disabled={at === 0} onClick={() => onMove(-1)} aria-label={`${noun}ı sola taşı`} title="Öne al"><ArrowLeft size={14} /></button>
+        <button className={btn} disabled={at === slides.length - 1} onClick={() => onMove(1)} aria-label={`${noun}ı sağa taşı`} title="Sona al"><ArrowRight size={14} /></button>
+        <button className={`${btn} hover:text-danger`} disabled={slides.length < 2} onClick={onDelete} aria-label={`${noun}ı sil`} title="Sil"><Trash2 size={14} /></button>
+        <button className={btn} onClick={onClose} aria-label={noun === "Slayt" ? "Sunumdan çık" : "Çoklu görselden çık"} title={noun === "Slayt" ? "Sunumdan çık" : "Çoklu görselden çık"}><X size={15} /></button>
       </div>
     </div>
   );
