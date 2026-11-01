@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { isClearNo, parseSearchQuery, passage, saysNotWritten, searchWeb } from "./websearch.ts";
+import { aboutTheDocument, isClearNo, parseSearchQuery, passage, saysNotWritten, searchWeb } from "./websearch.ts";
 
 let asked = "";
 const server = createServer((req, res) => {
@@ -89,4 +89,9 @@ test("saysNotWritten: the answers that went without a search", () => {
 test("isClearNo: only a plain no skips the search; empty or unclear doesn't", () => {
   for (const no of ["HAYIR", "Hayır.", "**hayır**", "HAYIR\n"]) assert.ok(isClearNo(no), no);
   for (const other of ["", "EVET", "Bence hayır", "Hayırlı", "HAYIR,EVET", "HAYIRı", "ıHAYIR"]) assert.ok(!isClearNo(other), other);
+});
+
+test("a question about the attached document itself doesn't go to the web", () => {
+  for (const q of ["Dokümanın ana başlıklarını ve bölümlerini sırayla, sayfa numaralarıyla listele.", "Dokümanın tamamını özetle", "Dokümanları madde bazında karşılaştır", "Dokümandaki şartları çıkar", "Tablolardaki sütunları açıkla", "bu belgeyi özetle", "BELGENİN AMACI NE"]) assert.ok(aboutTheDocument(q), q);
+  for (const q of ["493 sayılı kararnamede Tarım Kurumu nereye bağlı?", "Belgede yazan kurumun başkanı kim?", "Dokümanı internetten doğrula", "Türkiye'nin başkenti neresi"]) assert.ok(!aboutTheDocument(q), q);
 });

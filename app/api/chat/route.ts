@@ -19,7 +19,7 @@ import { getSetting } from "@/lib/db";
 import { findUrls, MAX_CHARS_TOTAL, onSite, parsePick, siteOf, WebError, webReason, type Page } from "@/lib/web";
 import { readWeb } from "@/lib/browser";
 import { parseGate, quoteInDocs } from "@/lib/evidence";
-import { isClearNo, parseSearchQuery, passage, saysNotWritten, searchWeb } from "@/lib/websearch";
+import { isClearNo, parseSearchQuery, passage, aboutTheDocument, saysNotWritten, searchWeb } from "@/lib/websearch";
 
 export const runtime = "nodejs";
 
@@ -448,6 +448,7 @@ export async function POST(req: Request) {
         // by inference; the web part below takes over. Needs the web part to exist. A whole-document request, a named page,
         // or no verdict from the model goes on as usual.
         let unstated = false;
+        let analysis = false;
         if (SEARCH_URL && !pages.length && !urls.length && scope !== "all" && meta.mode !== "scan" && selected.some((d) => d.text.trim())) {
           status("Belgede kanıt aranıyor…");
           const said = await chatOnce(chat, model, [{ role: "system", content: `${EVIDENCE}${hint}\n\n${context}` }, ...history], signal, EVIDENCE_TOKENS).catch((e) => {
@@ -456,6 +457,7 @@ export async function POST(req: Request) {
             return "";
           });
           const gate = parseGate(said);
+          analysis = gate?.kind === "analysis";
           unstated = gate?.kind === "fact" && !(gate.quote && quoteInDocs(gate.quote, selected.map((d) => d.text)));
           console.info(`evidence gate: ${gate?.kind ?? "unclear"}${gate?.kind === "fact" ? (unstated ? " unstated" : " quoted") : ""}`);
         }
@@ -484,7 +486,10 @@ export async function POST(req: Request) {
         if (claims.length) meta.claims = claims;
         // The documents don't hold it: the web may, as a clearly separate second part (the model reads no document here).
         // Searching only now, not ahead of every answer: a question the documents answer never leaves the institution.
-        if (SEARCH_URL && !pages.length && !urls.length && !unstated) status("Cevap kontrol ediliyor…");
+        // A question about the document itself, or a summary or comparison of it, has no fact the web could add; the judge
+        // would still call such an answer "interpretation" and a search on its words brings some other document.
+        const ofDoc = aboutTheDocument(asked0);
+        if (SEARCH_URL && !pages.length && !urls.length && !unstated && !ofDoc && !analysis) status("Cevap kontrol ediliyor…");
         // The answer's own words settle it when they can; otherwise the model. Only its clear no skips the search: a missed
         // search is an answer left wrong, an extra one is a second part under its own heading.
         const judge = async () => {
@@ -496,7 +501,7 @@ export async function POST(req: Request) {
           console.info(`web search judge: ${JSON.stringify(said.slice(0, 20))}`);
           return !isClearNo(said);
         };
-        if (SEARCH_URL && !pages.length && !urls.length && (unstated || saysNotWritten(answer) || (await judge()))) {
+        if (SEARCH_URL && !pages.length && !urls.length && (unstated || (!ofDoc && (saysNotWritten(answer) || (!analysis && (await judge())))))) {
           // The heading comes first: the search takes a while, and the reader should see it has started.
           send("\n\n---\n\n**Belgede değil, internetten:**\n\n");
           const found = await search(SEARCH_QUERY);

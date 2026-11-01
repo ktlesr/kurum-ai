@@ -100,6 +100,16 @@ export function saysNotWritten(answer: string): boolean {
   return /belgede yok|açıkça\s+(belirtilme[mz]|belirtilmiyor|yazma[mz]|yazmıyor|geçme[mz]|geçmiyor|zikredilme[mz]|zikredilmiyor)|çıkarım\s+yapıl/iu.test(answer);
 }
 
+const OF_THE_DOC = /(?<!\p{L})(?:(?:do|dö)küman(?:ın|ı|daki|lar|ları|ların|lardaki)|belge(?:nin|yi|deki|ler|leri|lerin|lerdeki)|dosya(?:nın|yı|daki|lar|ları|ların|lardaki)|tablo(?:nun|yu|daki|lar|ları|ların|lardaki)|bu (?:doküman|döküman|belge|dosya|tablo))(?!\p{L})/u;
+/**
+ * The question is about the attached document itself (its headings, its summary, what is in it): the web doesn't have this
+ * document, so a search can only bring some other one. Asking for the internet in so many words still goes there.
+ */
+export function aboutTheDocument(question: string): boolean {
+  const q = low(question);
+  return OF_THE_DOC.test(q) && !/internet|web'|web |google/.test(q);
+}
+
 /** "HAYIR" with its capital I, which /hayır/i doesn't match. */
 export function isClearNo(said: string): boolean {
   return /^[\s*_"'`]*hay[ıi]r[\s*_"'`.!]*$/iu.test(said);
