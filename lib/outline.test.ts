@@ -116,3 +116,11 @@ test("what a first review found", () => {
   assert.deepEqual(texts("Ek 1 kapsamında inceleme yapılmıştır\nGeçici madde 2 uyarınca işlem yapılır.\nikinci bölüm uyarınca\n(1) sayılı liste uyarınca"), []);
   assert.deepEqual(texts("EK-1\nEk 2: Formlar\nİKİNCİ BÖLÜM\n(3) SAYILI CETVEL"), ["EK-1", "Ek 2: Formlar", "İKİNCİ BÖLÜM", "(3) SAYILI CETVEL"]);
 });
+
+test("a scoped or judged list goes to the model; section names repeat", () => {
+  for (const q of ["Sadece 3. sayfadaki başlıkları listele", "Başlıkları önem sırasına göre listele"]) assert.ok(!asksForOutline(q), q);
+  assert.ok(asksForOutline("Dokümanın ana başlıklarını ve bölümlerini sırayla, sayfa numaralarıyla listele."));
+  const t = docOutline([1, 2, 3].map((n) => `--- Sayfa ${n} ---\n## Giriş\n## Konu ${n}\n## Sonuç`).join("\n\n")).map((i) => i.text);
+  assert.equal(t.filter((x) => x === "Giriş").length, 3);
+  assert.equal(t.filter((x) => x === "Sonuç").length, 3);
+});

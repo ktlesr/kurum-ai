@@ -24,7 +24,7 @@ function cut(s: string): string {
   return `${s.slice(0, at > 40 ? at : MAX_LEN)}…`;
 }
 /** Letters of the document can't act as markup in the list. */
-// eslint-disable-next-line no-control-regex -- control characters are the chat stream's own separators: they can't pass
+// Control characters are the chat stream's own separators: they can't pass.
 const plain = (s: string) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/[`*_<>[\]|\\]/g, "").replace(/\s+/g, " ").trim();
 
 // The number as OCR left it: "52W/A" is an article with a misread digit, which must stay in the list and say so.
@@ -86,7 +86,7 @@ export function docOutline(text: string): OutlineItem[] {
   const times = new Map<string, number>();
   for (const f of found) times.set(f.text, (times.get(f.text) ?? 0) + 1);
   // Capitals alone that come back are labels of a form or table too.
-  const kept = found.filter((f) => (pagesOf.get(f.text)?.size ?? 0) < repeats && !(f.weak && times.get(f.text)! > 1 && !WORDS_ALONE.test(f.text)));
+  const kept = found.filter((f) => WORDS_ALONE.test(f.text.toLocaleUpperCase("tr")) || ((pagesOf.get(f.text)?.size ?? 0) < repeats && !(f.weak && times.get(f.text)! > 1)));
   return kept.filter((f, i) => !(kept[i - 1]?.text === f.text && kept[i - 1]?.page === f.page)).map(({ page, text }) => ({ page, text }));
 }
 
@@ -94,7 +94,7 @@ export function docOutline(text: string): OutlineItem[] {
 export function asksForOutline(question: string): boolean {
   const q = question.toLocaleLowerCase("tr");
   // The headings themselves, a word asking for them, and nothing to do with them: analysis needs the model.
-  return /içindekiler|başlıklar/u.test(q) && /listele|sırala|çıkar|göster|yaz|\bver|neler|\bne\b/u.test(q) && !/altında|tutarlı|karşılaştır|özetle|açıkla|değerlendir|analiz|yorumla|anlat|içerik|kaç\b|hangi/u.test(q);
+  return /içindekiler|başlıklar/u.test(q) && /listele|sırala|çıkar|göster|yaz|\bver|neler|\bne\b/u.test(q) && !/altında|tutarlı|karşılaştır|özetle|açıkla|değerlendir|analiz|yorumla|anlat|içerik|kaç\b|hangi|önem|göre|sadece|yalnız|\d/u.test(q);
 }
 
 export function outlineMarkdown(docs: { name: string; items: OutlineItem[] }[]): string {
