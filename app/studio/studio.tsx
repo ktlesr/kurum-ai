@@ -14,6 +14,7 @@ import { Logo } from "../logo";
 import { ThemeToggle } from "../theme-toggle";
 import Home, { type Mode } from "./home";
 import Toolbar, { keepSelection } from "./toolbar";
+import { LogoPicker } from "./logo-picker";
 import { ShapeChooser, ShapeGrid, ShapeStyleTabs, shapeIdOf } from "./shape-palette";
 import Editor from "./editor";
 import ContextMenu, { type MenuItem } from "./context-menu";
@@ -502,7 +503,13 @@ export default function Studio({ username }: { username: string }) {
     const cur = now.current.els;
     if (cur && was.logo) change(cur.map((e) => (e.kind === "image" && e.logo && e.pic.src === was.logo?.src ? { ...e, pic: p, h: (e.w * p.h) / p.w } : e)));
   };
-  const addToLogos = async (files: FileList | null) => {
+  const [logoFor, setLogoFor] = useState<string | null>(null); // the logo element whose replacement is being chosen
+  /** This logo in the place of that one, on the design as it is by now (a file takes a moment to read). */
+  const putLogoOn = (id: string, p: Picture) => {
+    const cur = now.current.view;
+    change(cur.map((e) => (e.id === id && e.kind === "image" ? (e.fit === "contain" ? { ...e, pic: p, h: (e.w * p.h) / p.w } : { ...e, pic: p }) : e)));
+  };
+  const addToLogos = async (files: FileList | null): Promise<Picture | undefined> => {
     if (!files?.length) return;
     setNote(null);
     let first: Picture | undefined;
@@ -525,6 +532,7 @@ export default function Studio({ username }: { username: string }) {
     }
     if (added.length) setLogos((l) => [...l, ...added]);
     if (first && !brandNow.current.logo) chooseLogo(first);
+    return first;
   };
   const dropLogo = async (l: SavedLogo) => {
     try {
@@ -779,11 +787,12 @@ export default function Studio({ username }: { username: string }) {
       ...ALIGNS.map(([how, label, icon]): MenuItem => ({ label: `${label} (tuvale göre)`, icon, run: () => alignMany(ids, how), disabled: L })),
       ...(e.kind === "image"
         ? (["-",
-            { label: "Görseli değiştir…", icon: <ImagePlus size={14} />, run: () => {
+            { label: e.logo ? "Logoyu değiştir…" : "Görseli değiştir…", icon: <ImagePlus size={14} />, run: () => {
+                if (e.logo) return setLogoFor(e.id);
                 replaceTarget.current = e.id;
                 const input = replaceInput.current;
                 if (!input) return;
-                input.accept = e.logo ? ".png,.jpg,.jpeg,.webp,.svg" : ".png,.jpg,.jpeg,.webp"; // the same choices as the inspector
+                input.accept = ".png,.jpg,.jpeg,.webp"; // the same choices as the inspector
                 input.click();
               }, disabled: L },
             ...(e.logo ? [] : [{ label: e.fit === "cover" ? "Tamamını göster (sığdır)" : "Kutuyu doldur (kırp)", icon: <ImageIcon size={14} />, run: () => patch(e.id, { fit: e.fit === "cover" ? "contain" : "cover" }), disabled: L } as MenuItem]),
@@ -817,7 +826,7 @@ export default function Studio({ username }: { username: string }) {
   // Shift+F10; with several chosen, they all move, copy and go together.
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   function onKey(e: KeyboardEvent) {
-    if (!mode || library || artOpen || layoutsOpen) return; // the dialog has the keyboard; the canvas behind it doesn't change
+    if (!mode || library || artOpen || layoutsOpen || logoFor) return; // the dialog has the keyboard; the canvas behind it doesn't change
     const t = e.target as HTMLElement;
     if (t.closest("input, textarea, select, [contenteditable]")) return;
     const mod = e.ctrlKey || e.metaKey;
@@ -1734,7 +1743,7 @@ export default function Studio({ username }: { username: string }) {
         <p className="text-xs text-muted">Shift ya da Ctrl ile tıklayarak seçime ekleyip çıkarın; boş alanda sürükleyerek kutu içindekileri seçin. Aynı boyut ilk seçilene göre yapılır.</p>
       </section>
     ) : sel ? (
-      <Inspector key={sel.id} placing={placingNow === sel.id} onPlace={setPlacing} el={shownSel!} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={patchSel} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onAlign={(how) => alignMany([sel.id], how, true)} />
+      <Inspector key={sel.id} placing={placingNow === sel.id} onPlace={setPlacing} el={shownSel!} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={patchSel} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onLogo={() => setLogoFor(sel.id)} onAlign={(how) => alignMany([sel.id], how, true)} />
     ) : (
       <section className={section}>
         <p className="text-sm text-muted">Tuvalde bir öğeye tıklayın: konumunu, boyutunu, gölgesini ve diğer ayarlarını buradan değiştirebilirsiniz.</p>
@@ -1832,7 +1841,7 @@ export default function Studio({ username }: { username: string }) {
     return null;
   };
 
-  const blocked = !!library || artOpen || layoutsOpen;
+  const blocked = !!library || artOpen || layoutsOpen || !!logoFor;
   const showCanvas = mode !== "sunum" || !!deck;
   return (
     <div className="flex h-dvh flex-col bg-bg">
@@ -1945,6 +1954,7 @@ export default function Studio({ username }: { username: string }) {
                 onOrder={(to) => reorder(picked, to)}
                 onAlign={(how) => alignMany(picked, how)}
                 onReplace={(f) => sel && replacePicture(sel.id, f)}
+                onLogo={() => sel && setLogoFor(sel.id)}
                 onMore={() => setTool("edit")}
               />
               <div className="flex min-h-0 flex-1 overflow-auto p-4 md:p-8" style={{ containerType: "size", backgroundImage: "radial-gradient(var(--line) 1px, transparent 1px)", backgroundSize: "18px 18px" }} onPointerDown={() => { setSelected(null); setEditing(null); }}>
@@ -2019,6 +2029,20 @@ export default function Studio({ username }: { username: string }) {
 
       {layoutsOpen && deck && font && <LayoutPicker template={deck.template} accent={deck.primary} measure={font.measure} onPick={addSlide} onClose={() => setLayoutsOpen(false)} />}
       {artOpen && <ArtPicker colors={brand} onPick={addArt} onClose={() => setArtOpen(false)} />}
+      {logoFor && (() => {
+        const target = view.find((e) => e.id === logoFor);
+        return (
+          <LogoPicker
+            logos={logos}
+            current={target?.kind === "image" ? target.pic.src : undefined}
+            error={note?.kind === "error" ? note.text : undefined}
+            onPick={(l) => { putLogoOn(logoFor, l.pic); setLogoFor(null); }}
+            onAdd={(files) => void addToLogos(files).then((p) => { if (p) { putLogoOn(logoFor, p); setLogoFor(null); } })}
+            onDrop={(l) => void dropLogo(l)}
+            onClose={() => setLogoFor(null)}
+          />
+        );
+      })()}
       {library && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onPointerDown={closeLibrary}>
           <div
@@ -2113,14 +2137,14 @@ interface InspectorProps {
   onRemove: () => void;
   onDuplicate: () => void;
   onOrder: (to: "front" | "back" | "up" | "down") => void;
-  onReplace: (f: File | undefined) => void;
+  onReplace: (f: File | undefined) => void; onLogo: () => void;
   placing: boolean;
   onPlace: (id: string | null) => void;
   /** To the canvas, by what is drawn (a turned element's outer box). */
   onAlign: (how: AlignTo) => void;
 }
 
-function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove, onDuplicate, onOrder, onReplace, placing, onPlace, onAlign }: InspectorProps) {
+function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove, onDuplicate, onOrder, onReplace, onLogo, placing, onPlace, onAlign }: InspectorProps) {
   const live = (p: Partial<El>) => onPatch(p, false);
   const now = (p: Partial<El>) => onPatch(p, true);
   const swatches = [...new Set([brand.primary, brand.accent, "#ffffff", "#14263d", "#000000"])];
@@ -2251,10 +2275,16 @@ function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove
             </div>
           )}
           <Slider label="Köşe yuvarlaklığı" value={el.radius ?? 0} min={0} max={Math.round(Math.min(el.w, el.h) / 2)} step={1} show={`${Math.round(el.radius ?? 0)} px`} onChange={(radius) => live({ radius })} onCommit={onCommit} />
-          <label className="flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-line text-sm text-muted hover:border-accent hover:text-accent">
-            <ImagePlus size={15} /> {el.logo ? "Logoyu değiştir" : "Görseli değiştir"}
-            <input type="file" accept={el.logo ? ".png,.jpg,.jpeg,.webp,.svg" : ".png,.jpg,.jpeg,.webp"} className="sr-only" onChange={(e) => { onReplace(e.target.files?.[0]); e.target.value = ""; }} />
-          </label>
+          {el.logo ? (
+            <button disabled={el.locked} onClick={onLogo} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line text-sm text-muted hover:border-accent hover:text-accent disabled:opacity-40">
+              <ImagePlus size={15} /> Logoyu değiştir
+            </button>
+          ) : (
+            <label className="flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-line text-sm text-muted hover:border-accent hover:text-accent">
+              <ImagePlus size={15} /> Görseli değiştir
+              <input type="file" accept=".png,.jpg,.jpeg,.webp" className="sr-only" onChange={(e) => { onReplace(e.target.files?.[0]); e.target.value = ""; }} />
+            </label>
+          )}
           {el.logo && <p className="text-xs text-muted">Logo yalnızca oranı korunarak büyütülüp küçültülür.</p>}
         </section>
       )}

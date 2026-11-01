@@ -29,7 +29,7 @@ function Icon({ label, active, onClick, disabled, children }: { label: string; a
   return <button className={`${btn} ${active ? on : ""}`} aria-label={label} title={label} {...(active === undefined ? {} : { "aria-pressed": active })} onClick={onClick} disabled={disabled}>{children}</button>;
 }
 
-export default function Toolbar({ el, count, username, aligns, onPatch, onFont, onDuplicate, onRemove, onOrder, onAlign, onReplace, onMore }: {
+export default function Toolbar({ el, count, username, aligns, onPatch, onFont, onDuplicate, onRemove, onOrder, onAlign, onReplace, onLogo, onMore }: {
   el: El | null;
   count: number;
   username: string;
@@ -41,6 +41,7 @@ export default function Toolbar({ el, count, username, aligns, onPatch, onFont, 
   onOrder: (to: "front" | "back") => void;
   onAlign: (how: AlignTo) => void;
   onReplace: (f: File | undefined) => void;
+  onLogo: () => void;
   onMore: () => void;
 }) {
   const shell = "flex min-h-12 flex-wrap items-center gap-0.5 border-b border-line bg-panel px-3 py-1.5";
@@ -112,17 +113,20 @@ export default function Toolbar({ el, count, username, aligns, onPatch, onFont, 
           {el.stroke && <ColorBtn label={el.shape === "line" ? "Çizgi rengi" : "Kenarlık rengi"} value={el.stroke.color} set={(color) => onPatch({ stroke: { ...el.stroke!, color } })} />}
         </>
       )}
-      {el.kind === "image" && (
+      {el.kind === "image" && el.logo && (
+        <button disabled={L} onClick={onLogo} className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg disabled:opacity-30">
+          <ImagePlus size={15} /> Logoyu değiştir
+        </button>
+      )}
+      {el.kind === "image" && !el.logo && (
         <>
           <label className="flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg focus-within:ring-2 focus-within:ring-accent/40">
-            <ImagePlus size={15} /> {el.logo ? "Logoyu değiştir" : "Görseli değiştir"}
-            <input type="file" disabled={L} accept={el.logo ? ".png,.jpg,.jpeg,.webp,.svg" : ".png,.jpg,.jpeg,.webp"} className="sr-only" onChange={(e) => { onReplace(e.target.files?.[0]); e.target.value = ""; }} />
+            <ImagePlus size={15} /> Görseli değiştir
+            <input type="file" disabled={L} accept=".png,.jpg,.jpeg,.webp" className="sr-only" onChange={(e) => { onReplace(e.target.files?.[0]); e.target.value = ""; }} />
           </label>
-          {!el.logo && (
-            <button disabled={L} className="h-8 shrink-0 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg disabled:opacity-30" onClick={() => onPatch({ fit: el.fit === "cover" ? "contain" : "cover" })}>
-              {el.fit === "cover" ? "Tamamını göster" : "Kutuyu doldur"}
-            </button>
-          )}
+          <button disabled={L} className="h-8 shrink-0 rounded-md px-2 text-sm text-muted hover:bg-subtle hover:text-fg disabled:opacity-30" onClick={() => onPatch({ fit: el.fit === "cover" ? "contain" : "cover" })}>
+            {el.fit === "cover" ? "Tamamını göster" : "Kutuyu doldur"}
+          </button>
         </>
       )}
       {common(L)}
