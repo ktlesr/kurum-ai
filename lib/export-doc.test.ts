@@ -230,3 +230,10 @@ test("reference links keep their address, tables in a quotation are data, a ques
   assert.ok(exportRequest("bunu pdf olarak verir misin?")?.formats.includes("pdf"));
 });
 
+test("a question in the text doesn't cancel the request for a file", () => {
+  assert.deepEqual(exportRequest("KOSGEB desteğine nasıl başvurulur, PDF olarak ver"), { formats: ["pdf"], rest: "KOSGEB desteğine nasıl başvurulur" });
+  assert.deepEqual(exportRequest("Neden önemli olduğunu anlat ve word olarak hazırla"), { formats: ["docx"], rest: "Neden önemli olduğunu anlat" });
+  assert.equal(exportRequest("pdf olarak nasıl kaydederim"), null);
+  assert.equal(exportRequest("Bu pdf olarak verilebilir mi"), null);
+});
+

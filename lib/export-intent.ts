@@ -27,11 +27,11 @@ export function exportRequest(message: string): ExportRequest | null {
   const text = message.trim();
   if (!text || text.length > 2000) return null;
   const q = text.toLocaleLowerCase("tr");
-  // Asking about a format is judged in its own sentence: "Bu nasıl çalışır? PDF olarak ver" asks for a file.
-  const sentenceAround = (at: number) => {
-    const before = Math.max(q.lastIndexOf(".", at - 1), q.lastIndexOf("?", at - 1), q.lastIndexOf("!", at - 1), q.lastIndexOf("\n", at - 1));
+  // A question counts only where it is about the format, from its name on: "KOSGEB'e nasıl başvurulur, PDF olarak ver" asks
+  // for a file; "pdf olarak nasıl veririm" doesn't.
+  const fromThereOn = (at: number) => {
     const ends = [".", "?", "!", "\n"].map((c) => q.indexOf(c, at)).filter((i) => i >= 0);
-    return q.slice(before + 1, ends.length ? Math.min(...ends) : q.length);
+    return q.slice(at, ends.length ? Math.min(...ends) : q.length);
   };
   const spans: [number, number][] = [];
   const asked: FileFormat[] = [];
@@ -39,7 +39,7 @@ export function exportRequest(message: string): ExportRequest | null {
   for (const [format, names] of NAMES) {
     const re = new RegExp(`(?<![${L}.])(?:${names})${JOIN}`, "gu");
     for (const m of q.matchAll(re)) {
-      if (NOT_A_REQUEST.test(sentenceAround(m.index + 1))) continue;
+      if (NOT_A_REQUEST.test(fromThereOn(m.index))) continue;
       asked.push(format);
       spans.push([m.index, m.index + m[0].length]);
     }
