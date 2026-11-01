@@ -14,6 +14,9 @@ import { logout } from "./login/actions";
 import { useChats } from "./use-chats";
 import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, plainNumbering, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
 import { searchChats, titleFrom, type Message, type StoredChat } from "@/lib/local-store";
+import { FILE_FORMATS, exportDoc, turnOf, type ExportDoc } from "@/lib/export-doc";
+import { exportRequest } from "@/lib/export-intent";
+import { DownloadMenu, FileCards } from "./export-ui";
 import type { DocKind, DocMeta } from "@/lib/server";
 import { LibraryPanel, type LibItem } from "./library";
 import { BetaBadge, Logo } from "./logo";
@@ -279,7 +282,29 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     const q = text.trim();
     if (!q || streaming || docsWait) return;
     // An edited question replaces itself and everything after it.
-    const history: Message[] = [...messages.slice(0, editOf).filter((m) => !m.error), { role: "user", content: q, at: Date.now() }];
+    const earlier = messages.slice(0, editOf).filter((m) => !m.error);
+    const history: Message[] = [...earlier, { role: "user", content: q, at: Date.now() }];
+    const wish = exportRequest(q);
+    // Only a file of the answer before it: no model has anything to do here, so it works when the model is busy or down too.
+    if (wish && !wish.rest) {
+      const of = earlier.findLastIndex((m) => m.role === "assistant" && !m.local && m.content.trim());
+      const names = wish.formats.map((f) => FILE_FORMATS[f].label).join(", ");
+      const reply: Message = of < 0
+        ? { role: "assistant", content: `${names} dosyası hazırlamak için önce bir cevap gerekiyor. Sorunuzu yazın, sonuna da "${FILE_FORMATS[wish.formats[0]].label} olarak ver" ekleyin.`, local: true }
+        : { role: "assistant", content: `Son cevabınız ${names} dosyası olarak hazır:`, files: wish.formats, fileOf: of, local: true };
+      const asked: Message = { ...history[history.length - 1], local: true };
+      const id = chatId ?? crypto.randomUUID();
+      const all = [...earlier, asked, reply];
+      setChatId(id);
+      setInput("");
+      setMessages(all);
+      local.upsert(id, (cur) => ({
+        ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
+        updatedAt: Date.now(), model, docIds: ready.map((f) => f.serverId!).filter(Boolean),
+        messages: all.map(stored),
+      }));
+      return;
+    }
     const t0 = Date.now();
     const secs = () => Math.round((Date.now() - t0) / 1000);
     let first: number | undefined;
@@ -302,7 +327,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       local.upsert(id, (cur) => ({
         ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
         updatedAt: Date.now(), model, docIds,
-        messages: msgs.filter((m) => m.content || m.error).map(({ role, content, at, error, meta, timing }) => ({ role, content, ...(at ? { at } : {}), ...(error ? { error } : {}), ...(meta ? { meta } : {}), ...(timing ? { timing } : {}) })),
+        messages: msgs.filter((m) => m.content || m.error).map(stored),
       }));
     setChatId(id);
     persist(history);
@@ -317,7 +342,9 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           think: false,
           scope: scope ?? (profile === "deep" ? "all" : profile === "fast" ? "part" : undefined),
           fileIds: ready.map((f) => f.serverId),
-          messages: history.slice(-HISTORY).map(({ role, content }) => ({ role, content })),
+          // Without the words about the file (the search and the documents go by the question), and without turns that were only that.
+          messages: history.filter((m) => !m.local).slice(-HISTORY).map(({ role, content }, i, all) => ({ role, content: wish && i === all.length - 1 ? wish.rest : content })),
+          ...(wish ? { fileFormats: wish.formats } : {}),
         }),
       });
       if (!res.ok || !res.body) {
@@ -362,7 +389,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         checkModels();
       }
     } finally {
-      if (!last.error) setLast((m) => ({ ...m, startedAt: undefined, timing: { first, total: secs() } }));
+      if (!last.error) setLast((m) => ({ ...m, startedAt: undefined, timing: { first, total: secs() }, ...(wish && m.content.trim() ? { files: wish.formats } : {}) }));
       setStreaming(false);
       abortRef.current = null;
       persist([...history, last]);
@@ -638,6 +665,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             {!models.length && <option>{model || "Model yok"}</option>}
             {models.map((m) => <option key={m}>{m}</option>)}
           </select>
+          {messages.some((m) => m.role === "assistant" && !m.local && !m.error && m.content.trim()) && !streaming && <DownloadMenu compact title="Tüm sohbeti dosya olarak indir" doc={() => chatDoc(messages, current?.title)} />}
           <ThemeToggle />
         </header>
 
@@ -680,7 +708,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             <div className="flex-1 overflow-y-auto">
               <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-8">
                 {messages.map((m, i) => (
-                  <Bubble key={i} m={m} live={streaming && i === messages.length - 1} busy={streaming || docsWait} onEdit={(t) => send(t, undefined, i)} onSource={openSource} />
+                  <Bubble key={i} m={m} live={streaming && i === messages.length - 1} busy={streaming || docsWait} onEdit={(t) => send(t, undefined, i)} onSource={openSource} doc={() => answerDoc(messages, m.fileOf ?? i, current?.title)} />
                 ))}
                 <div ref={bottomRef} />
               </div>
@@ -910,7 +938,25 @@ function Question({ m, busy, onEdit }: { m: Message; busy: boolean; onEdit: (tex
   );
 }
 
-function Bubble({ m, live, busy, onEdit, onSource }: { m: Message; live: boolean; busy: boolean; onEdit: (text: string) => void; onSource: (chip: string, doc?: string) => void }) {
+/** What a stored message keeps. */
+const stored = ({ role, content, at, error, meta, timing, files, fileOf, local }: Message): Message => ({ role, content, ...(at ? { at } : {}), ...(error ? { error } : {}), ...(meta ? { meta } : {}), ...(timing ? { timing } : {}), ...(files ? { files } : {}), ...(fileOf !== undefined ? { fileOf } : {}), ...(local ? { local } : {}) });
+const turnFrom = (messages: Message[], i: number) => {
+  const m = messages[i];
+  const question = messages.slice(0, i).findLast((x) => x.role === "user" && !x.local);
+  // What was asked, without the words about the file.
+  return turnOf({ question: question && (exportRequest(question.content)?.rest || question.content), answer: m?.content ?? "", sources: m?.meta?.sources, web: m?.meta?.web, at: question?.at });
+};
+/** One answer as a document. */
+const answerDoc = (messages: Message[], i: number, title?: string): ExportDoc => exportDoc([turnFrom(messages, i)], title);
+/** The whole chat as a document: only what was asked and answered. */
+const chatDoc = (messages: Message[], title?: string): ExportDoc =>
+  exportDoc(
+    messages.flatMap((m, i) => (m.role === "assistant" && !m.local && !m.error && m.content.trim() ? [turnFrom(messages, i)] : [])),
+    // A chat begun with a request for a file is named after that; the document after what it is about.
+    messages.find((m) => m.role === "user")?.local ? titleFrom(messages.find((m) => m.role === "user" && !m.local)?.content ?? "Sohbet") : (title ?? "Sohbet"),
+  );
+
+function Bubble({ m, live, busy, onEdit, onSource, doc }: { m: Message; live: boolean; busy: boolean; onEdit: (text: string) => void; onSource: (chip: string, doc?: string) => void; doc: () => ExportDoc }) {
   // Only links made by linkPages (they carry this nonce) open the source panel.
   const [nonce] = useState(() => crypto.randomUUID().slice(0, 8));
   const pagePlugins = useMemo(() => [remarkGfm, linkPages(m.meta, nonce)], [m.meta, nonce]);
@@ -959,9 +1005,11 @@ function Bubble({ m, live, busy, onEdit, onSource }: { m: Message; live: boolean
         </p>
       )}
       {!live && m.meta && <MetaNotes meta={m.meta} onSource={onSource} />}
-      {!live && m.content && (
+      {!live && !!m.files?.length && <FileCards doc={doc} formats={m.files} />}
+      {!live && m.content && !m.local && (
         <div className="mt-2 flex items-center gap-3">
           <CopyButton text={m.content} />
+          <DownloadMenu doc={doc} />
           {m.timing && (
             <span className="text-xs tabular-nums text-muted" title="Soru gönderildikten sonra ilk kelimenin geldiği ve cevabın bittiği süre">
               {m.timing.first !== undefined && `İlk kelime ${m.timing.first} sn · `}Toplam {m.timing.total} sn

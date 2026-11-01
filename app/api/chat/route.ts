@@ -1,5 +1,6 @@
 import { requireApiUser } from "@/lib/auth";
 import { countUsage } from "@/lib/usage";
+import { FILE_FORMATS, type FileFormat } from "@/lib/export-doc";
 import { asksForOutline, docOutline, outlineMarkdown } from "@/lib/outline";
 import { cptFor, docsOf, getDoc, recordTokens, type Doc } from "@/lib/server";
 import { isSharedId, sharedDoc, sharedEntry, sharedList, type SharedEntry } from "@/lib/library";
@@ -201,7 +202,7 @@ export async function POST(req: Request) {
   const parsed = parseChatRequest(await req.json().catch(() => null), new Set(cfg.models));
   if (typeof parsed === "string") return fail(parsed, 400);
   // scope "all" = question needs the whole document (suggestion buttons know this); otherwise classified.
-  const { model, fileIds, messages, think, scope } = parsed;
+  const { model, fileIds, messages, think, scope, fileFormats } = parsed;
 
   // Another user's doc is indistinguishable from a missing one.
   let selected = fileIds.filter((id) => !isSharedId(id)).map((id) => getDoc(user.id, id)) as Doc[];
@@ -384,7 +385,9 @@ export async function POST(req: Request) {
         const web = webBlocks(pages);
         const withWeb = (h: Msg[]) =>
           web ? h.map((m, i) => (i === h.length - 1 && m.role === "user" ? { ...m, content: `${m.content}\n\n${web}` } : m)) : h;
-        const rule = (web ? `\n\n${WEB}` : "") + (failed.length ? failedRule(failed) : "");
+        // The app makes the file from this answer: the answer is the document, it can't say it has no way to make one.
+        const asFile = fileFormats?.length ? `\n\nKullanıcı bu cevabı ${fileFormats.map((f) => FILE_FORMATS[f as FileFormat].label).join(", ")} dosyası olarak indirecek; dosyayı uygulama senin cevabından otomatik üretir. "Dosya oluşturamam" deme, kod ya da bağlantı verme, dosyadan söz etme: yalnızca içeriği düzenli bir belge olarak yaz, başlık kullan.${fileFormats.includes("xlsx") || fileFormats.includes("json") ? " Listelenebilen bilgileri mutlaka Markdown tablo olarak yaz." : ""}` : "";
+        const rule = (web ? `\n\n${WEB}` : "") + (failed.length ? failedRule(failed) : "") + asFile;
         if (pages.length) meta.web = pages.map(({ url, title }) => ({ url, title }));
         if (webNotes.length) meta.note = [meta.note, ...webNotes].filter(Boolean).join(" ");
 

@@ -1,4 +1,5 @@
 // Runtime shape check for /api/chat. Pure: no Next, no server-only, so node --test can import it.
+import { isFileFormat } from "./export-doc.ts";
 
 export interface ChatRequest {
   model: string;
@@ -7,6 +8,8 @@ export interface ChatRequest {
   think: boolean;
   /** "all": the whole document is needed; "part": a search is enough (Hızlı profile, no classifier call). */
   scope?: "all" | "part";
+  /** The answer will be taken as a file: it is written as a document, and never says it can't make one. */
+  fileFormats?: string[];
 }
 
 // files: documents one chat may read; the client sends at most HISTORY messages.
@@ -44,5 +47,6 @@ export function parseChatRequest(body: unknown, allowedModels: ReadonlySet<strin
     messages: (b.messages as ChatRequest["messages"]).map(({ role, content }) => ({ role, content })),
     think: b.think === true,
     scope: b.scope as ChatRequest["scope"],
+    ...(Array.isArray(b.fileFormats) ? { fileFormats: b.fileFormats.filter((f): f is string => isFileFormat(f)).slice(0, 6) } : {}),
   };
 }

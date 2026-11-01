@@ -12,12 +12,14 @@
     "test:restart": "node --env-file-if-exists=.env.local --test tests/restart.test.ts"
   },
   "dependencies": {
+    "docx": "9.5.1",
     "geist": "^1.7.2",
     "jszip": "3.10.2",
     "lucide-react": "^1.48.0",
     "mammoth": "^1.13.0",
     "mediabunny": "1.65.0",
     "next": "16.3.6",
+    "pdfmake": "0.2.20",
     "playwright-core": "1.64.1",
     "postgres": "^3.4.9",
     "pptxgenjs": "3.12.0",
@@ -25,12 +27,15 @@
     "react-dom": "19.2.8",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5",
     "unpdf": "^1.8.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pdfmake": "0.2.11",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

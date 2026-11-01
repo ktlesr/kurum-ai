@@ -1,5 +1,6 @@
 // Local workspace (plan §4.2): chats live in this browser's IndexedDB, one database per user, never on the server.
 // Pure helpers (backup parsing, merge, search) are separate from the thin IndexedDB layer so node --test covers them.
+import { isFileFormat, type FileFormat } from "./export-doc.ts";
 import type { ChatMeta } from "./context";
 
 /** Bump with a new step in `upgrade` whenever the stored shape changes. */
@@ -22,6 +23,12 @@ export interface Message {
   startedAt?: number;
   /** Seconds until the first word and until the answer was complete. */
   timing?: { first?: number; total: number };
+  /** Files asked for in words: shown under the answer, made when taken. */
+  files?: FileFormat[];
+  /** A file of an earlier answer: which message it is (this turn and its question aren't sent to the model). */
+  fileOf?: number;
+  /** The turn that only asked for a file, and its reply: nothing the model needs to read. */
+  local?: boolean;
 }
 
 export interface StoredChat {
@@ -142,10 +149,10 @@ export function parseBackup(text: string): StoredChat[] | string {
       model: typeof c.model === "string" ? c.model : undefined,
       docIds: Array.isArray(c.docIds) ? c.docIds.filter((d): d is string => typeof d === "string") : [],
       // Drop transient fields (status) and keep meta only as stored.
-      messages: c.messages.map(({ role, content, at, error, meta, timing }) => {
+      messages: c.messages.map(({ role, content, at, error, meta, timing, files, fileOf, local }) => {
         const m = cleanMeta(meta);
         const t = cleanTiming(timing);
-        return { role, content, ...(Number.isFinite(at) && Math.abs(at as number) <= 8.64e15 ? { at } : {}), ...(error ? { error: true } : {}), ...(m ? { meta: m } : {}), ...(t ? { timing: t } : {}) };
+        return { role, content, ...(Number.isFinite(at) && Math.abs(at as number) <= 8.64e15 ? { at } : {}), ...(Array.isArray(files) && files.some(isFileFormat) ? { files: files.filter(isFileFormat) } : {}), ...(Number.isInteger(fileOf) && (fileOf as number) >= 0 ? { fileOf } : {}), ...(local === true ? { local: true } : {}), ...(error ? { error: true } : {}), ...(m ? { meta: m } : {}), ...(t ? { timing: t } : {}) };
       }),
     });
   }
