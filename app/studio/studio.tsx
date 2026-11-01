@@ -14,6 +14,7 @@ import { Logo } from "../logo";
 import { ThemeToggle } from "../theme-toggle";
 import Home, { type Mode } from "./home";
 import Toolbar, { keepSelection } from "./toolbar";
+import { ShapeChooser, ShapeGrid, ShapeStyleTabs, shapeIdOf } from "./shape-palette";
 import Editor from "./editor";
 import ContextMenu, { type MenuItem } from "./context-menu";
 import ArtPicker from "./art-picker";
@@ -37,7 +38,7 @@ import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, 
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont, whiteLogo } from "./media";
 import {
-  DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, MAX_PIC_ZOOM, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, svgOf, toSvg, isHolder, TEXT_WEIGHTS, editedText, fontsOfText, setTextStyle, textStyleAt, type TextStyle, type GradientDir, type ShapeId, type ShapeStyle,
+  DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, MAX_PIC_ZOOM, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, shapeStyleOf, changeShape, svgOf, toSvg, isHolder, TEXT_WEIGHTS, editedText, fontsOfText, setTextStyle, textStyleAt, type TextStyle, type GradientDir, type ShapeId, type ShapeStyle,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
 } from "@/lib/studio";
 
@@ -789,7 +790,7 @@ export default function Studio({ username }: { username: string }) {
           ] as MenuItem[])
         : []),
       ...(e.kind === "shape"
-        ? (["-", { label: "Şekli değiştir", icon: <Shapes size={14} />, run: () => {}, disabled: L, sub: (Object.keys(SHAPES) as ShapeId[]).map((id): MenuItem => ({ label: SHAPES[id].label, icon: <ShapeIcon id={id} style="fill" />, run: () => patch(e.id, swapShape(e, id)) })) }] as MenuItem[])
+        ? (["-", { label: "Şekli değiştir", icon: <Shapes size={14} />, run: () => {}, disabled: L, panel: (done) => <ShapeChooser el={e} onPick={(id, style) => { done(); patch(e.id, changeShape(e, id, style)); }} /> }] as MenuItem[])
         : []),
       ...(e.kind === "shape" && e.shape !== "line"
         ? (["-",
@@ -1597,19 +1598,9 @@ export default function Studio({ username }: { username: string }) {
     if (open === "elements") return (
       <section className={section}>
         <h3 className={heading}>Şekiller</h3>
-        <div role="group" aria-label="Şekil biçimi" className="grid grid-cols-4 gap-1 rounded-lg bg-subtle p-1">
-          {([["fill", "Dolu"], ["outline", "Kontur"], ["dash", "Kesikli"], ["holder", "Resim"]] as const).map(([s, label]) => (
-            <button key={s} onClick={() => setShapeStyle(s)} aria-pressed={shapeStyle === s} className={`h-7 rounded-md text-xs font-medium ${shapeStyle === s ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"}`}>{label}</button>
-          ))}
-        </div>
+        <ShapeStyleTabs style={shapeStyle} onStyle={setShapeStyle} />
         {shapeStyle === "holder" && <p className="text-xs text-muted">Resim tutucu ekler: resmi çift tıklayarak seçin, resim şeklin biçimine göre kırpılır. Çizgiler resim tutamaz.</p>}
-        <div className="grid grid-cols-4 gap-1.5">
-          {(Object.keys(SHAPES) as ShapeId[]).filter((id) => shapeStyle !== "holder" || SHAPES[id].shape !== "line").map((id) => (
-            <button key={id} onClick={() => addShape(id, shapeStyle)} aria-label={`${SHAPES[id].label} ekle`} title={SHAPES[id].label} className="grid aspect-square place-items-center rounded-lg border border-line text-muted hover:border-accent hover:text-accent [&_svg]:size-7">
-              <ShapeIcon id={id} style={shapeStyle} />
-            </button>
-          ))}
-        </div>
+        <ShapeGrid style={shapeStyle} onPick={(id) => addShape(id, shapeStyle)} verb="ekle" />
         <button onClick={() => setArtOpen(true)} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm font-medium hover:border-accent hover:text-accent">
           <Sparkles size={15} /> Hazır şekil galerisi
         </button>
@@ -2273,7 +2264,7 @@ function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove
           <h3 className={heading}>Şekil</h3>
           <label className="block">
             <span className="mb-0.5 block text-[11px] text-muted">Biçim</span>
-            <select className={small} value={shapeIdOf(el)} onChange={(e) => now(swapShape(el, e.target.value as ShapeId))}>
+            <select className={small} value={shapeIdOf(el)} onChange={(e) => now(changeShape(el, e.target.value as ShapeId, shapeStyleOf(el)))}>
               {shapeIdOf(el) === "custom" && <option value="custom">Özel</option>}
               {(Object.keys(SHAPES) as ShapeId[]).map((id) => <option key={id} value={id}>{SHAPES[id].label}</option>)}
             </select>
@@ -2352,47 +2343,6 @@ function Inspector({ el, username, onFont, brand, u, onPatch, onCommit, onRemove
         </section>
       )}
     </>
-  );
-}
-
-/** Which library shape an element is (by kind and points), "custom" for imported ones. */
-function shapeIdOf(e: ShapeEl): ShapeId | "custom" {
-  const kind = e.shape ?? "rect";
-  const ids = (Object.keys(SHAPES) as ShapeId[]).filter((id) => SHAPES[id].shape === kind);
-  if (kind === "poly") return ids.find((id) => JSON.stringify((SHAPES[id] as { points?: unknown }).points) === JSON.stringify(e.points)) ?? "custom";
-  if (kind === "line") return e.arrow ? "arrowLine" : "line";
-  if (kind === "rect") return !e.radius ? "rect" : e.radius >= Math.min(e.w, e.h) / 2 - 0.5 ? "pill" : "rounded";
-  return ids[0] ?? "custom";
-}
-/** Another library shape in the same box, keeping colours and outline. */
-function swapShape(e: ShapeEl, id: ShapeId): Partial<ShapeEl> {
-  const d = shapeFrom(id, e.x + e.w / 2, e.y + e.h / 2, Math.max(e.w, e.h), e.fill.kind === "solid" ? e.fill.color : e.fill.stops[0].color);
-  const line = d.shape === "line";
-  // The new box first (a line is thin; a shape made from a line gets its library proportions), then what depends on it.
-  const h = line ? d.h : e.shape === "line" ? e.w / SHAPES[id].ratio : e.h;
-  const round = (SHAPES[id] as { round?: number }).round;
-  return {
-    shape: d.shape, points: d.points, arrow: d.arrow, radius: round ? Math.min(e.w, h) * round : undefined,
-    // A line needs an outline; a filled shape from a line gets its fill back.
-    stroke: line ? (e.stroke ?? d.stroke) : e.stroke, noFill: line ? true : e.shape === "line" ? undefined : e.noFill,
-    ...(h !== e.h ? { h, y: e.y + e.h / 2 - h / 2 } : {}),
-  };
-}
-
-/** A small preview of a library shape for the menu. */
-function ShapeIcon({ id, style }: { id: ShapeId; style: ShapeStyle }) {
-  const ink = style === "fill" ? { fill: "currentColor" } : style === "holder" ? { fill: "currentColor", fillOpacity: 0.3, stroke: "currentColor", strokeWidth: 0.8, strokeLinejoin: "round" as const } : { fill: "none", stroke: "currentColor", strokeWidth: 1.1, strokeLinejoin: "round" as const, ...(style === "dash" ? { strokeDasharray: "2 1.3" } : {}) };
-  const d = SHAPES[id] as { shape: string; ratio: number; round?: number; points?: readonly (readonly [number, number])[] };
-  const [w, h] = d.shape === "line" ? [14, 2] : d.ratio >= 1 ? [14, 14 / d.ratio] : [14 * d.ratio, 14];
-  const [x, y] = [(16 - w) / 2, (16 - h) / 2];
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden className="text-current">
-      {d.shape === "ellipse" ? <ellipse cx="8" cy="8" rx={w / 2} ry={h / 2} {...ink} />
-        : d.shape === "line" ? <line x1="1" x2="15" y1="8" y2="8" stroke="currentColor" strokeWidth="1.6" strokeDasharray={style === "dash" ? "2.6 1.6" : undefined} />
-        : d.points ? <polygon points={d.points.map(([px, py]) => `${x + px * w},${y + py * h}`).join(" ")} {...ink} />
-        : <rect x={x} y={y} width={w} height={h} rx={d.round ? Math.min(w, h) * d.round : 0} {...ink} />}
-      {id === "arrowLine" && <polygon points="15,8 11,5.5 11,10.5" fill="currentColor" />}
-    </svg>
   );
 }
 

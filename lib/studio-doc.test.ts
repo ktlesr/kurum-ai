@@ -1,7 +1,7 @@
 // Run: pnpm test. Görsel Stüdyo editable design: template → elements, drawing, boxes hugging text, project import.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanEls, draw, editedText, fromTemplate, hug, setTextStyle, svgOf, textStyleAt, type Design, type El, type Measure, type TextEl } from "./studio.ts";
+import { HOLDER_PIC, changeShape, shapeFrom, shapeStyleOf, type ShapeEl, cleanEls, draw, editedText, fromTemplate, hug, setTextStyle, svgOf, textStyleAt, type Design, type El, type Measure, type TextEl } from "./studio.ts";
 
 const measure: Measure = (t, size) => t.length * size * 0.55;
 const PNG = "data:image/png;base64,iVBORw0KGgo=";
@@ -152,5 +152,35 @@ test("part of a text: its own style, kept through typing, wrapped, drawn and rea
   // Without runs nothing changes for plain text.
   const plain = draw([base], m)[0];
   assert.ok(plain.kind === "text" && !plain.rich);
+});
+
+test("changing a shape: the same look keeps everything, another look changes only what it is made of", () => {
+  const filled = shapeFrom("rect", 100, 100, 200, "#ff0000");
+  assert.equal(shapeStyleOf(filled), "fill");
+  // Same look: only the outline of the shape changes, its border stays.
+  const framed: ShapeEl = { ...filled, stroke: { color: "#00ff00", width: 5 } };
+  const star = changeShape(framed, "star", "fill");
+  assert.equal(star.shape, "poly");
+  assert.deepEqual(star.stroke, framed.stroke);
+  // Outline and dashed take the fill's colour for their line.
+  const out = { ...filled, ...changeShape(filled, "heart", "dash") } as ShapeEl;
+  assert.equal(out.noFill, true);
+  assert.deepEqual([out.stroke?.color, out.stroke?.dash], ["#ff0000", "dash"]);
+  assert.equal(shapeStyleOf(out), "dash");
+  // Back to filled: fill again, no line.
+  const back = { ...out, ...changeShape(out, "rect", "fill") } as ShapeEl;
+  assert.ok(!back.noFill && !back.stroke);
+  // A picture holder keeps a real picture; another look removes it.
+  const pic = { src: "data:image/png;base64,AAAA", w: 10, h: 10 };
+  const holder: ShapeEl = { ...filled, picFill: pic, picView: { x: 0, y: 0, zoom: 2 } };
+  assert.equal(shapeStyleOf(holder), "holder");
+  assert.equal(({ ...holder, ...changeShape(holder, "star", "holder") } as ShapeEl).picFill, pic);
+  assert.equal(({ ...holder, ...changeShape(holder, "star", "outline") } as ShapeEl).picFill, undefined);
+  assert.equal(({ ...filled, ...changeShape(filled, "star", "holder") } as ShapeEl).picFill?.src, HOLDER_PIC.src);
+  // To a line and dashed; its dash goes under another look.
+  const line = { ...filled, ...changeShape(filled, "line", "dash") } as ShapeEl;
+  assert.equal(line.shape, "line");
+  assert.equal(line.stroke?.dash, "dash");
+  assert.equal(({ ...line, ...changeShape(line, "arrowLine", "fill") } as ShapeEl).stroke?.dash, undefined);
 });
 

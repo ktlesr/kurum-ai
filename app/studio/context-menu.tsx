@@ -5,14 +5,13 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
-/** With `sub`, choosing it shows those items instead of running anything. */
-export type MenuItem = { label: string; icon?: ReactNode; keys?: string; run: () => void; disabled?: boolean; danger?: boolean; sub?: MenuItem[] } | "-";
+/** With `panel`, choosing it shows that in the menu's place instead of running anything; `done` closes the menu. */
+export type MenuItem = { label: string; icon?: ReactNode; keys?: string; run: () => void; disabled?: boolean; danger?: boolean; panel?: (done: () => void) => ReactNode } | "-";
 
 export default function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
-  const [sub, setSub] = useState<MenuItem[] | null>(null);
-  const shown: MenuItem[] = sub ? [{ label: "Geri", icon: <ChevronLeft size={14} />, run: () => setSub(null), sub: [] }, "-", ...sub] : items;
+  const [panel, setPanel] = useState<((done: () => void) => ReactNode) | null>(null);
   const back = useRef<HTMLElement | null>(null);
   const close = useRef(onClose);
   useLayoutEffect(() => {
@@ -23,7 +22,7 @@ export default function ContextMenu({ x, y, items, onClose }: { x: number; y: nu
   useLayoutEffect(() => {
     const r = ref.current!.getBoundingClientRect();
     setPos({ x: Math.max(4, Math.min(x, innerWidth - r.width - 4)), y: Math.max(4, Math.min(y, innerHeight - r.height - 4)) });
-  }, [x, y, sub]);
+  }, [x, y, panel]);
   useEffect(() => {
     back.current = document.activeElement as HTMLElement | null;
     const out = (e: Event) => !ref.current?.contains(e.target as Node) && close.current();
@@ -46,7 +45,7 @@ export default function ContextMenu({ x, y, items, onClose }: { x: number; y: nu
   // After the effect above has noted where focus came from.
   useEffect(() => {
     ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-  }, [sub]);
+  }, [panel]);
 
   const onKey = (e: React.KeyboardEvent) => {
     e.stopPropagation(); // the studio's own shortcuts don't run under the menu
@@ -66,10 +65,19 @@ export default function ContextMenu({ x, y, items, onClose }: { x: number; y: nu
       aria-label="Öğe işlemleri"
       onKeyDown={onKey}
       onContextMenu={(e) => e.preventDefault()}
-      className="fixed z-50 max-h-[80vh] min-w-[220px] overflow-y-auto rounded-lg border border-line bg-panel py-1 text-sm shadow-xl"
+      className={`fixed z-50 max-h-[80vh] overflow-y-auto rounded-lg border border-line bg-panel py-1 text-sm shadow-xl ${panel ? "w-[280px]" : "min-w-[220px]"}`}
       style={{ left: pos.x, top: pos.y }}
     >
-      {shown.map((it, i) =>
+      {panel && (
+        <>
+          <button role="menuitem" onClick={() => setPanel(null)} className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left outline-none hover:bg-subtle focus:bg-subtle">
+            <ChevronLeft size={14} className="text-muted" /> Geri
+          </button>
+          <div role="separator" className="my-1 h-px bg-line" />
+          {panel(onClose)}
+        </>
+      )}
+      {!panel && items.map((it, i) =>
         it === "-" ? (
           <div key={i} role="separator" className="my-1 h-px bg-line" />
         ) : (
@@ -77,10 +85,9 @@ export default function ContextMenu({ x, y, items, onClose }: { x: number; y: nu
             key={i}
             role="menuitem"
             disabled={it.disabled}
-            aria-haspopup={it.sub?.length ? "menu" : undefined}
+            aria-haspopup={it.panel ? "menu" : undefined}
             onClick={() => {
-              if (it.sub?.length) return setSub(it.sub);
-              if (it.sub) return it.run(); // back: the menu stays open
+              if (it.panel) return setPanel(() => it.panel!);
               onClose();
               it.run();
             }}
@@ -89,7 +96,7 @@ export default function ContextMenu({ x, y, items, onClose }: { x: number; y: nu
             <span className="flex w-4 shrink-0 justify-center text-muted">{it.icon}</span>
             <span className="flex-1">{it.label}</span>
             {it.keys && <kbd className="font-sans text-[11px] text-muted">{it.keys}</kbd>}
-            {!!it.sub?.length && <ChevronRight size={14} className="text-muted" />}
+            {it.panel && <ChevronRight size={14} className="text-muted" />}
           </button>
         ),
       )}

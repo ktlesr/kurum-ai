@@ -503,6 +503,41 @@ export function shapeFrom(id: ShapeId, cx: number, cy: number, size: number, col
   };
 }
 
+/** Which of the library's looks a shape has. */
+export function shapeStyleOf(e: ShapeEl): ShapeStyle {
+  if (e.shape === "line") return e.stroke?.dash === "dash" ? "dash" : "fill";
+  if (e.picFill) return "holder";
+  if (e.noFill) return e.stroke?.dash === "dash" ? "dash" : "outline";
+  return "fill";
+}
+/**
+ * Another library shape in the same box. Asked for the look it already has, colours, outline and picture all stay;
+ * another look changes only what that look is made of.
+ */
+export function changeShape(e: ShapeEl, id: ShapeId, style: ShapeStyle): Partial<ShapeEl> {
+  const color = e.fill.kind === "solid" ? e.fill.color : e.fill.stops[0].color;
+  const d = shapeFrom(id, e.x + e.w / 2, e.y + e.h / 2, Math.max(e.w, e.h), color);
+  const line = d.shape === "line";
+  // The new box first (a line is thin; a shape made from a line gets its library proportions), then what depends on it.
+  const h = line ? d.h : e.shape === "line" ? e.w / SHAPES[id].ratio : e.h;
+  const round = (SHAPES[id] as { round?: number }).round;
+  const swapped: Partial<ShapeEl> = {
+    shape: d.shape, points: d.points, arrow: d.arrow, radius: round ? Math.min(e.w, h) * round : undefined,
+    // A line needs an outline; a filled shape from a line gets its fill back.
+    stroke: line ? (e.stroke ?? d.stroke) : e.stroke, noFill: line ? true : e.shape === "line" ? undefined : e.noFill,
+    ...(h !== e.h ? { h, y: e.y + e.h / 2 - h / 2 } : {}),
+  };
+  const dashed = (dash: boolean, base = swapped.stroke ?? { color, width: Math.max(3, Math.max(e.w, h) / 50) }) => {
+    const { dash: _old, ...rest } = base;
+    return { ...rest, ...(dash ? { dash: "dash" as const } : {}) };
+  };
+  if (line) return style === "dash" || shapeStyleOf(e) === "dash" ? { ...swapped, stroke: dashed(style === "dash") } : swapped;
+  if (style === shapeStyleOf(e)) return swapped;
+  if (style === "fill") return { ...swapped, noFill: undefined, stroke: undefined, picFill: undefined, picView: undefined };
+  if (style === "holder") return { ...swapped, noFill: undefined, stroke: undefined, picFill: e.picFill ?? HOLDER_PIC };
+  return { ...swapped, noFill: true, picFill: undefined, picView: undefined, stroke: dashed(style === "dash") };
+}
+
 let seq = 0;
 export const newId = () => `e${Date.now().toString(36)}${(seq++).toString(36)}`;
 const NAMES: Record<Role, string> = { tag: "Etiket", title: "Başlık", subtitle: "Açıklama", detail: "Detay", deco: "Tırnak" };
