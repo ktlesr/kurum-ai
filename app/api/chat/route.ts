@@ -1,5 +1,6 @@
 import { requireApiUser } from "@/lib/auth";
 import { countUsage } from "@/lib/usage";
+import { asksForOutline, docOutline, outlineMarkdown } from "@/lib/outline";
 import { cptFor, docsOf, getDoc, recordTokens, type Doc } from "@/lib/server";
 import { isSharedId, sharedDoc, sharedEntry, sharedList, type SharedEntry } from "@/lib/library";
 import { PICK_PROMPT, matchByName, parsePicked, wantsSources, type SourceEntry } from "@/lib/sources";
@@ -399,6 +400,17 @@ export async function POST(req: Request) {
           // Only what a page, a refused link or an unread document has to say; a plain answer gets no notes.
           if (pages.length || meta.note) send(META_SEP + JSON.stringify({ ...meta, sources: [] }));
           return void ctrl.close();
+        }
+        // The list of headings has an exact answer in the text: code writes it, no model reorders or invents, nothing goes out.
+        if (!urls.length && asksForOutline(asked0)) {
+          const outlines = selected.map((d) => ({ name: d.name, items: docOutline(d.text) }));
+          if (outlines.every((o) => o.items.length >= 2)) {
+            answer = outlineMarkdown(outlines);
+            send(answer);
+            meta.note = [meta.note, "Başlıklar ve sayfa numaraları belgenin okunan metninden kodla çıkarıldı; yazım, belgenin okunduğu haliyledir."].filter(Boolean).join(" ");
+            send(META_SEP + JSON.stringify(meta));
+            return void ctrl.close();
+          }
         }
         const totalChars = selected.reduce((n, d) => n + d.chars, 0) + web.length;
         const fits = contextRatio(totalChars, NUM_CTX, cptFor(model)) >= 1;
