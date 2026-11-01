@@ -165,11 +165,18 @@ export function toText(doc: ExportDoc): string {
 }
 
 /** A preview of the file would fetch pictures by itself, sending what is in their address away: they stay as words. */
-export const withoutPictures = (markdown: string) =>
-  markdown
-    .replace(/!\[([^\]]*)\](?:\([^)]*\)|\[[^\]]*\])/g, (_, alt: string) => `[görsel: ${alt || "adsız"}]`)
-    .replace(/<img\b[^>]*>/gi, "[görsel]")
-    .replace(/^[ \t]{0,3}\[[^\]]+\]:[ \t]*\S.*$/gm, "");
+export function withoutPictures(markdown: string): string {
+  // Only the addresses pictures use: an ordinary [link][ref] keeps its own.
+  const used = new Set<string>();
+  const text = markdown
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt: string) => `[görsel: ${alt || "adsız"}]`)
+    .replace(/!\[([^\]]*)\]\[([^\]]*)\]/g, (_, alt: string, ref: string) => {
+      used.add((ref || alt).trim().toLocaleLowerCase("tr"));
+      return `[görsel: ${alt || "adsız"}]`;
+    })
+    .replace(/<img\b[^>]*>/gi, "[görsel]");
+  return text.replace(/^[ \t]{0,3}\[([^\]]+)\]:[ \t]*\S.*$/gm, (line, ref: string) => (used.has(ref.trim().toLocaleLowerCase("tr")) ? "" : line));
+}
 
 export function toMarkdown(doc: ExportDoc): string {
   const out = [`# ${doc.title}`, "", `*Zafer AI · ${dateText(doc.createdAt)}*`, ""];
@@ -256,18 +263,25 @@ const tableLabel = "Tablo ayrı sayfada";
 export function sheetsOf(doc: ExportDoc): SheetData[] {
   const taken = new Set<string>();
   const sheets: SheetData[] = [];
-  doc.turns.forEach((t) => {
+  for (const t of doc.turns) {
     let heading = "";
-    for (const b of t.blocks) {
-      if (b.kind === "heading") heading = textOf(b.inlines);
-      if (b.kind !== "table") continue;
-      sheets.push({
-        name: sheetName(heading || (doc.turns.length === 1 ? doc.title : `Tablo ${sheets.length + 1}`), taken),
-        headerRow: true,
-        rows: [b.header.map((c) => cellText(textOf(c))), ...b.rows.map((r) => b.header.map((_, c) => cellValue(cellText(textOf(r[c] ?? [])))))],
-      });
-    }
-  });
+    // Wherever a table stands: inside a quotation or a list item too.
+    const visit = (blocks: Block[]) => {
+      for (const b of blocks) {
+        if (b.kind === "heading") heading = textOf(b.inlines);
+        else if (b.kind === "quote") visit(b.blocks);
+        else if (b.kind === "list") b.items.forEach(visit);
+        else if (b.kind === "table") {
+          sheets.push({
+            name: sheetName(heading || (doc.turns.length === 1 ? doc.title : `Tablo ${sheets.length + 1}`), taken),
+            headerRow: true,
+            rows: [b.header.map((c) => cellText(textOf(c))), ...b.rows.map((r) => b.header.map((_, c) => cellValue(cellText(textOf(r[c] ?? [])))))],
+          });
+        }
+      }
+    };
+    visit(t.blocks);
+  }
   const rows: SheetCell[][] = [[doc.title], [`Zafer AI · ${dateText(doc.createdAt)}`], []];
   for (const t of doc.turns) {
     if (t.question) rows.push([cellText(`Soru: ${t.question}`)], []);

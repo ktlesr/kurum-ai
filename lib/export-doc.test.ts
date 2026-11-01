@@ -180,3 +180,11 @@ test("no picture in a file fetches anything; a very long answer still makes a fi
   assert.ok(toText(exportDoc([turnOf({ answer: long })])).includes("p149999"));
 });
 
+test("an ordinary reference link keeps its address; a table inside a quotation gets its sheet", () => {
+  const md = toMarkdown(exportDoc([turnOf({ answer: "[rapor][r] ![x][p]\n\n[r]: https://a.org/rapor\n[p]: https://kotu.example/x" })]));
+  assert.ok(md.includes("[r]: https://a.org/rapor"));
+  assert.ok(!md.includes("kotu.example"));
+  const sheets = sheetsOf(exportDoc([turnOf({ answer: "> |a|\n> |-|\n> |1|\n\n- madde\n\n  |b|\n  |-|\n  |2|" })], "Ad"));
+  assert.equal(sheets.filter((x) => x.headerRow).length, 2);
+});
+
