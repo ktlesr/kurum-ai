@@ -376,7 +376,7 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
           <li
             key={i}
             onPointerDown={(e) => {
-              if (e.button !== 0) return;
+              if (e.button !== 0 || press.current) return; // a second finger doesn't start a second drag
               const touch = e.pointerType !== "mouse";
               press.current = { id: e.pointerId, from: i, x0: e.clientX, y0: e.clientY, x: e.clientX, touch };
               // A finger holds a moment first: a quick swipe still scrolls the bar.

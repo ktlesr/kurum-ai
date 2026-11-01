@@ -972,16 +972,23 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     const slides = slidesNow();
     setDeck({ ...deck, slides, at: i });
     setEls(slides[i]);
-    clearEditing();
+    // History stays: each step knows its slide, so undo goes back to where the change was made, as in PowerPoint.
+    gesture.current = null;
+    setPicked([]);
+    setEditing(null);
   };
   /** Slides changed as a list: the canvas shows slide `at` of them. */
-  const setSlides = (raw: El[][], at: number) => {
+  const setSlides = (raw: El[][], at: number, keepHistory = false) => {
     if (!deck) return;
     // Numbers and which slides are covers follow the order.
     const slides = deck.master ? applyMaster(raw, deck.master, (deck.theme?.body ?? deck.design?.bodyFont)) : raw;
     setDeck({ ...deck, slides, at });
     setEls(slides[at]);
-    clearEditing();
+    if (keepHistory) {
+      gesture.current = null;
+      setPicked([]);
+      setEditing(null);
+    } else clearEditing();
   };
   /** The master changed: rewritten on every slide, nothing else moves. */
   const setMaster = (master: DeckMaster) => {
@@ -1079,7 +1086,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   /** A change to the list of slides, as one undo step. */
   const slideStep = (raw: El[][], at: number) => {
     const before = snap();
-    setSlides(raw, at); // empties the history: undo otherwise stays within one slide
+    setSlides(raw, at, true);
     push(before);
   };
   const addSlide = (l: Layout) => {
