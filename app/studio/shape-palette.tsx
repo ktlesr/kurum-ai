@@ -25,7 +25,19 @@ export function ShapeStyleTabs({ style, onStyle }: { style: ShapeStyle; onStyle:
 /** The shape library, in the Öğeler panel and (compact) in the right-click menu. */
 export function ShapeGrid({ style, onPick, verb, compact, current }: { style: ShapeStyle; onPick: (id: ShapeId) => void; verb: string; compact?: boolean; current?: string }) {
   return (
-    <div className={compact ? "grid grid-cols-6 gap-1" : "grid grid-cols-4 gap-1.5"}>
+    <div
+      className={compact ? "grid grid-cols-6 gap-1" : "grid grid-cols-4 gap-1.5"}
+      onKeyDown={(e) => {
+        // Arrows walk the grid as it looks; everything else is the menu's.
+        const step = compact ? { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -6, ArrowDown: 6 }[e.key] : undefined;
+        if (!step) return;
+        const all = [...e.currentTarget.querySelectorAll("button")];
+        const next = all[all.indexOf(document.activeElement as HTMLButtonElement) + step];
+        e.preventDefault();
+        e.stopPropagation();
+        next?.focus();
+      }}
+    >
       {(Object.keys(SHAPES) as ShapeId[]).filter((id) => style !== "holder" || SHAPES[id].shape !== "line").map((id) => (
         <button key={id} onClick={() => onPick(id)} aria-label={`${SHAPES[id].label} ${verb}`} title={SHAPES[id].label} aria-current={id === current || undefined} className={`grid aspect-square place-items-center border outline-none hover:border-accent hover:text-accent focus-visible:border-accent focus-visible:text-accent ${compact ? "rounded-md [&_svg]:size-5" : "rounded-lg [&_svg]:size-7"} ${id === current ? "border-accent bg-accent-soft text-accent" : "border-line text-muted"}`}>
           <ShapeIcon id={id} style={style} />
