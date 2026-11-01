@@ -93,5 +93,5 @@ test("isClearNo: only a plain no skips the search; empty or unclear doesn't", ()
 
 test("a question about the attached document itself doesn't go to the web", () => {
   for (const q of ["Dokümanın ana başlıklarını ve bölümlerini sırayla, sayfa numaralarıyla listele.", "Dokümanın tamamını özetle", "Dokümanları madde bazında karşılaştır", "Dokümandaki şartları çıkar", "Tablolardaki sütunları açıkla", "bu belgeyi özetle", "BELGENİN AMACI NE"]) assert.ok(aboutTheDocument(q), q);
-  for (const q of ["493 sayılı kararnamede Tarım Kurumu nereye bağlı?", "Belgede yazan kurumun başkanı kim?", "Dokümanı internetten doğrula", "Türkiye'nin başkenti neresi"]) assert.ok(!aboutTheDocument(q), q);
+  for (const q of ["493 sayılı kararnamede Tarım Kurumu nereye bağlı?", "Belgede yazan kurumun başkanı kim?", "Dokümanı internetten doğrula", "Türkiye'nin başkenti neresi", "Periyodik tablonun mucidi kim?", "Başvuru için gerekli belgeler neler?"]) assert.ok(!aboutTheDocument(q), q);
 });
