@@ -298,10 +298,11 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
       if (dragging.current) e.preventDefault();
     };
     const cancel = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && dragging.current) {
-        e.stopPropagation();
-        endDrag();
-      }
+      if (!dragging.current) return;
+      // While a slide is in hand, no shortcut (undo, delete) changes the list under it. Esc puts it down.
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") endDrag();
     };
     // Let go outside the bar before it became a drag: the press is over all the same.
     const released = () => {
