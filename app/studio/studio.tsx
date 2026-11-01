@@ -504,6 +504,14 @@ export default function Studio({ username }: { username: string }) {
     if (cur && was.logo) change(cur.map((e) => (e.kind === "image" && e.logo && e.pic.src === was.logo?.src ? { ...e, pic: p, h: (e.w * p.h) / p.w } : e)));
   };
   const [logoFor, setLogoFor] = useState<string | null>(null); // the logo element whose replacement is being chosen
+  const logoForNow = useRef(logoFor); // a file still being read when the dialog closes goes only to the library
+  useLayoutEffect(() => {
+    logoForNow.current = logoFor;
+  });
+  const openLogos = (id: string) => {
+    setNote(null);
+    setLogoFor(id);
+  };
   /** This logo in the place of that one, on the design as it is by now (a file takes a moment to read). */
   const putLogoOn = (id: string, p: Picture) => {
     const cur = now.current.view;
@@ -788,7 +796,7 @@ export default function Studio({ username }: { username: string }) {
       ...(e.kind === "image"
         ? (["-",
             { label: e.logo ? "Logoyu değiştir…" : "Görseli değiştir…", icon: <ImagePlus size={14} />, run: () => {
-                if (e.logo) return setLogoFor(e.id);
+                if (e.logo) return openLogos(e.id);
                 replaceTarget.current = e.id;
                 const input = replaceInput.current;
                 if (!input) return;
@@ -1743,7 +1751,7 @@ export default function Studio({ username }: { username: string }) {
         <p className="text-xs text-muted">Shift ya da Ctrl ile tıklayarak seçime ekleyip çıkarın; boş alanda sürükleyerek kutu içindekileri seçin. Aynı boyut ilk seçilene göre yapılır.</p>
       </section>
     ) : sel ? (
-      <Inspector key={sel.id} placing={placingNow === sel.id} onPlace={setPlacing} el={shownSel!} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={patchSel} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onLogo={() => setLogoFor(sel.id)} onAlign={(how) => alignMany([sel.id], how, true)} />
+      <Inspector key={sel.id} placing={placingNow === sel.id} onPlace={setPlacing} el={shownSel!} username={username} onFont={(f) => applyFont([sel.id], f)} brand={brand} u={u} canvas={{ w: W, h: H }} onPatch={patchSel} onCommit={() => change(view)} onRemove={() => remove([sel.id])} onDuplicate={() => duplicate([sel.id])} onOrder={(to) => reorder([sel.id], to)} onReplace={(f) => replacePicture(sel.id, f)} onLogo={() => openLogos(sel.id)} onAlign={(how) => alignMany([sel.id], how, true)} />
     ) : (
       <section className={section}>
         <p className="text-sm text-muted">Tuvalde bir öğeye tıklayın: konumunu, boyutunu, gölgesini ve diğer ayarlarını buradan değiştirebilirsiniz.</p>
@@ -1954,7 +1962,7 @@ export default function Studio({ username }: { username: string }) {
                 onOrder={(to) => reorder(picked, to)}
                 onAlign={(how) => alignMany(picked, how)}
                 onReplace={(f) => sel && replacePicture(sel.id, f)}
-                onLogo={() => sel && setLogoFor(sel.id)}
+                onLogo={() => sel && openLogos(sel.id)}
                 onMore={() => setTool("edit")}
               />
               <div className="flex min-h-0 flex-1 overflow-auto p-4 md:p-8" style={{ containerType: "size", backgroundImage: "radial-gradient(var(--line) 1px, transparent 1px)", backgroundSize: "18px 18px" }} onPointerDown={() => { setSelected(null); setEditing(null); }}>
@@ -2037,7 +2045,7 @@ export default function Studio({ username }: { username: string }) {
             current={target?.kind === "image" ? target.pic.src : undefined}
             error={note?.kind === "error" ? note.text : undefined}
             onPick={(l) => { putLogoOn(logoFor, l.pic); setLogoFor(null); }}
-            onAdd={(files) => void addToLogos(files).then((p) => { if (p) { putLogoOn(logoFor, p); setLogoFor(null); } })}
+            onAdd={(files) => void addToLogos(files).then((p) => { if (p && logoForNow.current === logoFor) { putLogoOn(logoFor, p); setLogoFor(null); } })}
             onDrop={(l) => void dropLogo(l)}
             onClose={() => setLogoFor(null)}
           />
