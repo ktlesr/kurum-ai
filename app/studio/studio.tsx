@@ -68,7 +68,7 @@ const RAIL: Record<Mode, Tool[]> = {
   sunum: ["deck", "master", "text", "elements", "images", "brand", "layers", "edit"],
   video: ["scenes", "templates", "ai", "text", "elements", "images", "brand", "layers", "edit"],
 };
-type Snap = { els: El[]; format: FormatId; primary: string; accent: string; deck?: { slides: El[][]; at: number } };
+type Snap = { els: El[]; format: FormatId; primary: string; accent: string; deck?: { slides: El[][]; at: number; theme?: Theme; primary: string } };
 type Field = Exclude<Role, "deco">;
 
 const field = "w-full rounded-lg border border-line bg-panel px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted focus:border-accent";
@@ -280,7 +280,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   });
   const snap = (): Snap => {
     const { view: v, deck: d } = now.current;
-    return { els: v, format: now.current.format, primary: now.current.brand.primary, accent: now.current.brand.accent, ...(d ? { deck: { slides: d.slides.map((x, i) => (i === d.at ? v : x)), at: d.at } } : {}) };
+    return { els: v, format: now.current.format, primary: now.current.brand.primary, accent: now.current.brand.accent, ...(d ? { deck: { slides: d.slides.map((x, i) => (i === d.at ? v : x)), at: d.at, theme: d.theme, primary: d.primary } } : {}) };
   };
   const push = (s: Snap) => setHist((h) => ({ past: [...h.past.slice(-HISTORY + 1), s], future: [] }));
 
@@ -314,7 +314,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     setActiveTheme("");
     setFormat(s.format);
     setEls(s.els);
-    if (s.deck) setDeck((d) => d && { ...d, slides: s.deck!.slides, at: s.deck!.at }); // the order of the slides goes back too
+    if (s.deck) setDeck((d) => d && { ...d, slides: s.deck!.slides, at: s.deck!.at, theme: s.deck!.theme, primary: s.deck!.primary }); // the order of the slides goes back too
     setPicked((ids) => ids.filter((id) => s.els.some((e) => e.id === id))); // still there: stays chosen
     setEditing(null);
   };
@@ -413,7 +413,10 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
   };
 
   const chooseTemplate = (t: TemplateId) => {
-    if (deck?.album) return void restyleAlbum(t);
+    if (deck?.album) {
+      cancelSuggest(); // a generation still on its way would bring the old template back
+      return void restyleAlbum(t);
+    }
     if (deck) return setNote({ kind: "error", text: "Sunumdayken sayfa düzenini alttaki + ile seçin." });
     cancelSuggest();
     setTemplate(t);
