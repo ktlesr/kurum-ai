@@ -587,6 +587,31 @@ export function aabb(e: El) {
   return { x: e.x + e.w / 2 - w / 2, y: e.y + e.h / 2 - h / 2, w, h };
 }
 
+/** The lowest gap in the layers list (top layer first) something can be dropped into: under locked backgrounds it wouldn't be seen. */
+export function layerFloor(els: El[]): number {
+  const shown = els.filter((e) => !e.master).reverse();
+  let floor = shown.length;
+  while (floor > 0 && shown[floor - 1].locked) floor--;
+  return floor;
+}
+/**
+ * The chosen layers dropped into a gap of the layers list (top layer first; gap n: before its nth row), keeping their order
+ * among themselves. Locked ones don't move. The slide master's own elements keep their places.
+ */
+export function moveLayers(els: El[], ids: string[], gap: number): El[] {
+  const set = new Set(ids);
+  const shown = els.filter((e) => !e.master).reverse();
+  const moving = shown.filter((e) => set.has(e.id) && !e.locked);
+  if (!moving.length) return els;
+  const stays = shown.filter((e) => !moving.includes(e));
+  const at = shown.slice(0, Math.max(0, Math.min(gap, layerFloor(els)))).filter((e) => !moving.includes(e)).length;
+  const next = [...stays.slice(0, at), ...moving, ...stays.slice(at)];
+  if (next.every((e, i) => e === shown[i])) return els;
+  const bottomUp = next.reverse();
+  let i = 0;
+  return els.map((e) => (e.master ? e : bottomUp[i++]));
+}
+
 export type AlignTo = "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom";
 /**
  * Lines the chosen elements up on an edge or centre: of `to` (the canvas) when given, else of the box around them all.

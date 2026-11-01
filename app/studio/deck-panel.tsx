@@ -2,6 +2,7 @@
 
 // Sunum mode's pieces: the panel that starts a deck, the slide strip, the layout gallery. The elements themselves are
 // edited by the studio's canvas and inspector.
+import { useDragOrder } from "./use-drag-order";
 import { memo, useId, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Copy, Loader2, Plus, Presentation, Sparkles, Trash2, X } from "lucide-react";
 import { SAMPLE_DECK, composeDeck } from "@/lib/deck-compose";
@@ -260,70 +261,7 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
   /** The slide at `from` dropped into the gap before slide `gap` (the slide count: after the last). */
   onReorder: (from: number, gap: number) => void; onClose: () => void;
 }) {
-  const list = useRef<HTMLOListElement>(null);
-  // Pointer events, not the browser's drag: the same code for mouse and finger, in every browser.
-  const press = useRef<{ id: number; from: number; x0: number; y0: number; x: number; touch: boolean; timer?: ReturnType<typeof setTimeout>; scroll?: ReturnType<typeof setInterval> } | null>(null);
-  const dragging = useRef(false);
-  const justDropped = useRef(false);
-  const [drag, setDrag] = useState<{ from: number; gap: number; x: number; y: number } | null>(null);
-  const endDrag = () => {
-    const p = press.current;
-    if (p?.timer) clearTimeout(p.timer);
-    if (p?.scroll) clearInterval(p.scroll);
-    press.current = null;
-    dragging.current = false;
-    setDrag(null);
-  };
-  const beginDrag = (y: number) => {
-    const p = press.current;
-    if (!p) return;
-    dragging.current = true;
-    list.current?.setPointerCapture(p.id);
-    setDrag({ from: p.from, gap: gapAt(p.x), x: p.x, y });
-    // Held near an end of the bar: the bar moves, so a far slide can be reached.
-    p.scroll = setInterval(() => {
-      const ol = list.current, q = press.current;
-      if (!ol || !q) return;
-      const r = ol.getBoundingClientRect();
-      const by = q.x < r.left + 40 ? -14 : q.x > r.right - 40 ? 14 : 0;
-      if (!by) return;
-      ol.scrollLeft += by;
-      setDrag((d) => d && { ...d, gap: gapAt(q.x) });
-    }, 30);
-  };
-  useEffect(() => {
-    // Once a finger holds a slide, moving it drags instead of scrolling: only a listener of our own can say so.
-    const ol = list.current;
-    const hold = (e: TouchEvent) => {
-      if (dragging.current) e.preventDefault();
-    };
-    const cancel = (e: KeyboardEvent) => {
-      if (!dragging.current) return;
-      // While a slide is in hand, no shortcut (undo, delete) changes the list under it. Esc puts it down.
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === "Escape") endDrag();
-    };
-    // Let go outside the bar before it became a drag: the press is over all the same.
-    const released = () => {
-      if (press.current && !dragging.current) endDrag();
-    };
-    window.addEventListener("pointerup", released);
-    window.addEventListener("pointercancel", released);
-    ol?.addEventListener("touchmove", hold, { passive: false });
-    window.addEventListener("keydown", cancel, true);
-    return () => {
-      ol?.removeEventListener("touchmove", hold);
-      window.removeEventListener("pointerup", released);
-      window.removeEventListener("pointercancel", released);
-      window.removeEventListener("keydown", cancel, true);
-      endDrag();
-    };
-  }, []);
-  // The list changed under a slide in hand (another finger or mouse on the buttons): its place no longer means anything.
-  useEffect(() => {
-    if (dragging.current) endDrag();
-  }, [slides.length, at]);
+  const { list, drag, listProps, itemProps, justDropped } = useDragOrder<HTMLOListElement>({ axis: "x", onDrop: onReorder, changes: `${slides.length}-${at}` });
   // The current slide stays in view, and keyboard focus goes along with it.
   useEffect(() => {
     const ol = list.current;
@@ -343,14 +281,6 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
     if ((e.ctrlKey || e.metaKey) && step !== undefined) onMove(step as -1 | 1);
     else onGo(to);
   };
-  const gapAt = (x: number) => {
-    const items = [...(list.current?.children ?? [])];
-    const i = items.findIndex((li) => {
-      const r = li.getBoundingClientRect();
-      return x < r.left + r.width / 2;
-    });
-    return i < 0 ? items.length : i;
-  };
   const btn = "grid size-8 place-items-center rounded-md text-muted hover:bg-subtle hover:text-fg disabled:opacity-30";
   return (
     <div className="flex items-center gap-2 border-t border-line bg-panel px-3 py-2">
@@ -363,48 +293,19 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
         className="flex min-w-0 flex-1 gap-2 overflow-x-auto px-1 py-0.5"
         aria-label="Slaytlar. Yön tuşlarıyla geçin, Ctrl ile birlikte slaytı taşıyın."
         onKeyDown={onKey}
-        onPointerMove={(e) => {
-          const p = press.current;
-          if (!p || e.pointerId !== p.id) return;
-          p.x = e.clientX;
-          if (dragging.current) return setDrag((d) => d && { ...d, gap: gapAt(e.clientX), x: e.clientX, y: e.clientY });
-          const moved = Math.hypot(e.clientX - p.x0, e.clientY - p.y0);
-          if (p.touch) {
-            if (moved > 8) endDrag(); // a finger moving at once is scrolling the bar
-          } else if (moved > 5) beginDrag(e.clientY);
-        }}
-        onPointerUp={(e) => {
-          const p = press.current;
-          if (!p || e.pointerId !== p.id) return;
-          if (dragging.current) {
-            justDropped.current = true;
-            setTimeout(() => (justDropped.current = false), 0); // the click that ends this press isn't a choice of slide
-            onReorder(p.from, gapAt(e.clientX));
-          }
-          endDrag();
-        }}
-        onPointerCancel={endDrag}
+        {...listProps}
       >
         {slides.map((els, i) => (
           <li
             key={i}
-            onPointerDown={(e) => {
-              if (e.button !== 0 || press.current) return; // a second finger doesn't start a second drag
-              const touch = e.pointerType !== "mouse";
-              press.current = { id: e.pointerId, from: i, x0: e.clientX, y0: e.clientY, x: e.clientX, touch };
-              // A finger holds a moment first: a quick swipe still scrolls the bar.
-              if (touch) press.current.timer = setTimeout(() => beginDrag(e.clientY), 350);
-            }}
-            onContextMenu={(e) => {
-              if (dragging.current || press.current?.touch) e.preventDefault(); // holding a finger opens no menu
-            }}
+            {...itemProps(i)}
             title="Sürükleyerek taşıyın"
             className={`relative w-28 shrink-0 cursor-grab select-none active:cursor-grabbing [-webkit-touch-callout:none] ${drag?.from === i ? "opacity-40" : ""}`}
           >
             {/* Where it will land; no mark where it would stay put. */}
             {drag && drag.gap === i && i !== drag.from && i !== drag.from + 1 && <span className="absolute -left-[5px] inset-y-0 w-0.5 rounded bg-accent" aria-hidden />}
             {drag && drag.gap === slides.length && i === slides.length - 1 && i !== drag.from && <span className="absolute -right-[5px] inset-y-0 w-0.5 rounded bg-accent" aria-hidden />}
-            <button onClick={() => !justDropped.current && onGo(i)} aria-current={i === at ? "true" : undefined} aria-label={`Slayt ${i + 1}`} className={`block w-full cursor-[inherit] overflow-hidden rounded border-2 ${i === at ? "border-accent" : "border-line hover:border-accent/50"}`}>
+            <button onClick={() => !justDropped() && onGo(i)} aria-current={i === at ? "true" : undefined} aria-label={`Slayt ${i + 1}`} className={`block w-full cursor-[inherit] overflow-hidden rounded border-2 ${i === at ? "border-accent" : "border-line hover:border-accent/50"}`}>
               <SlideThumb els={els} measure={measure} />
             </button>
             <span className="block text-center text-[11px] text-muted">{i + 1}</span>

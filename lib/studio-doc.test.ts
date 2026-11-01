@@ -1,7 +1,7 @@
 // Run: pnpm test. Görsel Stüdyo editable design: template → elements, drawing, boxes hugging text, project import.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HOLDER_PIC, changeShape, shapeFrom, shapeStyleOf, type ShapeEl, cleanEls, draw, editedText, fromTemplate, hug, setTextStyle, svgOf, textStyleAt, type Design, type El, type Measure, type TextEl } from "./studio.ts";
+import { HOLDER_PIC, changeShape, layerFloor, moveLayers, shapeFrom, shapeStyleOf, type ShapeEl, cleanEls, draw, editedText, fromTemplate, hug, setTextStyle, svgOf, textStyleAt, type Design, type El, type Measure, type TextEl } from "./studio.ts";
 
 const measure: Measure = (t, size) => t.length * size * 0.55;
 const PNG = "data:image/png;base64,iVBORw0KGgo=";
@@ -182,5 +182,23 @@ test("changing a shape: the same look keeps everything, another look changes onl
   assert.equal(line.shape, "line");
   assert.equal(line.stroke?.dash, "dash");
   assert.equal(({ ...line, ...changeShape(line, "arrowLine", "fill") } as ShapeEl).stroke?.dash, undefined);
+});
+
+test("layers dropped into a new level: order, groups, locked backgrounds, the slide master", () => {
+  const box = (id: string, o: Partial<ShapeEl> = {}): ShapeEl => ({ ...shapeFrom("rect", 0, 0, 10, "#000000"), id, name: id, ...o });
+  const ids = (l: El[]) => l.map((e) => e.id).join("");
+  // Bottom to top: bg a b c d. In the list, top first: d c b a bg.
+  const els = [box("z", { locked: true }), box("a"), box("b"), box("c"), box("d")];
+  assert.equal(layerFloor(els), 4);
+  assert.equal(ids(moveLayers(els, ["d"], 2)), "zabdc", "d under c");
+  assert.equal(ids(moveLayers(els, ["a"], 0)), "zbcda", "a to the very top");
+  assert.equal(ids(moveLayers(els, ["d", "b"], 4)), "zbdac", "together, in their order, to the bottom of what can move");
+  assert.equal(ids(moveLayers(els, ["d"], 99)), "zdabc", "never under the locked background");
+  assert.equal(moveLayers(els, ["c"], 1), els, "where it already is: nothing changes");
+  assert.equal(moveLayers(els, ["c"], 2), els);
+  assert.equal(moveLayers(els, ["z"], 0), els, "locked ones don't move");
+  // Master elements stay where they are.
+  const m = [box("z", { locked: true }), box("M", { master: true }), box("a"), box("b")];
+  assert.equal(ids(moveLayers(m, ["b"], 2)), "zMba");
 });
 

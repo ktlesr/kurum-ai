@@ -16,6 +16,7 @@ import { trackUsage } from "../presence";
 import Home, { type Mode } from "./home";
 import Toolbar, { keepSelection } from "./toolbar";
 import { LogoPicker } from "./logo-picker";
+import { LayerList } from "./layer-list";
 import { ShapeChooser, ShapeGrid, ShapeStyleTabs, shapeIdOf } from "./shape-palette";
 import Editor from "./editor";
 import ContextMenu, { type MenuItem } from "./context-menu";
@@ -1733,23 +1734,15 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     );
     if (open === "layers") return (
       <section className={section}>
-        <ul className="space-y-0.5">
-          {[...view].reverse().filter((e) => !e.master).map((e) => (
-            <li key={e.id} className={`flex items-center gap-1 rounded-md pr-1 text-sm ${picked.includes(e.id) ? "bg-accent-soft text-fg" : "hover:bg-subtle"}`}>
-              <button
-                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
-                aria-pressed={picked.includes(e.id)}
-                onClick={(ev) => (ev.shiftKey || ev.ctrlKey || ev.metaKey ? setPicked((p) => (p.includes(e.id) ? p.filter((x) => x !== e.id) : [...p, e.id])) : setSelected(e.id))}
-              >
-                {e.kind === "text" ? <Type size={14} className="shrink-0 text-muted" /> : e.kind === "image" ? <ImageIcon size={14} className="shrink-0 text-muted" /> : <Square size={14} className="shrink-0 text-muted" />}
-                <span className="truncate">{e.kind === "text" && e.text.trim() ? `${e.name}: ${e.text.trim().slice(0, 24)}` : e.name}</span>
-              </button>
-              <button className={iconBtn} onClick={() => patch(e.id, { locked: !e.locked })} aria-label={e.locked ? `${e.name} kilidini aç` : `${e.name} kilitle`} title={e.locked ? "Kilidi aç" : "Kilitle"}>
-                {e.locked ? <Lock size={13} /> : <LockOpen size={13} />}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <LayerList
+          els={view}
+          picked={picked}
+          onSelect={setSelected}
+          onToggle={(id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))}
+          onLock={(id, locked) => patch(id, { locked })}
+          onOrder={(next) => change(next)}
+          onStep={(id, to) => reorder([id], to)}
+        />
       </section>
     );
     if (open === "edit") return picked.length > 1 ? (
