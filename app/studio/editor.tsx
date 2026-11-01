@@ -130,7 +130,8 @@ export function PrimView({ p, k, uid }: { p: Prim; k: number; uid: string }) {
   );
 }
 
-const runsKey = (e: TextEl) => JSON.stringify([e.text, e.runs ?? []]);
+// With parts, each is drawn with the whole text's look in it: that changing means drawing them again.
+const runsKey = (e: TextEl) => JSON.stringify([e.text, e.runs ?? [], ...(e.runs?.length ? [e.size, e.weight, e.italic, e.underline, e.font, e.color] : [])]);
 /** Where a character offset lies in the box's text. */
 function nodeAt(box: HTMLElement, at: number): [Node, number] {
   const walk = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
@@ -206,17 +207,28 @@ function TextBox({ el, scale, onText, onDone, onSel }: { el: TextEl; scale: numb
       report.current?.(null);
     }
     const focused = document.activeElement === b;
+    let caret = el.text.length;
+    const cur = getSelection();
+    if (focused && cur?.rangeCount && b.contains(cur.anchorNode)) {
+      const before = document.createRange();
+      before.selectNodeContents(b);
+      before.setEnd(cur.getRangeAt(0).startContainer, cur.getRangeAt(0).startOffset);
+      caret = Math.min(before.toString().length, el.text.length);
+    }
     b.textContent = "";
     let at = 0;
     const piece = (to: number, run?: TextRun) => {
       if (to <= at) return;
       const t = document.createTextNode(el.text.slice(at, to));
       at = to;
-      if (!run) return void b.append(t);
-      const look = textStyleAt(el, run.from);
-      const { from: _f, to: _t, ...style } = run;
+      // The box can't underline only what has no part of its own, so with parts that text says so itself.
+      if (!run && !(el.underline && el.runs?.length)) return void b.append(t);
+      const look = textStyleAt(el, run ? run.from : -1);
       const s = document.createElement("span");
-      s.dataset.r = JSON.stringify(style);
+      if (run) {
+        const { from: _f, to: _t, ...style } = run;
+        s.dataset.r = JSON.stringify(style);
+      }
       Object.assign(s.style, { fontSize: `${look.size}px`, fontWeight: String(look.weight), fontStyle: look.italic ? "italic" : "normal", textDecoration: look.underline ? "underline" : "none", color: look.color, fontFamily: familyOf(look.font) });
       s.append(t);
       b.append(s);
@@ -232,9 +244,9 @@ function TextBox({ el, scale, onText, onDone, onSel }: { el: TextEl; scale: numb
       const end = rangeOf(b, el.text.length, el.text.length);
       getSelection()?.removeAllRanges();
       getSelection()?.addRange(end);
-    } else if (focused && sel.current) {
+    } else if (focused) {
       getSelection()?.removeAllRanges();
-      getSelection()?.addRange(rangeOf(b, sel.current.from, sel.current.to));
+      getSelection()?.addRange(rangeOf(b, sel.current?.from ?? caret, sel.current?.to ?? caret));
     }
     mark();
   });

@@ -823,8 +823,11 @@ function richFit(e: TextEl, measure: Measure) {
     while (wide(l.segs) > box && (l.segs.length > 1 || l.segs[0].text.length > 1)) {
       const last = l.segs[l.segs.length - 1];
       const body = last.text.replace(/…$/, "");
-      if (body.length <= 1 && l.segs.length > 1) l.segs.pop();
-      else last.text = `${body.slice(0, -1)}…`;
+      if (body.length <= 1 && l.segs.length > 1) {
+        l.segs.pop();
+        const now = l.segs[l.segs.length - 1];
+        now.text = `${now.text.replace(/…$/, "")}…`;
+      } else last.text = `${body.slice(0, -1)}…`;
     }
   }
   return { scale, lines };
