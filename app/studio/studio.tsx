@@ -844,6 +844,14 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     if (mod && e.key.toLowerCase() === "v") return e.preventDefault(), paste();
     if (mod && e.key.toLowerCase() === "a") return e.preventDefault(), setPicked(view.filter((x) => !x.locked).map((x) => x.id));
     const ids = picked.filter((id) => view.some((x) => x.id === id));
+    // Nothing chosen on the canvas: the arrows have nothing to nudge, so they go through the slides.
+    if (!ids.length && deck && !mod && !e.shiftKey) {
+      const to = deck.at + ({ ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key] ?? 0);
+      if (to !== deck.at) {
+        e.preventDefault();
+        if (to >= 0 && to < deck.slides.length) goSlide(to);
+      }
+    }
     if (!ids.length) return;
     if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) return e.preventDefault(), openMenuFor(ids[ids.length - 1]);
     if (mod && e.key.toLowerCase() === "c") return e.preventDefault(), copyEl(ids);
@@ -1086,6 +1094,13 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     if (!deck || !s[deck.at + d]) return;
     [s[deck.at], s[deck.at + d]] = [s[deck.at + d], s[deck.at]];
     setSlides(s, deck.at + d);
+  };
+  const reorderSlide = (from: number, gap: number) => {
+    const s = slidesNow();
+    const to = gap > from ? gap - 1 : gap;
+    if (!deck || to === from || !s[from]) return;
+    s.splice(to, 0, ...s.splice(from, 1));
+    setSlides(s, to); // the moved slide is the one on the canvas, as in PowerPoint
   };
   const leaveDeck = async () => {
     if (!(await flushSave())) return;
@@ -1981,7 +1996,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
                   <p className="m-auto flex items-center gap-2 text-sm text-muted">{fontError || <><Loader2 size={16} className="animate-spin" /> Hazırlanıyor…</>}</p>
                 )}
               </div>
-              {deck && font && <SlideStrip slides={slidesNow()} at={deck.at} measure={font.measure} onGo={goSlide} onAdd={() => setLayoutsOpen(true)} onDuplicate={duplicateSlide} onDelete={deleteSlide} onMove={moveSlide} onClose={leaveDeck} />}
+              {deck && font && <SlideStrip slides={slidesNow()} at={deck.at} measure={font.measure} onGo={goSlide} onAdd={() => setLayoutsOpen(true)} onDuplicate={duplicateSlide} onDelete={deleteSlide} onMove={moveSlide} onReorder={reorderSlide} onClose={leaveDeck} />}
               {mode === "video" && (
                 <div className="flex items-center gap-2 border-t border-line bg-panel px-3 py-2">
                   <ol className="flex min-w-0 flex-1 gap-2 overflow-x-auto py-0.5" aria-label="Sahneler">

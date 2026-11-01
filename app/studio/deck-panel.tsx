@@ -255,9 +255,41 @@ export function DeckPanel({ docs, measure, username, design, onDesign, onStart, 
   );
 }
 
-export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDelete, onMove, onClose }: {
-  slides: El[][]; at: number; measure: Measure; onGo: (i: number) => void; onAdd: () => void; onDuplicate: () => void; onDelete: () => void; onMove: (d: -1 | 1) => void; onClose: () => void;
+export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDelete, onMove, onReorder, onClose }: {
+  slides: El[][]; at: number; measure: Measure; onGo: (i: number) => void; onAdd: () => void; onDuplicate: () => void; onDelete: () => void; onMove: (d: -1 | 1) => void;
+  /** The slide at `from` dropped into the gap before slide `gap` (the slide count: after the last). */
+  onReorder: (from: number, gap: number) => void; onClose: () => void;
 }) {
+  const list = useRef<HTMLOListElement>(null);
+  const dragged = useRef<number | null>(null); // only our own slides: a file dragged over the bar isn't one
+  const [drag, setDrag] = useState<{ from: number; gap: number } | null>(null);
+  // The current slide stays in view, and keyboard focus goes along with it.
+  useEffect(() => {
+    const ol = list.current;
+    const b = ol?.children[at]?.querySelector("button");
+    if (!ol || !b) return;
+    b.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (ol.contains(document.activeElement)) b.focus({ preventScroll: true });
+  }, [at]);
+  const onKey = (e: React.KeyboardEvent) => {
+    const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+    const to = e.key === "Home" ? 0 : e.key === "End" ? slides.length - 1 : step !== undefined ? at + step : null;
+    if (to === null) return;
+    // Not for the bar to scroll, nor for the element chosen on the canvas to be nudged.
+    e.preventDefault();
+    e.stopPropagation();
+    if (to < 0 || to >= slides.length) return;
+    if ((e.ctrlKey || e.metaKey) && step !== undefined) onMove(step as -1 | 1);
+    else onGo(to);
+  };
+  const gapAt = (x: number) => {
+    const items = [...(list.current?.children ?? [])];
+    const i = items.findIndex((li) => {
+      const r = li.getBoundingClientRect();
+      return x < r.left + r.width / 2;
+    });
+    return i < 0 ? items.length : i;
+  };
   const btn = "grid size-8 place-items-center rounded-md text-muted hover:bg-subtle hover:text-fg disabled:opacity-30";
   return (
     <div className="flex items-center gap-2 border-t border-line bg-panel px-3 py-2">
@@ -265,10 +297,47 @@ export function SlideStrip({ slides, at, measure, onGo, onAdd, onDuplicate, onDe
         <button className={btn} onClick={onAdd} aria-label="Slayt ekle" title="Slayt ekle"><Plus size={15} /></button>
         <button className={btn} onClick={onDuplicate} aria-label="Slaytı çoğalt" title="Çoğalt"><Copy size={14} /></button>
       </div>
-      <ol className="flex min-w-0 flex-1 gap-2 overflow-x-auto py-0.5" aria-label="Slaytlar">
+      <ol
+        ref={list}
+        className="flex min-w-0 flex-1 gap-2 overflow-x-auto px-1 py-0.5"
+        aria-label="Slaytlar. Yön tuşlarıyla geçin, Ctrl ile birlikte slaytı taşıyın."
+        onKeyDown={onKey}
+        onDragOver={(e) => {
+          if (dragged.current === null) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          const gap = gapAt(e.clientX);
+          setDrag((d) => (d?.gap === gap ? d : { from: dragged.current!, gap }));
+        }}
+        onDrop={(e) => {
+          if (dragged.current === null) return;
+          e.preventDefault();
+          onReorder(dragged.current, gapAt(e.clientX));
+          dragged.current = null;
+          setDrag(null);
+        }}
+      >
         {slides.map((els, i) => (
-          <li key={i} className="w-28 shrink-0">
-            <button onClick={() => onGo(i)} aria-current={i === at ? "true" : undefined} aria-label={`Slayt ${i + 1}`} className={`block w-full overflow-hidden rounded border-2 ${i === at ? "border-accent" : "border-line hover:border-accent/50"}`}>
+          <li
+            key={i}
+            draggable
+            onDragStart={(e) => {
+              dragged.current = i;
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", `Slayt ${i + 1}`);
+              setDrag({ from: i, gap: i });
+            }}
+            onDragEnd={() => {
+              dragged.current = null;
+              setDrag(null);
+            }}
+            title="Sürükleyerek taşıyın"
+            className={`relative w-28 shrink-0 cursor-grab active:cursor-grabbing ${drag?.from === i ? "opacity-40" : ""}`}
+          >
+            {/* Where it will land; no mark where it would stay put. */}
+            {drag && drag.gap === i && i !== drag.from && i !== drag.from + 1 && <span className="absolute -left-[5px] inset-y-0 w-0.5 rounded bg-accent" aria-hidden />}
+            {drag && drag.gap === slides.length && i === slides.length - 1 && i !== drag.from && <span className="absolute -right-[5px] inset-y-0 w-0.5 rounded bg-accent" aria-hidden />}
+            <button onClick={() => onGo(i)} aria-current={i === at ? "true" : undefined} aria-label={`Slayt ${i + 1}`} className={`block w-full cursor-[inherit] overflow-hidden rounded border-2 ${i === at ? "border-accent" : "border-line hover:border-accent/50"}`}>
               <SlideThumb els={els} measure={measure} />
             </button>
             <span className="block text-center text-[11px] text-muted">{i + 1}</span>
