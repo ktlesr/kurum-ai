@@ -29,13 +29,13 @@ const send = (chunks: string[]) => (res: ServerResponse) => {
 test("ollama: streamed text, thinking count, truncation, prompt tokens, vision images", async () => {
   routes["/api/chat"] = send([
     '{"message":{"thinking":"hmm"}}\n{"message":{"content":"Mer"}}\n{"message":{"con',
-    'tent":"haba"}}\n{"done":true,"done_reason":"length","prompt_eval_count":42}',
+    'tent":"haba"}}\n{"done":true,"done_reason":"length","prompt_eval_count":42,"eval_count":3}',
   ]);
   const p = makeProvider("ollama", base + "/", { numCtx: 8192 });
   const pieces: string[] = [];
   let thinking = 0;
   const r = await p.chat({ model: "gemma4:12b", messages: [{ role: "user", content: "x", images: ["QUJD"] }], maxTokens: 5, signal, onText: (t) => pieces.push(t), onThinking: (n) => (thinking = n) });
-  assert.deepEqual(r, { text: "Merhaba", truncated: true, promptTokens: 42 });
+  assert.deepEqual(r, { text: "Merhaba", truncated: true, promptTokens: 42, outputTokens: 3 });
   assert.deepEqual(pieces, ["Mer", "haba"]);
   assert.equal(thinking, 1);
   const body = seen.at(-1)!.body as { options: object; messages: { images: string[] }[]; think: unknown };
@@ -75,12 +75,12 @@ test("openai (vLLM): SSE deltas, reasoning, finish_reason, usage, images as data
   routes["/v1/chat/completions"] = send([
     ': keep-alive\n\ndata: {"choices":[{"delta":{"reasoning_content":"..."}}]}\n\n',
     'data: {"choices":[{"delta":{"content":"Mer"}}]}\n\ndata: {"choices":[{"delta":{"content":"haba"},"finish_reason":"length"}]}\n\n',
-    'data: {"choices":[],"usage":{"prompt_tokens":7}}\n\ndata: [DONE]\n\n',
+    'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":2}}\n\ndata: [DONE]\n\n',
   ]);
   const p = makeProvider("openai", base + "/v1", { numCtx: 1, apiKey: "k" });
   let thinking = 0;
   const r = await p.chat({ model: "gpt-oss-120b", messages: [{ role: "system", content: "s" }, { role: "user", content: "x", images: ["QUJD"] }], think: true, maxTokens: 9, signal, onThinking: (n) => (thinking = n) });
-  assert.deepEqual(r, { text: "Merhaba", truncated: true, promptTokens: 7 });
+  assert.deepEqual(r, { text: "Merhaba", truncated: true, promptTokens: 7, outputTokens: 2 });
   assert.equal(thinking, 1);
   const body = seen.at(-1)!.body as Record<string, unknown> & { messages: { content: unknown }[] };
   assert.equal(body.max_tokens, 9);

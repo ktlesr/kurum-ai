@@ -1,6 +1,7 @@
 // Model server behind one small interface (audit K3): Ollama for development, vLLM (OpenAI-compatible API) on the GB10.
 // No "server-only": the test drives it against a fake server.
 
+import { DEFAULT_CHARS_PER_TOKEN } from "./context.ts";
 import type { ProviderKind } from "./models";
 export type { ProviderKind };
 export type Msg = { role: "system" | "user" | "assistant"; content: string; images?: string[] };
@@ -21,6 +22,8 @@ export interface ChatResult {
   /** Stopped at maxTokens. */
   truncated: boolean;
   promptTokens?: number;
+  /** Generated tokens, reasoning included. */
+  outputTokens?: number;
 }
 
 export interface Provider {
@@ -75,7 +78,7 @@ function ollama(base: string, numCtx: number): Provider {
       let thought = 0;
       await eachLine(res.body, (line) => {
         if (!line.trim()) return;
-        const j = JSON.parse(line) as { message?: { content?: string; thinking?: string }; error?: string; done?: boolean; done_reason?: string; prompt_eval_count?: number };
+        const j = JSON.parse(line) as { message?: { content?: string; thinking?: string }; error?: string; done?: boolean; done_reason?: string; prompt_eval_count?: number; eval_count?: number };
         if (j.error) throw new Error("model_stream_error");
         if (j.message?.thinking) onThinking?.(++thought);
         if (j.message?.content) {
@@ -84,6 +87,7 @@ function ollama(base: string, numCtx: number): Provider {
         }
         if (j.done_reason === "length") out.truncated = true;
         if (j.done && j.prompt_eval_count) out.promptTokens = j.prompt_eval_count;
+        if (j.done && j.eval_count) out.outputTokens = j.eval_count;
       });
       return out;
     },
@@ -147,7 +151,7 @@ function openai(base: string, apiKey: string | undefined): Provider {
         const j = JSON.parse(data) as {
           error?: unknown;
           choices?: { delta?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null }; finish_reason?: string | null }[];
-          usage?: { prompt_tokens?: number } | null;
+          usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
         };
         if (j.error) throw new Error("model_stream_error");
         const c = j.choices?.[0];
@@ -158,6 +162,7 @@ function openai(base: string, apiKey: string | undefined): Provider {
         }
         if (c?.finish_reason === "length") out.truncated = true;
         if (j.usage?.prompt_tokens) out.promptTokens = j.usage.prompt_tokens;
+        if (j.usage?.completion_tokens) out.outputTokens = j.usage.completion_tokens;
       });
       return out;
     },
@@ -176,6 +181,43 @@ function openai(base: string, apiKey: string | undefined): Provider {
       return ((await res.json()) as { data: { id: string }[] }).data.map((m) => m.id).filter((m) => /embed/i.test(m));
     },
     healthy: () => fetch(`${base}/models`, { headers, signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false),
+  };
+}
+
+/**
+ * Reports the tokens of every chat call. A stream stopped midway (user cancelled, looping model) never gets the server's
+ * figures, so those are estimated: from the text's length, and at least one token per streamed piece (images not included).
+ * Cancelled before any output: the model had still read the prompt. A call that failed by itself counts nothing.
+ */
+export function metered(p: Provider, count: (tokensIn: number, tokensOut: number) => void): Provider {
+  return {
+    ...p,
+    async chat(o) {
+      let pieces = 0;
+      let chars = 0;
+      let thought = 0;
+      const outputGuess = () => Math.max(pieces, Math.round(chars / DEFAULT_CHARS_PER_TOKEN)) + thought;
+      const promptGuess =() => Math.round(o.messages.reduce((n, m) => n + m.content.length, 0) / DEFAULT_CHARS_PER_TOKEN);
+      try {
+        const r = await p.chat({
+          ...o,
+          onText: (t) => {
+            pieces++;
+            chars += t.length;
+            o.onText?.(t);
+          },
+          onThinking: (n) => {
+            thought = n;
+            o.onThinking?.(n);
+          },
+        });
+        count(r.promptTokens ?? promptGuess(), r.outputTokens ?? outputGuess());
+        return r;
+      } catch (e) {
+        if (pieces + thought || o.signal.aborted) count(promptGuess(), outputGuess());
+        throw e;
+      }
+    },
   };
 }
 

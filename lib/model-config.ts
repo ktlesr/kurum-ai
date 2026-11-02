@@ -1,7 +1,8 @@
 import "server-only";
 import { getSetting, setSetting } from "./db";
 import { envConfig, keyOrigins, validateConfig, type Endpoint, type ModelConfig } from "./models";
-import { makeProvider, type Provider } from "./provider";
+import { makeProvider, metered, type Provider } from "./provider";
+import { countTokens } from "./usage";
 
 export const NUM_CTX = Number(process.env.NUM_CTX) || 16384;
 
@@ -47,7 +48,7 @@ export function providerOf(e: Endpoint): Provider {
   let p = providers.get(key);
   if (!p) {
     const apiKey = KEY_ORIGINS.has(new URL(e.url).origin) ? process.env.MODEL_API_KEY : undefined;
-    providers.set(key, (p = makeProvider(e.kind, e.url, { apiKey, numCtx: NUM_CTX })));
+    providers.set(key, (p = metered(makeProvider(e.kind, e.url, { apiKey, numCtx: NUM_CTX }), countTokens)));
   }
   return p;
 }

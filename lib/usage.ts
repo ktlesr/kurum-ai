@@ -18,30 +18,42 @@ export const ONLINE_MINUTES = 3;
 
 const TODAY = "(now() AT TIME ZONE 'Europe/Istanbul')::date";
 
-export function countUsage(kind: UsageKind) {
+function add(kind: UsageKind | "tokens_in" | "tokens_out", n: number) {
   void (async () => {
     const sql = await db();
-    await sql`INSERT INTO usage_daily (day, kind, count) VALUES (${sql.unsafe(TODAY)}, ${kind}, 1)
-      ON CONFLICT (day, kind) DO UPDATE SET count = usage_daily.count + 1`;
+    await sql`INSERT INTO usage_daily (day, kind, count) VALUES (${sql.unsafe(TODAY)}, ${kind}, ${n})
+      ON CONFLICT (day, kind) DO UPDATE SET count = usage_daily.count + ${n}`;
   })().catch((e) => console.error(`usage: ${(e as Error).name}`));
 }
 
-export type UsageRow = { kind: UsageKind; today: number; week: number; month: number; total: number };
+export const countUsage = (kind: UsageKind) => add(kind, 1);
+
+/** Every chat model call (lib/model-config); only how many tokens, never what they said. */
+export function countTokens(tokensIn: number, tokensOut: number) {
+  if (tokensIn > 0) add("tokens_in", Math.round(tokensIn));
+  if (tokensOut > 0) add("tokens_out", Math.round(tokensOut));
+}
+
+type Periods = { today: number; week: number; month: number; total: number };
+export type UsageRow = Periods & { kind: UsageKind };
 
 export async function usageSummary() {
   const sql = await db();
-  const rows = await sql<{ kind: string; today: string; week: string; month: string; total: string }[]>`
+  const rows = await sql<{ kind: string; today: string; week: string; month: string; total: string; since: string }[]>`
     SELECT kind,
       coalesce(sum(count) FILTER (WHERE day = ${sql.unsafe(TODAY)}), 0) AS today,
       coalesce(sum(count) FILTER (WHERE day > ${sql.unsafe(TODAY)} - 7), 0) AS week,
       coalesce(sum(count) FILTER (WHERE day > ${sql.unsafe(TODAY)} - 30), 0) AS month,
-      sum(count) AS total
+      sum(count) AS total,
+      to_char(min(day), 'YYYY-MM-DD') AS since
     FROM usage_daily GROUP BY kind`;
   const byKind = new Map(rows.map((r) => [r.kind, r]));
-  const usage: UsageRow[] = (Object.keys(USAGE_LABELS) as UsageKind[]).map((kind) => {
+  const periods = (kind: string): Periods => {
     const r = byKind.get(kind);
-    return { kind, today: Number(r?.today ?? 0), week: Number(r?.week ?? 0), month: Number(r?.month ?? 0), total: Number(r?.total ?? 0) };
-  });
+    return { today: Number(r?.today ?? 0), week: Number(r?.week ?? 0), month: Number(r?.month ?? 0), total: Number(r?.total ?? 0) };
+  };
+  const usage: UsageRow[] = (Object.keys(USAGE_LABELS) as UsageKind[]).map((kind) => ({ kind, ...periods(kind) }));
+  const tokens = { input: periods("tokens_in"), output: periods("tokens_out"), since: byKind.get("tokens_in")?.since };
   const days = await sql<{ day: string; count: string }[]>`
     SELECT to_char(d, 'YYYY-MM-DD') AS day, coalesce(u.count, 0) AS count
     FROM generate_series(${sql.unsafe(TODAY)} - 13, ${sql.unsafe(TODAY)}, interval '1 day') d
@@ -53,6 +65,7 @@ export async function usageSummary() {
       (SELECT count(DISTINCT user_id) FROM sessions WHERE expires_at > now() AND last_seen > now() - make_interval(mins => ${ONLINE_MINUTES})) AS online`;
   return {
     usage,
+    tokens,
     queriesByDay: days.map((d) => ({ day: d.day, count: Number(d.count) })),
     users: Number(people.total), pending: Number(people.pending), online: Number(people.online),
   };
