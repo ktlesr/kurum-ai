@@ -73,16 +73,16 @@ const lower = (s: string) => s.toLocaleLowerCase("tr");
 
 /**
  * Stands in the documents if the value itself does, as whole words; or if the quoted passage does and every piece of the value
- * is in that passage: numbers whole, words at least as a word's beginning ("Ciro" in "cirosu"). A true sentence quoted beside
- * a name it doesn't hold proves nothing.
+ * is in that passage as a whole word or number ("Ali" isn't in "Alim"). A true sentence quoted beside a name it doesn't hold
+ * proves nothing; a value with an inflected word falls to the user as an offer, which is the safe side.
  */
 export function verified(value: string, quote: string, docs: string[]): boolean {
   if (quoteInDocs(value, docs)) return true;
   if (!quote || !quoteInDocs(quote, docs)) return false;
   const pieces = value.match(/\d+(?:[.,]\d+)*|\p{L}+/gu) ?? [];
   if (!pieces.length) return false;
-  const words = lower(quote).match(/\p{L}+/gu) ?? [];
-  return pieces.every((p) => (/\d/.test(p) ? quoteInDocs(p, [quote]) : words.some((w) => w.startsWith(lower(p)))));
+  const words: string[] = lower(quote).match(/\p{L}+/gu) ?? [];
+  return pieces.every((p) => (/\d/.test(p) ? quoteInDocs(p, [quote]) : words.includes(lower(p))));
 }
 
 const asFound = (f: { value: string; quote: string }, docs: string[], w: SourceWindow): FoundValue => {

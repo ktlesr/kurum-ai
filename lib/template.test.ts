@@ -107,6 +107,7 @@ test("excel: formula shifting moves what is below, grows what runs through, leav
   assert.equal(shiftFormula('IF(A9="A9",$B$9,Veri!A9)', 5, 1), 'IF(A10="A9",$B$10,Veri!A9)');
   assert.equal(shiftFormula("LOG10(A1)", 1, 3), "LOG10(A4)");
   assert.equal(shiftFormula("SUM(Form!C4:C5)+'Diğer Sayfa'!C5", 5, 2, "Form"), "SUM(Form!C4:C7)+'Diğer Sayfa'!C5");
+  assert.equal(shiftFormula("form!C5", 5, 2, "Form"), "form!C7"); // Excel doesn't mind the case of a sheet's name
 });
 
 test("grid: a formula further down a blank block ends it; it is never written over", () => {
@@ -154,6 +155,8 @@ test("json: a dotted key and a nested one stay two fields", () => {
   assert.equal(new Set(l.slots.map((s) => s.id)).size, 2);
   const out = JSON.parse(new TextDecoder().decode(fillJsonTemplate(bytes, { slots: { [l.slots[1].id]: "iç" }, tables: {} }).bytes));
   assert.deepEqual(out, { "a.b": "", a: { b: "iç" } });
+  const odd = readJsonTemplate(new TextEncoder().encode('{"a.[b]":"","a[b]":"","a":{"[b]":""}}'));
+  assert.equal(new Set(odd.slots.map((s) => s.id)).size, 3);
 });
 
 test("excel: only numbers that are surely numbers", () => {
@@ -307,7 +310,8 @@ test("verified: the document says it, or nothing goes in by itself", () => {
   const docs = ["Şirketin 2025 yılı cirosu 1.250.000 TL olarak gerçekleşti. Yetkili Ayşe Öztürk'tür."];
   assert.ok(verified("1.250.000 TL", "", docs));
   assert.ok(verified("AYŞE ÖZTÜRK", "", docs));
-  assert.ok(verified("Ciro: 1.250.000", "2025 yılı cirosu 1.250.000 TL", docs));
+  assert.ok(verified("TL 1.250.000", "2025 yılı cirosu 1.250.000 TL", docs));
+  assert.ok(!verified("Ali", "Yetkili Alim Yılmaz", ["Yetkili Alim Yılmaz"]));
   assert.ok(!verified("250.000", "", docs)); // part of a number
   assert.ok(!verified("Mehmet Kaya", "Yetkili Ayşe Öztürk", docs));
   assert.ok(!verified("9.999", "2025 yılı cirosu 1.250.000 TL", docs));
@@ -352,6 +356,6 @@ test("extract: first proved value wins, unproved is only offered, rows collect o
 
 test("intent: asking to fill a template opens the panel; talk about one doesn't", () => {
   for (const t of ["bilgileri bu şablona aktar", "şablonu belgelerden doldur", "formu doldur", "Şablona işle lütfen", "doldur şu şablonu"]) assert.ok(asksTemplateFill(t), t);
-  for (const t of ["şablon nedir", "şablondaki tarih ne", "şablonu nasıl doldururum", "bu belgeyi özetle", "performans değerlendirme yaz", "platformu anlat", "reform yaz", "formu doldurma, sadece eksikleri açıkla", "form işlemleri neler", "form yazılımı öner"]) assert.ok(!asksTemplateFill(t), t);
+  for (const t of ["şablon nedir", "şablondaki tarih ne", "şablonu nasıl doldururum", "bu belgeyi özetle", "performans değerlendirme yaz", "platformu anlat", "reform yaz", "formu doldurma, sadece eksikleri açıkla", "formu doldurma, eksikleri yaz", "form işlemleri neler", "form yazılımı öner"]) assert.ok(!asksTemplateFill(t), t);
   assert.ok(asksTemplateFill("şablonu doldurabilir misin"));
 });

@@ -15,7 +15,7 @@ const MAX_SEGMENTS = 5000; // per page
 const MAX_BANDS = 300; // distinct rows or columns of lines on a page
 const MAX_RUNS = 5000; // pieces of text on a page
 
-export interface Run { x: number; y: number; w: number; size: number; text: string }
+export interface Run { x: number; y: number; w: number; size: number; text: string; font?: string }
 export interface Seg { a: number; b: number; at: number }
 export interface Box { x: number; y: number; w: number; h: number }
 
@@ -27,7 +27,7 @@ interface PdfjsDoc {
   getPage(n: number): Promise<{
     rotate: number;
     getViewport(o: { scale: number }): { width: number; height: number };
-    getTextContent(): Promise<{ items: { str?: string; transform?: number[]; width?: number; height?: number }[] }>;
+    getTextContent(): Promise<{ items: { str?: string; transform?: number[]; width?: number; height?: number; fontName?: string }[] }>;
     getOperatorList(): Promise<{ fnArray: number[]; argsArray: unknown[][] }>;
   }>;
   loadingTask: { destroy(): Promise<void> };
@@ -42,16 +42,21 @@ const times = (m: M, n: M): M => [
 ];
 
 /** Straight lines on a page, in page coordinates: strokes, and the thin filled rectangles Office tools draw borders with. */
-async function linesOf(page: Awaited<ReturnType<PdfjsDoc["getPage"]>>): Promise<{ h: Seg[]; v: Seg[]; widths: Map<string, number> }> {
+async function linesOf(page: Awaited<ReturnType<PdfjsDoc["getPage"]>>): Promise<{ h: Seg[]; v: Seg[]; widths: Map<string, Map<string, number>> }> {
   const { OPS } = await getResolvedPDFJS();
   const ops = await page.getOperatorList();
   const h: Seg[] = [];
   const v: Seg[] = [];
-  const widths = new Map<string, number>();
+  // Per font: the same letter is a different width in each.
+  const widths = new Map<string, Map<string, number>>();
+  let font = "";
   ops.fnArray.forEach((fn, i) => {
+    if (fn === OPS.setFont) font = String(ops.argsArray[i][0]);
     if (fn !== OPS.showText) return;
+    const table = widths.get(font) ?? new Map<string, number>();
+    widths.set(font, table);
     for (const g of (ops.argsArray[i][0] as ({ unicode?: string; width?: number } | number | null)[]) ?? []) {
-      if (g && typeof g === "object" && g.unicode && g.width && !widths.has(g.unicode)) widths.set(g.unicode, g.width);
+      if (g && typeof g === "object" && g.unicode && g.width && !table.has(g.unicode)) table.set(g.unicode, g.width);
     }
   });
   let m: M = [1, 0, 0, 1, 0, 0];
@@ -201,18 +206,19 @@ const textIn = (runs: Run[], b: Box) => {
 };
 
 /** One line's items as whole runs: a PDF can place every word, or every letter, on its own. */
-export function runsOf(items: { str?: string; transform?: number[]; width?: number; height?: number }[]): Run[] {
+export function runsOf(items: { str?: string; transform?: number[]; width?: number; height?: number; fontName?: string }[]): Run[] {
   const raw = items.flatMap((i): Run[] => {
     const t = i.transform;
     if (!i.str || !t || !i.str.trim()) return [];
     if (Math.abs(t[1]) > 0.01 || Math.abs(t[2]) > 0.01) return []; // turned text: a stamp or side note
-    return [{ x: t[4], y: t[5], w: i.width ?? 0, size: Math.abs(t[3]) || i.height || 10, text: i.str }];
+    return [{ x: t[4], y: t[5], w: i.width ?? 0, size: Math.abs(t[3]) || i.height || 10, text: i.str, font: i.fontName }];
   }).sort((a, b) => (Math.abs(a.y - b.y) > TOL ? b.y - a.y : a.x - b.x));
   const out: Run[] = [];
   for (const r of raw) {
     const last = out[out.length - 1];
     const gap = last ? r.x - (last.x + last.w) : 0;
-    if (last && Math.abs(last.y - r.y) <= TOL && gap < Math.max(r.size, last.size) * 0.8 && gap > -2) {
+    // Another font starts another run: one run's letters are measured with one font's widths.
+    if (last && last.font === r.font && Math.abs(last.y - r.y) <= TOL && gap < Math.max(r.size, last.size) * 0.8 && gap > -2) {
       last.text += gap > r.size * 0.15 && !last.text.endsWith(" ") && !r.text.startsWith(" ") ? ` ${r.text}` : r.text;
       last.w = r.x + r.w - last.x;
       last.size = Math.max(last.size, r.size);
@@ -291,7 +297,7 @@ async function scan(bytes: Uint8Array): Promise<Scan> {
       for (const r of runs) {
         const tokens = findTokens(r.text);
         for (const t of tokens) {
-          const span = spanOf(r, t.start, t.end, widths);
+          const span = spanOf(r, t.start, t.end, widths.get(r.font ?? "") ?? new Map());
           const box: Box = { x: span.x, y: r.y - r.size * 0.25, w: Math.max(span.w, 10), h: r.size * 1.25 };
           // Everything to the right up to the next text on the line is free too.
           const next = runs.filter((o) => o !== r && Math.abs(o.y - r.y) <= TOL && o.x > box.x).map((o) => o.x).sort((a, b) => a - b)[0];

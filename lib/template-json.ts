@@ -14,8 +14,12 @@ function parse(bytes: Uint8Array): unknown {
 /** null, "", 0 or a blank mark ("{{ad}}", "____"): what a person leaves to be filled. */
 const isBlank = (v: unknown) => v === null || v === 0 || (typeof v === "string" && (!v.trim() || (findTokens(v).length === 1 && findTokens(v)[0].end - findTokens(v)[0].start === v.trim().length)));
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-// A key holding a dot or bracket is written in brackets: {"a.b":"","a":{"b":""}} are two fields, not one.
-const key = (path: (string | number)[]) => path.map((p) => (typeof p === "number" ? `[${p}]` : /[.[\]"]/.test(p) ? `[${JSON.stringify(p)}]` : p)).join(".").replace(/\.\[/g, "[");
+// Plain keys read as a.b[0]. A key holding a dot or bracket makes the whole path JSON: {"a.b":"","a":{"b":""}} are two fields,
+// and no plain id can equal a JSON one, which begins with [" .
+const key = (path: (string | number)[]) => {
+  if (path.some((p) => typeof p === "string" && /[.[\]"]/.test(p))) return JSON.stringify(path);
+  return path.map((p) => (typeof p === "number" ? `[${p}]` : p)).join(".").replace(/\.\[/g, "[");
+};
 
 /** A blank record: an object of blanks only. Nested ones count by their full name. */
 function recordLeaves(v: Record<string, unknown>, prefix: string[] = []): string[][] | null {

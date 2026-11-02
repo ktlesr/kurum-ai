@@ -9,6 +9,8 @@ export function asksTemplateFill(message: string): boolean {
   const q = message.toLocaleLowerCase("tr").trim();
   if (!q || q.length > 2000) return false;
   if (/(?:^|\s)(?:nedir|nasıl|neden|niçin)(?:\s|\?|$)/u.test(q)) return false;
+  // "Formu doldurma, eksikleri yaz": told not to, whatever verb comes later.
+  if (/(?<!\p{L})(?:aktar|doldur|geçir|yerleştir)m[ae](?:y\p{L}*)?(?=[\s.,;!?]|$)/u.test(q)) return false;
   // Only a request for doing it: "şablona aktar", "şablonu doldur", "bilgileri … şablona yaz".
   return new RegExp(`(?<![\\p{L}])${NOUN}${CASE}(?![\\p{L}])(?:\\s+\\S+){0,6}?\\s+${VERB}(?=[\\s.,!?]|$)`, "u").test(q)
     || new RegExp(`(?<![\\p{L}])${VERB}\\s+(?:\\S+\\s+){0,3}${NOUN}${CASE}(?![\\p{L}])`, "u").test(q);

@@ -34,7 +34,7 @@ export function shiftFormula(f: string, at: number, k: number, sheet?: string): 
     if (quoted) return m;
     if (named) {
       const name = named.startsWith("'") ? named.slice(1, -1).replace(/''/g, "'") : named;
-      return name === sheet ? `${named}!${ref.replace(/(\$?[A-Z]{1,3})(\$?)(\d+)/g, (_: string, c: string, d: string, r: string) => move(c, d, r))}` : m;
+      return name.toLowerCase() === sheet?.toLowerCase() ?`${named}!${ref.replace(/(\$?[A-Z]{1,3})(\$?)(\d+)/g, (_: string, c: string, d: string, r: string) => move(c, d, r))}` : m;
     }
     return move(col, dollar, row);
   });
