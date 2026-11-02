@@ -9,6 +9,7 @@ export const USAGE_LABELS = {
   deck: "Sunum",
   reels: "Reels / video",
   social: "Sosyal medya görseli",
+  template: "Doldurulan şablon",
 } as const;
 export type UsageKind = keyof typeof USAGE_LABELS;
 /** What only the browser knows happened (the studio works there): anything else is counted by the server itself. */

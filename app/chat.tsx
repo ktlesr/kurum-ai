@@ -7,7 +7,7 @@ import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  AlertTriangle, ArrowUp, BookOpen, Check, ChevronDown, CircleHelp, Copy, Download, File as FileIcon, FileSpreadsheet, FileText,
+  AlertTriangle, ArrowUp, BookOpen, Check, ChevronDown, CircleHelp, Copy, Download, File as FileIcon, FileInput, FileSpreadsheet, FileText,
   FileType, HardDrive, Image as ImageIcon, KeyRound, LogOut, Menu, Paperclip, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Upload, X,
 } from "lucide-react";
 import { InstallApp } from "./install-app";
@@ -18,6 +18,8 @@ import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, plainNumberi
 import { keepMessages, searchChats, titleFrom, type Message, type StoredChat } from "@/lib/local-store";
 import { FILE_FORMATS, exportDoc, turnOf, type ExportDoc } from "@/lib/export-doc";
 import { exportRequest } from "@/lib/export-intent";
+import { asksTemplateFill } from "@/lib/template-intent";
+import { TemplatePanel } from "./template-panel";
 import { DownloadMenu, FileCards } from "./export-ui";
 import type { DocKind, DocMeta } from "@/lib/server";
 import { LibraryPanel, type LibItem } from "./library";
@@ -117,6 +119,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const fileInput = useRef<HTMLInputElement>(null);
   const backupInput = useRef<HTMLInputElement>(null);
   const uploads = useRef(new Map<string, AbortController>());
+  const uploadedFiles = useRef(new Map<string, File>());
+  const [templateOpen, setTemplateOpen] = useState<{ instruction: string } | null>(null);
   const streamingRef = useRef(false);
   const chatIdRef = useRef<string | null>(null);
   const libRef = useRef<LibItem[]>([]);
@@ -214,6 +218,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       }
       const body = new FormData();
       body.append("file", f);
+      uploadedFiles.current.set(tmp.id, f); // this page's copy: a blank form is filled from its own bytes, which the server doesn't keep
       const ac = new AbortController();
       uploads.current.set(tmp.id, ac);
       (async () => {
@@ -283,6 +288,12 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const send = async (text: string, scope?: "all", editOf?: number) => {
     const q = text.trim();
     if (!q || streaming || docsWait) return;
+    // Filling a form needs the form's own file, not an answer: the panel takes over, with the words as the request.
+    if (editOf === undefined && asksTemplateFill(q)) {
+      setTemplateOpen({ instruction: q });
+      setInput("");
+      return;
+    }
     // An edited question replaces itself and everything after it.
     const earlier = keepMessages(messages.slice(0, editOf), (m) => !m.error);
     const history: Message[] = [...earlier, { role: "user", content: q, at: Date.now() }];
@@ -491,6 +502,14 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           >
             <Paperclip size={18} />
           </button>
+          <button
+            onClick={() => setTemplateOpen({ instruction: "" })}
+            className="grid size-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-subtle hover:text-fg"
+            aria-label="Şablon doldur"
+            title="Şablon doldur: boş Excel, Word, PDF ya da JSON şablonunuza belgelerdeki bilgileri aktarır"
+          >
+            <FileInput size={18} />
+          </button>
             <span className="flex-1" />
             <ProfilePicker value={profile} onChange={chooseProfile} />
           {streaming ? (
@@ -648,6 +667,15 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false); }}
       onDrop={(e) => { e.preventDefault(); setDragging(false); upload(e.dataTransfer.files); }}
     >
+      {templateOpen && (
+        <TemplatePanel
+          docs={ready.flatMap((f) => (f.serverId ? [{ id: f.serverId, name: f.name, file: uploadedFiles.current.get(f.id) }] : []))}
+          model={model}
+          initialInstruction={templateOpen.instruction}
+          api={api}
+          onClose={() => setTemplateOpen(null)}
+        />
+      )}
       {drawer && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setDrawer(false)} />}
       {/* Closed drawer: invisible, so its controls leave the tab order. An open layer makes what's behind it inert. */}
       <aside
