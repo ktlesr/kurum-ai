@@ -42,11 +42,18 @@ const times = (m: M, n: M): M => [
 ];
 
 /** Straight lines on a page, in page coordinates: strokes, and the thin filled rectangles Office tools draw borders with. */
-async function linesOf(page: Awaited<ReturnType<PdfjsDoc["getPage"]>>): Promise<{ h: Seg[]; v: Seg[] }> {
+async function linesOf(page: Awaited<ReturnType<PdfjsDoc["getPage"]>>): Promise<{ h: Seg[]; v: Seg[]; widths: Map<string, number> }> {
   const { OPS } = await getResolvedPDFJS();
   const ops = await page.getOperatorList();
   const h: Seg[] = [];
   const v: Seg[] = [];
+  const widths = new Map<string, number>();
+  ops.fnArray.forEach((fn, i) => {
+    if (fn !== OPS.showText) return;
+    for (const g of (ops.argsArray[i][0] as ({ unicode?: string; width?: number } | number | null)[]) ?? []) {
+      if (g && typeof g === "object" && g.unicode && g.width && !widths.has(g.unicode)) widths.set(g.unicode, g.width);
+    }
+  });
   let m: M = [1, 0, 0, 1, 0, 0];
   const stack: M[] = [];
   const add = (x1: number, y1: number, x2: number, y2: number) => {
@@ -98,7 +105,17 @@ async function linesOf(page: Awaited<ReturnType<PdfjsDoc["getPage"]>>): Promise<
       }
     }
   });
-  return { h, v };
+  return { h, v, widths };
+}
+
+/**
+ * Where characters [start, end) of a run lie, from the page's own letter widths: dots are far narrower than letters, and taking
+ * them as even would put the white-out over the label before them. The run's real width scales the sum.
+ */
+export function spanOf(run: Pick<Run, "x" | "w" | "text">, start: number, end: number, widths: Map<string, number>): { x: number; w: number } {
+  const of = (s: string) => [...s].reduce((n, ch) => n + (widths.get(ch) ?? 500), 0);
+  const scale = run.w / Math.max(1, of(run.text));
+  return { x: run.x + of(run.text.slice(0, start)) * scale, w: of(run.text.slice(start, end)) * scale };
 }
 
 const cluster = (vals: number[]) => {
@@ -224,7 +241,7 @@ async function scan(bytes: Uint8Array): Promise<Scan> {
       const runs = runsOf((await page.getTextContent()).items);
       if (runs.length) out.anyText = true;
       if (runs.length > MAX_RUNS) continue; // a page of running text, not a form
-      const { h, v } = await linesOf(page);
+      const { h, v, widths } = await linesOf(page);
       const cells = cellsOf(h, v);
       const inCell = new Set<Run>();
       let n = 0;
@@ -270,12 +287,12 @@ async function scan(bytes: Uint8Array): Promise<Scan> {
           });
         }
       }
-      // Blank marks, in or out of a cell. A run's letters are taken as even width: close enough for where a mark begins.
+      // Blank marks, in or out of a cell.
       for (const r of runs) {
         const tokens = findTokens(r.text);
         for (const t of tokens) {
-          const unit = r.w / Math.max(1, r.text.length);
-          const box: Box = { x: r.x + t.start * unit, y: r.y - r.size * 0.25, w: Math.max((t.end - t.start) * unit, 10), h: r.size * 1.25 };
+          const span = spanOf(r, t.start, t.end, widths);
+          const box: Box = { x: span.x, y: r.y - r.size * 0.25, w: Math.max(span.w, 10), h: r.size * 1.25 };
           // Everything to the right up to the next text on the line is free too.
           const next = runs.filter((o) => o !== r && Math.abs(o.y - r.y) <= TOL && o.x > box.x).map((o) => o.x).sort((a, b) => a - b)[0];
           const endsRun = !r.text.slice(t.end).trim();

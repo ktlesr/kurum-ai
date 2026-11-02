@@ -11,7 +11,7 @@ import { extractValues, parseAnswer, verified } from "./template-extract.ts";
 import { fillDocxTemplate, readDocxTemplate } from "./template-docx.ts";
 import { fillJsonTemplate, readJsonTemplate } from "./template-json.ts";
 import { asksTemplateFill } from "./template-intent.ts";
-import { cellsOf, fillPdfTemplate, readPdfTemplate, wrapText } from "./template-pdf.ts";
+import { cellsOf, fillPdfTemplate, readPdfTemplate, spanOf, wrapText } from "./template-pdf.ts";
 import { excelNumber, fillXlsxTemplate, readXlsxTemplate, shiftFormula } from "./template-xlsx.ts";
 
 const none: Values = { slots: {}, tables: {} };
@@ -287,6 +287,14 @@ test("pdf: a page of countless lines gets no cells, quickly; a small grid still 
   assert.deepEqual(cellsOf(bands, bands), []);
   assert.ok(Date.now() - started < 500);
   assert.equal(cellsOf([{ a: 0, b: 100, at: 0 }, { a: 0, b: 100, at: 20 }], [{ a: 0, b: 20, at: 0 }, { a: 0, b: 20, at: 100 }]).length, 1);
+});
+
+test("pdf: a mark's place comes from letter widths, so white-out can't reach the label", () => {
+  const widths = new Map([["A", 800], [".", 200], [":", 200]]);
+  // "AA:" is 1800 of 2600 units: letters-as-even would say 3/7 of the run, the label's own end is at 69%.
+  const s = spanOf({ x: 0, w: 260, text: "AA:...." }, 3, 7, widths);
+  assert.equal(s.x, 180);
+  assert.equal(s.w, 80);
 });
 
 test("pdf: wrapping never cuts a word", () => {
