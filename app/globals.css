@@ -134,6 +134,16 @@ body {
 .md th { background: var(--subtle); font-weight: 600; }
 .md tr:last-child td { border-bottom: 0; }
 
+/* The guide, on paper: only what is to be read, in dark on white whatever the theme. */
+@media print {
+  .guide-chrome { display: none !important; }
+  .guide, .guide * { color: #14263d !important; background: transparent !important; box-shadow: none !important; }
+  .guide main { max-width: none; }
+  .guide > div { display: block; padding: 0; }
+  .guide-part { break-before: page; }
+  .guide h3, .guide tr { break-inside: avoid; }
+}
+
 /* The part of a text being styled while a control has the focus (studio editor). */
 ::highlight(k-text-sel) {
   background: rgb(59 130 246 / 0.35);

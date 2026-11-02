@@ -66,7 +66,9 @@ async function insertUser(username: string, password: string | undefined, role: 
   const sql = await db();
   const [made] = await sql`INSERT INTO users (username, pass_hash, role, status, email, must_change_password) VALUES (${username}, ${await hashPassword(pass)}, ${role}, 'active', ${email ?? null}, ${!!email}) ON CONFLICT (username) DO NOTHING RETURNING id`;
   if (!made) {
-    const [filled] = email ? await sql`UPDATE users SET email = ${email} WHERE username = ${username} AND email IS NULL RETURNING id` : [];
+    // Active accounts only: anyone can ask for a name at sign-up, and a pending request must not gain an address from a list.
+    // Nor admins': their address decides who can be sent their password.
+    const [filled] = email ? await sql`UPDATE users SET email = ${email} WHERE username = ${username} AND email IS NULL AND status = 'active' AND role = 'user' RETURNING id` : [];
     return { username, ok: false, reason: filled ? "Zaten var; e-postası kaydedildi, e-posta gönderilmedi" : "Bu kullanıcı zaten var" };
   }
   const shown = password ? {} : { password: pass };
@@ -109,11 +111,14 @@ export async function createUsersBulk(_: CreateResult, form: FormData): Promise<
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 export async function saveEmail(id: string, email: string): Promise<{ ok: boolean; message: string }> {
-  if (!(await admin()) || !UUID_RE.test(id)) return { ok: false, message: "Yetkiniz yok." };
+  const me = await getUser();
+  if (me?.role !== "admin" || me.mustChange || !UUID_RE.test(id)) return { ok: false, message: "Yetkiniz yok." };
   const value = email.trim().toLowerCase();
   if (value && !EMAIL_RE.test(value)) return { ok: false, message: "E-posta adresi geçersiz." };
   const sql = await db();
-  await sql`UPDATE users SET email = ${value || null} WHERE id = ${id}`;
+  // Another admin's address stays theirs: changing it and sending a new password would be taking over their account.
+  const [saved] = await sql`UPDATE users SET email = ${value || null} WHERE id = ${id} AND (role = 'user' OR id = ${me.id}) RETURNING id`;
+  if (!saved) return { ok: false, message: "Başka bir yöneticinin e-postası değiştirilemez." };
   revalidatePath("/admin/kullanicilar");
   return { ok: true, message: "Kaydedildi." };
 }
@@ -132,8 +137,8 @@ export async function sendNewPassword(id: string): Promise<{ ok: boolean; messag
   const me = await getUser();
   if (me?.role !== "admin" || me.mustChange || !UUID_RE.test(id) || id.toLowerCase() === me.id) return { ok: false, message: "Yetkiniz yok." };
   const sql = await db();
-  const [u] = await sql<{ username: string; email: string | null }[]>`SELECT username, email FROM users WHERE id = ${id} AND status = 'active'`;
-  if (!u?.email) return { ok: false, message: "Bu kullanıcının e-postası yok ya da hesabı etkin değil." };
+  const [u] = await sql<{ username: string; email: string | null }[]>`SELECT username, email FROM users WHERE id = ${id} AND status = 'active' AND role = 'user'`;
+  if (!u?.email) return { ok: false, message: "Bu hesaba parola gönderilemez: e-postası yok, etkin değil ya da yönetici." };
   const key = id.toLowerCase();
   if (renewing.has(key)) return { ok: false, message: "Bu kullanıcıya gönderim sürüyor." };
   renewing.add(key);

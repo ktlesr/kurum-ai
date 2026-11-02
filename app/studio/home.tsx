@@ -42,7 +42,7 @@ export default function Home({ isAdmin, recent, onStart, onOpen, onLibrary, onPr
           <FolderOpen size={16} /> <span className="hidden sm:inline">Dosya aç</span>
           <input type="file" accept=".json,application/json" className="sr-only" onChange={(e) => { onProject(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
-        <TopLinks isAdmin={isAdmin} />
+        <TopLinks isAdmin={isAdmin} guide />
         <ThemeToggle />
       </header>
 

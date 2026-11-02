@@ -43,7 +43,7 @@ export default async function UsersPage() {
             {users.map((u) => (
               <tr key={u.id} className="border-t border-line">
                 <td className="whitespace-nowrap px-4 py-2.5">{u.username}{u.role === "admin" && <span className="ml-2 rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent">yönetici</span>}</td>
-                <td className="min-w-72 px-4 py-2"><UserMail id={u.id} username={u.username} email={u.email} canSend={mailOn && u.status === "active" && u.id !== me.id} /></td>
+                <td className="min-w-72 px-4 py-2"><UserMail id={u.id} username={u.username} email={u.email} canSend={mailOn && u.status === "active" && u.role === "user"} canEdit={u.role === "user" || u.id === me.id} /></td>
                 <td className={`whitespace-nowrap px-4 py-2.5 ${u.status === "pending" ? "text-warn-fg" : u.status === "disabled" ? "text-muted" : ""}`}>{STATUS[u.status]}</td>
                 <td className="px-4 py-2.5 text-muted">{u.created_at.toLocaleDateString("tr-TR")}</td>
                 <td className="px-4 py-2.5 text-right">

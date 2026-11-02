@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
@@ -12,9 +12,13 @@ export function generateMetadata(): Metadata {
     title: "Zafer AI",
     description: "Dokümanlarınız hakkında soru sorun. İşleme kurum sunucusunda yapılır; harici AI servisine gönderilmez.",
     icons: { icon: "/logo.svg", apple: "/apple-icon.png" },
+    // On an iPhone's home screen: opens without Safari's bars, under this name.
+    appleWebApp: { capable: true, title: "Zafer AI", statusBarStyle: "default" },
     ...ogMeta("home"),
   };
 }
+
+export const viewport: Viewport = { themeColor: "#f5f8fb" };
 
 // Runs before paint. Light by default (plan §3.1); "system" follows the OS; the stored choice wins.
 const themeScript = `try{var t=localStorage.getItem("theme");if(t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.classList.add("dark")}catch(e){}`;

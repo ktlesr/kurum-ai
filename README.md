@@ -46,6 +46,7 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
 | `DATABASE_URL` | — (**zorunlu**) | PostgreSQL bağlantısı |
+| `ILETISIM_USERNAME`, `ILETISIM_USERPASS`, `ILETISIM_CUSTOMER_CODE`, `ILETISIM_API_KEY`, `ILETISIM_VENDOR_CODE`, `ILETISIM_ORIGINATOR_ID` | — | İletişim Makinesi hesabı ve e-posta gönderici kimliği. Hepsi tanımlıysa yönetim panelinde e-postası yazılan kullanıcıya giriş bilgileri gider; eksikse hesap yine oluşur, e-posta gitmez ve panel bunu söyler |
 | `APP_ORIGIN` | — (**üretimde zorunlu**) | Kullanıcıların açtığı adres (ör. `https://ai.ekutlu.com`). GET dışı isteklerde `Origin` bununla birebir karşılaştırılır; üretimde tanımlı değilse bu istekler reddedilir. Geliştirmede `Host` kullanılır |
 | `ALLOWED_MODELS` | `DEFAULT_MODEL` | Kullanıcının seçebileceği sohbet modelleri (virgülle). Listede olmayan model sunucuda reddedilir |
 | `MODEL_CONCURRENCY` / `MODEL_QUEUE` | `2` / `32` | Aynı anda model sunucusuna giden çağrı sayısı (sohbet, embedding, görsel) ve bekleyebilecek çağrı sayısı; dolunca 429 |

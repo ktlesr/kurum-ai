@@ -7,9 +7,10 @@ import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  AlertTriangle, ArrowUp, BookOpen, Check, ChevronDown, Copy, Download, File as FileIcon, FileSpreadsheet, FileText,
+  AlertTriangle, ArrowUp, BookOpen, Check, ChevronDown, CircleHelp, Copy, Download, File as FileIcon, FileSpreadsheet, FileText,
   FileType, HardDrive, Image as ImageIcon, KeyRound, LogOut, Menu, Paperclip, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Upload, X,
 } from "lucide-react";
+import { InstallApp } from "./install-app";
 import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
 import { useChats } from "./use-chats";
@@ -621,9 +622,13 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         </div>
       </details>
 
+      <InstallApp />
       <div className="flex items-center gap-1 border-t border-line px-3 py-2.5 text-sm">
         <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent-soft text-xs font-semibold uppercase text-accent" aria-hidden>{username.slice(0, 1)}</span>
         <span className="min-w-0 flex-1 truncate pl-1" title={username}>{username}</span>
+        <Link href="/rehber" className="rounded-md p-1.5 text-muted hover:bg-subtle hover:text-fg" aria-label="Kullanım rehberi" title="Kullanım rehberi">
+          <CircleHelp size={16} />
+        </Link>
         <Link href="/hesap" className="rounded-md p-1.5 text-muted hover:bg-subtle hover:text-fg" aria-label="Parolayı değiştir" title="Parolayı değiştir">
           <KeyRound size={16} />
         </Link>
