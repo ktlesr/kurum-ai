@@ -69,18 +69,20 @@ function readField(raw: unknown): { value: string; quote: string } | null {
   return { value, quote: stringOf(o.kaynak) };
 }
 
-const digits = (s: string) => s.match(/\d+(?:[.,]\d+)*/g) ?? [];
+const lower = (s: string) => s.toLocaleLowerCase("tr");
 
 /**
- * Stands in the documents if the value itself does, as whole words; or if the quoted passage does and every number of the
- * value is in that passage (a value put in other words, with the same figures). A value with no digit and no literal match
- * is not proved by quoting something else: a model can quote a true sentence and conclude anything.
+ * Stands in the documents if the value itself does, as whole words; or if the quoted passage does and every piece of the value
+ * is in that passage: numbers whole, words at least as a word's beginning ("Ciro" in "cirosu"). A true sentence quoted beside
+ * a name it doesn't hold proves nothing.
  */
 export function verified(value: string, quote: string, docs: string[]): boolean {
   if (quoteInDocs(value, docs)) return true;
   if (!quote || !quoteInDocs(quote, docs)) return false;
-  const nums = digits(value);
-  return nums.length > 0 && nums.every((n) => quoteInDocs(n, [quote]));
+  const pieces = value.match(/\d+(?:[.,]\d+)*|\p{L}+/gu) ?? [];
+  if (!pieces.length) return false;
+  const words = lower(quote).match(/\p{L}+/gu) ?? [];
+  return pieces.every((p) => (/\d/.test(p) ? quoteInDocs(p, [quote]) : words.some((w) => w.startsWith(lower(p)))));
 }
 
 const asFound = (f: { value: string; quote: string }, docs: string[], w: SourceWindow): FoundValue => {

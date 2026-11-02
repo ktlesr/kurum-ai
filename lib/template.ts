@@ -111,7 +111,9 @@ export function readGrid(grid: (GridCell | undefined)[][], free: (r: number, c: 
       if (adjacent && !looksLikeForm) {
         // Records go under every heading; a formula column works by itself.
         const writable = (row: number) => texts.filter((c) => !grid[row]?.[c]?.locked);
-        const empty = (row: number) => writable(row).length > 0 && writable(row).every((c) => isBlank(grid[row]?.[c]));
+        const shape = writable(r + 1).join();
+        // Same columns open as the first row: a formula further down ends the block, it is never written over.
+        const empty = (row: number) => writable(row).length > 0 && writable(row).join() === shape && writable(row).every((c) => isBlank(grid[row]?.[c]));
         let n = 0;
         while (r + 1 + n < grid.length && empty(r + 1 + n)) n++;
         const atEnd = r + 1 + n >= grid.length;

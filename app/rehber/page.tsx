@@ -17,7 +17,7 @@ const Warn = ({ children }: { children: ReactNode }) => <p className="guide-note
 
 const CONTENTS: [string, string, [string, string][]][] = [
   ["baslarken", "Başlarken", [["giris", "Giriş ve parola"], ["uygulama", "Telefona ve bilgisayara ekleme"], ["veri", "Verileriniz nerede duruyor"]]],
-  ["asistan", "Asistan (sohbet)", [["soru", "Soru sorma"], ["belge", "Belge ekleme"], ["kitaplik", "Ortak belgeler ve Belgelerim"], ["hazir", "Hazır işler ve profiller"], ["kaynak", "Cevapları doğrulama"], ["internet", "İnternet ve bağlantılar"], ["dosya", "Cevabı dosya olarak alma"], ["gecmis", "Sohbetleri yönetme ve yedek"], ["sinir", "Sınırlar ve uyarılar"]]],
+  ["asistan", "Asistan (sohbet)", [["soru", "Soru sorma"], ["belge", "Belge ekleme"], ["kitaplik", "Ortak belgeler ve Belgelerim"], ["hazir", "Hazır işler ve profiller"], ["kaynak", "Cevapları doğrulama"], ["internet", "İnternet ve bağlantılar"], ["dosya", "Cevabı dosya olarak alma"], ["sablon", "Şablon doldurma"], ["gecmis", "Sohbetleri yönetme ve yedek"], ["sinir", "Sınırlar ve uyarılar"]]],
   ["studyo", "Görsel Stüdyo", [["baslangic", "Başlangıç"], ["sosyal", "Sosyal medya görseli"], ["yapay", "Yapay zekâ ile içerik"], ["sunum", "Sunum"], ["video", "Video / Reels"], ["duzenleme", "Tuvalde düzenleme"], ["marka", "Marka ve logolar"], ["kayit", "Kaydetme ve taşıma"], ["indir", "Dışa aktarma"], ["kisayol", "Klavye kısayolları"]]],
   ["sorun", "Sık karşılaşılan durumlar", []],
 ];
@@ -180,6 +180,18 @@ export default async function GuidePage() {
                 <li><em>“word ve pdf olarak ver”</em>: Birden çok biçim verir.</li>
               </ul>
               <p>Tablolar Excel&apos;de ayrı sayfalara ve gerçek sayılara dönüşür. Dosyalar tarayıcınızda hazırlanır.</p>
+            </Topic>
+            <Topic id="sablon" title="Şablon doldurma">
+              <p>Kendi boş Excel (.xlsx), Word (.docx), PDF ya da JSON şablonunuza belgelerdeki bilgileri aktarır. Sonuç kendi şablonunuzdur: antet, biçim ve formüller yerinde kalır.</p>
+              <ol className="list-decimal space-y-1 pl-5">
+                <li>Bilginin alınacağı belgeleri sohbete ekleyin.</li>
+                <li>Yazı kutusunun altındaki <L>Şablon doldur</L> simgesine basın ya da <em>“bilgileri şablona aktar”</em> yazın.</li>
+                <li><L>Şablon seç (Excel, Word, PDF, JSON)</L> ile boş şablonu gösterin, varsa özel isteğinizi yazın (örn. yalnızca 2025 kayıtları) ve <L>Belgelerden doldur</L>a basın.</li>
+                <li>Bulunan değerleri kontrol edin, gerekirse düzeltin, <L>Dolu şablonu indir</L>e basın.</li>
+              </ol>
+              <p>Her değerin yanında geldiği belge ve bölüm görünür. Belgede aynen bulunamayan bir değer şablona kendiliğinden yazılmaz, <em>“Doğrulanamadı”</em> diye önerilir; doğruysa üstüne basarak kullanırsınız. Belgede olmayan alan boş kalır.</p>
+              <p>Boş hücreler, tablo satırları ve <em>Ad:</em> gibi etiketler kendiliğinden tanınır. Tanınmayan yerlere <code>{"{{ad soyad}}"}</code> ya da <code>____</code> gibi işaret koyabilirsiniz.</p>
+              <Warn>Kayıtlar boş satırlardan fazlaysa Word&apos;de ve çoğu Excel şablonunda satır eklenir. PDF&apos;e satır eklenemez: sığmayan kayıtlar ve alana sığmayan değerler yazılmaz, size söylenir. Bu durumda şablonun Word ya da Excel halini kullanın. Taranmış (metni olmayan) PDF şablonları okunamaz. Sonucu kullanmadan önce mutlaka kontrol edin.</Warn>
             </Topic>
             <Topic id="gecmis" title="Sohbetleri yönetme ve yedek">
               <ul className="list-disc space-y-1 pl-5">

@@ -255,7 +255,8 @@ export async function fillDocxTemplate(bytes: Uint8Array, values: Values): Promi
       s.p.appendChild(makeRun(docOf(s.p), ` ${v}`, plainCopy(last && kid(last, "rPr"))));
     } else if (s.kind === "cell") setCell(docOf(s.tc), s.tc, v);
   }
-  for (const t of tables) {
+  // Bottom up: rows added to a lower block leave the row numbers of the ones above it right.
+  for (const t of [...tables].sort((a, b) => b.firstRow - a.firstRow)) {
     const rows = (values.tables[t.id] ?? []).filter((r) => r.some((x) => cleanValue(x)));
     if (!rows.length) continue;
     const doc = docOf(t.tbl);

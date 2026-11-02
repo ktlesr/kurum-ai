@@ -11,6 +11,9 @@ import { MAX_SLOTS, TemplateError, cleanValue, findTokens, readGrid, tokenLabel,
 const MAX_PAGES = 60;
 const TOL = 1.5; // points: lines this close are one line
 const PAD = 2.5;
+const MAX_SEGMENTS = 5000; // per page
+const MAX_BANDS = 300; // distinct rows or columns of lines on a page
+const MAX_RUNS = 5000; // pieces of text on a page
 
 export interface Run { x: number; y: number; w: number; size: number; text: string }
 export interface Seg { a: number; b: number; at: number }
@@ -103,9 +106,21 @@ const cluster = (vals: number[]) => {
   for (const x of [...vals].sort((a, b) => a - b)) if (!out.length || x - out[out.length - 1] > TOL) out.push(x);
   return out;
 };
-const covered = (segs: Seg[], at: number, a: number, b: number) => {
+/** Segments by where they lie, so a question about one line doesn't walk every line on the page. */
+const indexed = (segs: Seg[]) => {
+  const by = new Map<number, Seg[]>();
+  for (const s of segs) {
+    const k = Math.round(s.at / TOL);
+    by.set(k, [...(by.get(k) ?? []), s]);
+  }
+  return (at: number) => {
+    const k = Math.round(at / TOL);
+    return [...(by.get(k - 1) ?? []), ...(by.get(k) ?? []), ...(by.get(k + 1) ?? [])];
+  };
+};
+const covered = (near: (at: number) => Seg[], at: number, a: number, b: number) => {
   // Pieces of one line count together: a border is often drawn cell by cell.
-  const parts = segs.filter((s) => Math.abs(s.at - at) <= TOL && s.b > a - TOL && s.a < b + TOL).sort((x, y) => x.a - y.a);
+  const parts = near(at).filter((s) => Math.abs(s.at - at) <= TOL && s.b > a - TOL && s.a < b + TOL).sort((x, y) => x.a - y.a);
   let reach = a;
   for (const s of parts) {
     if (s.a > reach + TOL * 2) return false;
@@ -115,9 +130,14 @@ const covered = (segs: Seg[], at: number, a: number, b: number) => {
 };
 
 /** Closed cells from the page's lines. A missing inner line makes one merged cell. */
-export function cellsOf(h: Seg[], v: Seg[]): Box[] {
-  const ys = cluster(h.map((s) => s.at)).reverse(); // top down
-  const xs = cluster(v.map((s) => s.at));
+export function cellsOf(hLines: Seg[], vLines: Seg[]): Box[] {
+  // A form has far fewer lines than this: a drawing or a hostile file gets no cells rather than minutes of a server's time.
+  if (hLines.length + vLines.length > MAX_SEGMENTS) return [];
+  const ys = cluster(hLines.map((s) => s.at)).reverse(); // top down
+  const xs = cluster(vLines.map((s) => s.at));
+  if (ys.length > MAX_BANDS || xs.length > MAX_BANDS) return [];
+  const h = indexed(hLines);
+  const v = indexed(vLines);
   const out: Box[] = [];
   const used = new Set<string>();
   for (let i = 0; i + 1 < ys.length; i++) {
@@ -203,6 +223,7 @@ async function scan(bytes: Uint8Array): Promise<Scan> {
       const { width } = page.getViewport({ scale: 1 });
       const runs = runsOf((await page.getTextContent()).items);
       if (runs.length) out.anyText = true;
+      if (runs.length > MAX_RUNS) continue; // a page of running text, not a form
       const { h, v } = await linesOf(page);
       const cells = cellsOf(h, v);
       const inCell = new Set<Run>();

@@ -11,7 +11,7 @@ import { extractValues, parseAnswer, verified } from "./template-extract.ts";
 import { fillDocxTemplate, readDocxTemplate } from "./template-docx.ts";
 import { fillJsonTemplate, readJsonTemplate } from "./template-json.ts";
 import { asksTemplateFill } from "./template-intent.ts";
-import { fillPdfTemplate, readPdfTemplate, wrapText } from "./template-pdf.ts";
+import { cellsOf, fillPdfTemplate, readPdfTemplate, wrapText } from "./template-pdf.ts";
 import { excelNumber, fillXlsxTemplate, readXlsxTemplate, shiftFormula } from "./template-xlsx.ts";
 
 const none: Values = { slots: {}, tables: {} };
@@ -106,6 +106,54 @@ test("excel: formula shifting moves what is below, grows what runs through, leav
   assert.equal(shiftFormula("SUM(C4:C5)+C6", 5, 2), "SUM(C4:C7)+C8");
   assert.equal(shiftFormula('IF(A9="A9",$B$9,Veri!A9)', 5, 1), 'IF(A10="A9",$B$10,Veri!A9)');
   assert.equal(shiftFormula("LOG10(A1)", 1, 3), "LOG10(A4)");
+  assert.equal(shiftFormula("SUM(Form!C4:C5)+'Diğer Sayfa'!C5", 5, 2, "Form"), "SUM(Form!C4:C7)+'Diğer Sayfa'!C5");
+});
+
+test("grid: a formula further down a blank block ends it; it is never written over", () => {
+  const { tables } = readGrid([
+    [{ text: "Ad" }, { text: "Tutar" }],
+    [{ text: "" }, { text: "" }],
+    [{ text: "" }, { text: "", locked: true }],
+  ]);
+  assert.equal(tables[0].rows, 1);
+});
+
+test("excel: a merge of the whole sheet in a tiny file costs nothing and blank rows missing from the XML keep row order", async () => {
+  const bytes = await makeXlsx();
+  const zip = await JSZip.loadAsync(bytes);
+  const sheet = await zip.file("xl/worksheets/sheet1.xml")!.async("string");
+  const bomb = await JSZip.loadAsync(bytes);
+  bomb.file("xl/worksheets/sheet1.xml", sheet.replace('ref="A1:C1"', 'ref="A1:XFD1048576"'));
+  await assert.rejects(readXlsxTemplate(await bomb.generateAsync({ type: "uint8array" })), /birleşik/);
+  // Rows 4 and 5 not in the file at all, a total below them.
+  zip.file("xl/worksheets/sheet1.xml", sheet.replace(/<row r="4">.*<\/row>\s*<row r="5">.*<\/row>/, ""));
+  const thin = await zip.generateAsync({ type: "uint8array" });
+  const l = await readXlsxTemplate(thin);
+  const out = await fillXlsxTemplate(thin, { slots: {}, tables: { [l.tables[0].id]: [["1", "a", "1"], ["2", "b", "2"], ["3", "c", "3"], ["4", "d", "4"]] } });
+  const xml = await (await JSZip.loadAsync(out.bytes)).file("xl/worksheets/sheet1.xml")!.async("string");
+  const order = [...xml.matchAll(/<row r="(\d+)"/g)].map((m) => Number(m[1]));
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  assert.equal(new Set(order).size, order.length);
+});
+
+test("word: rows added to one block of a table don't push the next block's values into the wrong rows", async () => {
+  const cell = (t: string) => new TableCell({ children: [new Paragraph(t)] });
+  const row = (a: string, b: string) => new TableRow({ children: [cell(a), cell(b)] });
+  const bytes = new Uint8Array(await Packer.toBuffer(new Document({ sections: [{ children: [new Table({ rows: [row("Ürün", "Adet"), row("", ""), row("Personel", "Görev"), row("", "")] })] }] })));
+  const l = await readDocxTemplate(bytes);
+  assert.equal(l.tables.length, 2);
+  const out = await fillDocxTemplate(bytes, { slots: {}, tables: { [l.tables[0].id]: [["Kalem", "1"], ["Defter", "2"]], [l.tables[1].id]: [["Ayşe", "Uzman"]] } });
+  const xml = await (await JSZip.loadAsync(out.bytes)).file("word/document.xml")!.async("string");
+  const texts = [...xml.matchAll(/<w:t(?: [^>]*)?>([^<]+)</g)].map((m) => m[1]);
+  assert.deepEqual(texts, ["Ürün", "Adet", "Kalem", "1", "Defter", "2", "Personel", "Görev", "Ayşe", "Uzman"]);
+});
+
+test("json: a dotted key and a nested one stay two fields", () => {
+  const bytes = new TextEncoder().encode('{"a.b":"","a":{"b":""}}');
+  const l = readJsonTemplate(bytes);
+  assert.equal(new Set(l.slots.map((s) => s.id)).size, 2);
+  const out = JSON.parse(new TextDecoder().decode(fillJsonTemplate(bytes, { slots: { [l.slots[1].id]: "iç" }, tables: {} }).bytes));
+  assert.deepEqual(out, { "a.b": "", a: { b: "iç" } });
 });
 
 test("excel: only numbers that are surely numbers", () => {
@@ -231,6 +279,16 @@ test("pdf: a page with no text can't be read, and says so", async () => {
   await assert.rejects(readPdfTemplate(await doc.save()), /taranmış/);
 });
 
+test("pdf: a page of countless lines gets no cells, quickly; a small grid still reads", () => {
+  const many = Array.from({ length: 6000 }, (_, i) => ({ a: 0, b: 500, at: i }));
+  const started = Date.now();
+  assert.deepEqual(cellsOf(many, many), []);
+  const bands = Array.from({ length: 400 }, (_, i) => ({ a: 0, b: 2000, at: i * 5 }));
+  assert.deepEqual(cellsOf(bands, bands), []);
+  assert.ok(Date.now() - started < 500);
+  assert.equal(cellsOf([{ a: 0, b: 100, at: 0 }, { a: 0, b: 100, at: 20 }], [{ a: 0, b: 20, at: 0 }, { a: 0, b: 20, at: 100 }]).length, 1);
+});
+
 test("pdf: wrapping never cuts a word", () => {
   const w = (s: string) => s.length;
   assert.deepEqual(wrapText("bir iki üç", 7, w), ["bir iki", "üç"]);
@@ -245,6 +303,7 @@ test("verified: the document says it, or nothing goes in by itself", () => {
   assert.ok(!verified("250.000", "", docs)); // part of a number
   assert.ok(!verified("Mehmet Kaya", "Yetkili Ayşe Öztürk", docs));
   assert.ok(!verified("9.999", "2025 yılı cirosu 1.250.000 TL", docs));
+  assert.ok(!verified("Mehmet Kaya 2025", "Şirketin 2025 yılı cirosu 1.250.000 TL", docs)); // the year is there, the name isn't
   assert.ok(!verified("1.250.000", "uydurma alıntı 1.250.000", ["başka metin"]));
 });
 
@@ -285,5 +344,6 @@ test("extract: first proved value wins, unproved is only offered, rows collect o
 
 test("intent: asking to fill a template opens the panel; talk about one doesn't", () => {
   for (const t of ["bilgileri bu şablona aktar", "şablonu belgelerden doldur", "formu doldur", "Şablona işle lütfen", "doldur şu şablonu"]) assert.ok(asksTemplateFill(t), t);
-  for (const t of ["şablon nedir", "şablondaki tarih ne", "şablonu nasıl doldururum", "bu belgeyi özetle", "performans değerlendirme yaz", "platformu anlat", "reform yaz"]) assert.ok(!asksTemplateFill(t), t);
+  for (const t of ["şablon nedir", "şablondaki tarih ne", "şablonu nasıl doldururum", "bu belgeyi özetle", "performans değerlendirme yaz", "platformu anlat", "reform yaz", "formu doldurma, sadece eksikleri açıkla", "form işlemleri neler", "form yazılımı öner"]) assert.ok(!asksTemplateFill(t), t);
+  assert.ok(asksTemplateFill("şablonu doldurabilir misin"));
 });

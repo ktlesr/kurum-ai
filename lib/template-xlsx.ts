@@ -6,6 +6,7 @@ import { all, kid, kids, openZip, parseXml, saveZip, textOf, writeXml, type El }
 
 const MAX_GRID_ROWS = 3000;
 const MAX_GRID_COLS = 120;
+const MAX_MERGES = 5000;
 
 export const colName = (c: number) => {
   let s = "";
@@ -25,13 +26,17 @@ const parseRange = (ref: string) => {
 
 /**
  * A formula after k rows were added at row `at` (1-based): references at or below it move, so a range running through it
- * grows. Text in quotes, and references to other sheets, are left alone.
+ * grows. Text in quotes, and references to other sheets, are left alone; this sheet's own name in front changes nothing.
  */
-export function shiftFormula(f: string, at: number, k: number): string {
-  return f.replace(/("(?:[^"]|"")*")|('(?:[^']|'')+'|[\p{L}_][\p{L}\p{N}_.]*)!\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?|(?<![\p{L}\p{N}_.$])(\$?[A-Z]{1,3})(\$?)(\d+)(?![\p{L}\p{N}_(.])/gu, (m, quoted, _sheet, col, dollar, row) => {
-    if (quoted || !col) return m;
-    const n = Number(row);
-    return `${col}${dollar}${n >= at ? n + k : n}`;
+export function shiftFormula(f: string, at: number, k: number, sheet?: string): string {
+  const move = (col: string, dollar: string, row: string) => `${col}${dollar}${Number(row) >= at ? Number(row) + k : Number(row)}`;
+  return f.replace(/("(?:[^"]|"")*")|('(?:[^']|'')+'|[\p{L}_][\p{L}\p{N}_.]*)!(\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?)|(?<![\p{L}\p{N}_.$])(\$?[A-Z]{1,3})(\$?)(\d+)(?![\p{L}\p{N}_(.])/gu, (m, quoted, named, ref, col, dollar, row) => {
+    if (quoted) return m;
+    if (named) {
+      const name = named.startsWith("'") ? named.slice(1, -1).replace(/''/g, "'") : named;
+      return name === sheet ? `${named}!${ref.replace(/(\$?[A-Z]{1,3})(\$?)(\d+)/g, (_: string, c: string, d: string, r: string) => move(c, d, r))}` : m;
+    }
+    return move(col, dollar, row);
   });
 }
 
@@ -110,10 +115,16 @@ function gridOf(sh: Sheet, shared: string[]): GridOf {
   const texts = new Map<string, string>();
   let maxRow = -1, maxCol = -1;
   const covered = new Set<string>();
+  if (sh.merged.length > MAX_MERGES) throw new TemplateError("Şablonda çok fazla birleşik hücre var.");
+  let walked = 0;
   for (const m of sh.merged) {
-    for (let r = m.s.r; r <= m.e.r; r++) for (let c = m.s.c; c <= m.e.c; c++) if (r !== m.s.r || c !== m.s.c) covered.add(`${r},${c}`);
-    maxRow = Math.max(maxRow, m.e.r);
-    maxCol = Math.max(maxCol, m.e.c);
+    // A 5 KB file can declare a merge of the whole sheet: only what the grid can hold is walked.
+    const lastRow = Math.min(m.e.r, MAX_GRID_ROWS - 1), lastCol = Math.min(m.e.c, MAX_GRID_COLS - 1);
+    walked += Math.max(0, lastRow - m.s.r + 1) * Math.max(0, lastCol - m.s.c + 1);
+    if (walked > MAX_GRID_ROWS * 10) throw new TemplateError("Şablonda çok fazla birleşik hücre var.");
+    for (let r = m.s.r; r <= lastRow; r++) for (let c = m.s.c; c <= lastCol; c++) if (r !== m.s.r || c !== m.s.c) covered.add(`${r},${c}`);
+    maxRow = Math.max(maxRow, lastRow);
+    maxCol = Math.max(maxCol, lastCol);
   }
   const cells: [number, number, GridCell][] = [];
   for (const [r, row] of sh.rows) {
@@ -288,7 +299,7 @@ function insertRows(book: Book, sh: Sheet, at: number, k: number) {
   for (const f of all(sh.data, "f")) {
     const text = textOf(f);
     while (f.firstChild) f.removeChild(f.firstChild);
-    f.appendChild(sh.doc.createTextNode(shiftFormula(text, at1, k)));
+    f.appendChild(sh.doc.createTextNode(shiftFormula(text, at1, k, sh.name)));
   }
   for (const r of moving) {
     const row = sh.rows.get(r)!;
@@ -300,7 +311,9 @@ function insertRows(book: Book, sh: Sheet, at: number, k: number) {
     sh.rows.delete(r);
     sh.rows.set(r + k, row);
   }
-  const anchor = sh.rows.get(at + k) ?? null;
+  // The next row actually in the file: a blank row may not exist in the XML at all, and rows must stay in order.
+  const nextKey = [...sh.rows.keys()].filter((r) => r >= at + k).sort((a, b) => a - b)[0];
+  const anchor = nextKey === undefined ? null : sh.rows.get(nextKey)!;
   for (let i = 0; i < k; i++) {
     const r = at + i;
     const row = (model ? model.cloneNode(true) : sh.doc.createElementNS(sh.data.namespaceURI, "row")) as El;
