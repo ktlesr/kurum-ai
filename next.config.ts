@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Native code (gallery thumbnails): loaded as it is at run time, not bundled.
+  serverExternalPackages: ["@napi-rs/canvas"],
   // Self-contained server for the container image (Dockerfile): .next/standalone/server.js + traced node_modules.
   output: "standalone",
   // Runtime data and local model files must never land in a build/standalone output (audit S12).

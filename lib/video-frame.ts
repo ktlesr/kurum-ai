@@ -7,9 +7,11 @@ const MAX_FRAME = 40 * 1024 * 1024;
 
 function run(file: string, at: number, longest: number, signal?: AbortSignal): Promise<Buffer> {
   return new Promise((ok, no) => {
-    execFile(process.env.FFMPEG_PATH || "ffmpeg", [
+    execFile("ffmpeg", [
       "-nostdin", "-hide_banner", "-loglevel", "error",
+      // Video containers only. A playlist or concat file renamed .mp4 could otherwise make ffmpeg read other files on this server.
       "-protocol_whitelist", "file",
+      "-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,asf,mpeg,mpegts,mpegvideo",
       "-ss", String(at), "-i", file,
       "-frames:v", "1", "-an", "-sn",
       "-vf", `scale='min(${longest},iw)':-2`,

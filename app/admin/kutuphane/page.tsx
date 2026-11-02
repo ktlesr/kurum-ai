@@ -2,7 +2,7 @@ import { AlertTriangle, CheckCircle2, Image as ImageIcon, Library, Trash2 } from
 import { revalidatePath } from "next/cache";
 import { getUser, requireAdmin } from "@/lib/auth";
 import { db, getSetting, setSetting } from "@/lib/db";
-import { parseRules, ruleFrom, withRule, withoutRule } from "@/lib/folder-access";
+import { parseRules, ruleFindsFolder, ruleFrom, withRule, withoutRule } from "@/lib/folder-access";
 import type { Skipped } from "@/lib/folder-scan";
 import { galleryStatus } from "@/lib/gallery";
 import { dropRulesCache, libraryStatus } from "@/lib/library";
@@ -149,7 +149,7 @@ export default async function LibraryAdmin() {
             <tbody>
               {rules.map((r) => (
                 <tr key={r.folder} className="border-t border-line">
-                  <td className="px-4 py-2.5">{r.folder}</td>
+                  <td className="px-4 py-2.5">{r.folder}{!ruleFindsFolder(r, folders) && <span className="ml-2 inline-flex items-center gap-1 text-xs text-warn-fg"><AlertTriangle size={12} /> Bu yolda klasör yok, kural hiçbir şeyi korumuyor</span>}</td>
                   <td className="px-4 py-2.5 text-muted">{r.users.length ? r.users.join(", ") : "Yalnızca yöneticiler"}</td>
                   <td className="px-2 py-1.5">
                     <form action={removeRule}>

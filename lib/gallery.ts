@@ -202,11 +202,15 @@ async function captionTick() {
     try {
       await captionOne(next);
     } catch (err) {
+      state.lastFail = Date.now();
+      // The model being away, or ffmpeg missing, says nothing about the photo: it is tried again later, not given up on.
+      const { vision } = await modelConfig();
+      const noTool = (err as NodeJS.ErrnoException).code === "ENOENT";
+      if (noTool || !(await providerOf(vision).healthy())) return;
       const had = seen.get(next.id);
       const fails = (had?.v === versionOf(next) ? (had.fails ?? 0) : 0) + 1;
       seen.set(next.id, { v: versionOf(next), c: "", fails });
       state.dirty++;
-      state.lastFail = Date.now();
       logError("gallery", err);
     }
   } finally {

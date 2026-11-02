@@ -6,11 +6,19 @@ export interface FolderRule { folder: string; users: string[] }
 
 const clean = (p: string) => p.split("/").map((s) => s.trim()).filter(Boolean).join("/");
 
+/**
+ * How paths compare. A rule must never miss its folder by a letter's case or by how a NAS spells "ş" (composed or not): the
+ * mistake would open it. Two folders differing only in case fall under the same rule, which is the safe side.
+ */
+export const pathKey = (p: string) => p.normalize("NFC").toLowerCase();
+
 export function canSee(file: string, who: { username: string; role: string }, rules: readonly FolderRule[]): boolean {
   if (who.role === "admin") return true;
+  const f = pathKey(file);
   let best: FolderRule | undefined;
   for (const r of rules) {
-    if ((file === r.folder || file.startsWith(`${r.folder}/`)) && (!best || r.folder.length > best.folder.length)) best = r;
+    const k = pathKey(r.folder);
+    if ((f === k || f.startsWith(`${k}/`)) && (!best || r.folder.length > best.folder.length)) best = r;
   }
   return !best || best.users.includes(who.username);
 }
@@ -36,5 +44,7 @@ export function ruleFrom(folder: unknown, users: unknown): FolderRule | null {
   return { folder: f, users: [...new Set(names)].slice(0, 500) };
 }
 
-export const withRule = (rules: readonly FolderRule[], rule: FolderRule) => [...rules.filter((r) => r.folder !== rule.folder), rule].sort((a, b) => a.folder.localeCompare(b.folder, "tr"));
-export const withoutRule = (rules: readonly FolderRule[], folder: string) => rules.filter((r) => r.folder !== clean(folder));
+export const withRule = (rules: readonly FolderRule[], rule: FolderRule) => [...rules.filter((r) => pathKey(r.folder) !== pathKey(rule.folder)), rule].sort((a, b) => a.folder.localeCompare(b.folder, "tr"));
+export const withoutRule = (rules: readonly FolderRule[], folder: string) => rules.filter((r) => pathKey(r.folder) !== pathKey(clean(folder)));
+/** A rule that points nowhere protects nothing: the admin page says so. */
+export const ruleFindsFolder = (rule: FolderRule, folders: readonly string[]) => folders.some((d) => pathKey(d) === pathKey(rule.folder) || pathKey(d).startsWith(`${pathKey(rule.folder)}/`));

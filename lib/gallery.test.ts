@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { exifYear } from "./exif-date.ts";
 import { parseRange, videoFrame } from "./video-frame.ts";
-import { canSee, parseRules, ruleFrom, withRule, withoutRule } from "./folder-access.ts";
+import { canSee, parseRules, ruleFindsFolder, ruleFrom, withRule, withoutRule } from "./folder-access.ts";
 import { ScanFailed, scanFolder } from "./folder-scan.ts";
 import { asksMorePhotos, asksPhotos } from "./gallery-intent.ts";
 import { countOf, foldTr, kindAsked, nearFolders, searchGallery, termsOf, type GalleryEntry } from "./gallery-search.ts";
@@ -75,6 +75,11 @@ test("access: open without a rule; a rule closes the folder and below; the close
   assert.ok(canSee("ortak/PersonelEski/a.pdf", ali, rules), "a name beginning the same is another folder");
   assert.ok(!canSee("galeri/Gizli/a.jpg", ayse, rules));
   assert.ok(canSee("galeri/Gizli/a.jpg", { username: "x", role: "admin" }, rules));
+  // A rule can't miss by a letter's case, or by how the NAS spells a Turkish letter.
+  assert.ok(!canSee("ORTAK/personel/a.pdf", ali, rules));
+  assert.ok(!canSee("ortak/Şirket/a.pdf".normalize("NFD"), ali, [{ folder: "ortak/Şirket", users: [] }]));
+  assert.ok(ruleFindsFolder({ folder: "ortak/personel", users: [] }, ["ortak/Personel/Alt"]));
+  assert.ok(!ruleFindsFolder({ folder: "ortak/yok", users: [] }, ["ortak/Personel"]));
 });
 
 test("access rules: forms and saved values", () => {
@@ -163,6 +168,11 @@ test("video still: ffmpeg gives a JPEG; a broken file is an error, not a hang", 
     assert.deepEqual([still[0], still[1]], [0xff, 0xd8]);
     writeFileSync(path.join(d, "bozuk.mp4"), "video degil");
     await assert.rejects(videoFrame(path.join(d, "bozuk.mp4"), 160));
+    // A playlist dressed as a video can't lead ffmpeg to other files.
+    writeFileSync(path.join(d, "liste.mp4"), `#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:1,\n${f}\n#EXT-X-ENDLIST\n`);
+    await assert.rejects(videoFrame(path.join(d, "liste.mp4"), 160));
+    writeFileSync(path.join(d, "birlestir.mp4"), `ffconcat version 1.0\nfile '${f.replace(/\\/g, "/")}'\n`);
+    await assert.rejects(videoFrame(path.join(d, "birlestir.mp4"), 160));
   } finally {
     rmSync(d, { recursive: true, force: true });
   }

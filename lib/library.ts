@@ -156,6 +156,7 @@ function sweepCache() {
   if (Date.now() - state.swept < SWEEP_MS || !state.list.length) return;
   state.swept = Date.now();
   try {
+    mkdirSync(CACHE, { recursive: true });
     const live = new Set(state.list.map((e) => `${e.id}:${e.size}:${e.mtime}`));
     const index = readIndex();
     let changed = false;
