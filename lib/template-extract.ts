@@ -79,7 +79,8 @@ const lower = (s: string) => s.toLocaleLowerCase("tr");
 export function verified(value: string, quote: string, docs: string[]): boolean {
   if (quoteInDocs(value, docs)) return true;
   if (!quote || !quoteInDocs(quote, docs)) return false;
-  const pieces = value.match(/\d+(?:[.,]\d+)*|\p{L}+/gu) ?? [];
+  // A sign is part of the number: "-20" or "%20" isn't proved by a passage saying 20.
+  const pieces = value.match(/(?<![\p{L}\p{N}])[-%]?\d+(?:[.,]\d+)*%?|\d+(?:[.,]\d+)*%?|\p{L}+/gu) ?? [];
   if (!pieces.length) return false;
   const words: string[] = lower(quote).match(/\p{L}+/gu) ?? [];
   return pieces.every((p) => (/\d/.test(p) ? quoteInDocs(p, [quote]) : words.includes(lower(p))));

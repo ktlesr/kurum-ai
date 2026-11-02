@@ -137,6 +137,20 @@ test("excel: a merge of the whole sheet in a tiny file costs nothing and blank r
   assert.equal(new Set(order).size, order.length);
 });
 
+test("excel: a hidden sheet's formula pointing here, in any case, stops rows being added; the rest still goes in and is reported", async () => {
+  const zip = await JSZip.loadAsync(await makeXlsx());
+  const add = (p: string, f: (s: string) => string) => zip.file(p)!.async("string").then((s) => zip.file(p, f(s)));
+  zip.file("xl/worksheets/sheet2.xml", `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><f>form!C6</f></c></row></sheetData></worksheet>`);
+  await add("[Content_Types].xml", (s) => s.replace("</Types>", `<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`));
+  await add("xl/_rels/workbook.xml.rels", (s) => s.replace("</Relationships>", `<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>`));
+  await add("xl/workbook.xml", (s) => s.replace("</sheets>", `<sheet name="Gizli" sheetId="2" state="hidden" r:id="rId9"/></sheets>`));
+  const bytes = await zip.generateAsync({ type: "uint8array" });
+  const t = (await readXlsxTemplate(bytes)).tables[0];
+  const out = await fillXlsxTemplate(bytes, { slots: {}, tables: { [t.id]: [["1", "a", "1"], ["2", "b", "2"], ["3", "c", "3"]] } });
+  assert.ok(out.notes.some((n) => n.includes("3 kayıttan 2") && n.includes("başka sayfaların")));
+  assert.equal(XLSX.read(out.bytes).Sheets.Form.A6.v, "Toplam");
+});
+
 test("word: rows added to one block of a table don't push the next block's values into the wrong rows", async () => {
   const cell = (t: string) => new TableCell({ children: [new Paragraph(t)] });
   const row = (a: string, b: string) => new TableRow({ children: [cell(a), cell(b)] });
@@ -312,6 +326,8 @@ test("verified: the document says it, or nothing goes in by itself", () => {
   assert.ok(verified("AYŞE ÖZTÜRK", "", docs));
   assert.ok(verified("TL 1.250.000", "2025 yılı cirosu 1.250.000 TL", docs));
   assert.ok(!verified("Ali", "Yetkili Alim Yılmaz", ["Yetkili Alim Yılmaz"]));
+  for (const signed of ["TL -20", "TL %20", "TL 20%"]) assert.ok(!verified(signed, "bedel 20 TL", ["bedel 20 TL"]), signed);
+  assert.ok(verified("TL 20", "bedel 20 TL", ["bedel 20 TL"]));
   assert.ok(!verified("250.000", "", docs)); // part of a number
   assert.ok(!verified("Mehmet Kaya", "Yetkili Ayşe Öztürk", docs));
   assert.ok(!verified("9.999", "2025 yılı cirosu 1.250.000 TL", docs));

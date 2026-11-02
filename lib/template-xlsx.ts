@@ -277,11 +277,15 @@ const sqrefShift = (s: string, at: number, k: number) => s.split(/\s+/).map((par
 /** Why rows can't be added safely: other parts point into this sheet by row, and they'd end up pointing at the wrong cells. */
 async function growBlocked(book: Book, sh: Sheet): Promise<string | null> {
   const name = sh.name.replace(/'/g, "''");
-  const mention = new RegExp(`(?:'${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'|\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})!`);
+  // Excel doesn't mind the case of a sheet's name. \b knows no Turkish letters: the name's own start is checked by hand.
+  const safe = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const mention = new RegExp(`(?:'${safe}'|(?<![\\p{L}\\p{N}_.])${safe})!`, "iu");
   const names = all(book.workbook.documentElement, "definedName").filter((d) => !/^_xlnm\.(Print_Area|Print_Titles|_FilterDatabase)$/.test(d.getAttribute("name") ?? ""));
   if (names.some((d) => mention.test(textOf(d)))) return "tanımlı adlar";
-  for (const other of book.sheets) {
-    if (other !== sh && all(other.data, "f").some((f) => mention.test(textOf(f)))) return "başka sayfaların formülleri";
+  // Every sheet in the file, hidden ones too: only visible ones are in book.sheets.
+  for (const path of Object.keys(book.zip.files).filter((p) => /worksheets\/[^/]+\.xml$/.test(p) && p !== sh.path)) {
+    const formulas = all(parseXml(await book.zip.file(path)!.async("string")).documentElement, "f");
+    if (formulas.some((f) => mention.test(textOf(f)))) return "başka sayfaların formülleri";
   }
   const root = sh.doc.documentElement;
   if (kid(root, "tableParts") && kids(kid(root, "tableParts")!, "tablePart").length) return "Excel tablosu";
