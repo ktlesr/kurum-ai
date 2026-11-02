@@ -351,7 +351,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         reply = { role: "assistant", content: "Galeriye ulaşılamadı. Biraz sonra tekrar deneyin.", local: true };
       }
       setStreaming(false);
-      if (!ac.signal.aborted) save([...earlier, asked, reply]);
+      abortRef.current = null;
+      save(ac.signal.aborted ? [...earlier, asked] : [...earlier, asked, reply]);
       return;
     }
     const wish = exportRequest(q);

@@ -12,7 +12,7 @@ import { writeFileAtomic } from "./atomic";
 import { getSetting } from "./db";
 import { exifYear } from "./exif-date";
 import { canSee, parseRules } from "./folder-access";
-import { ScanFailed, readWithin, safeToForget, scanFolder, type Skipped } from "./folder-scan";
+import { ScanFailed, goneLongEnough, readWithin, safeToForget, scanFolder, type Skipped } from "./folder-scan";
 import type { GalleryEntry } from "./gallery-search";
 import { logError } from "./log";
 import { videoFrame } from "./video-frame";
@@ -39,7 +39,7 @@ export type ImageSize = keyof typeof THUMB;
 export const CONTENT_TYPE: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", mkv: "video/x-matroska", avi: "video/x-msvideo", wmv: "video/x-ms-wmv", mpg: "video/mpeg", mpeg: "video/mpeg", mts: "video/mp2t", m2ts: "video/mp2t", "3gp": "video/3gpp" };
 export const isPlayable = (ext: string) => PLAYABLE.has(ext);
 
-interface Caption { v: string; c: string; y?: number; fails?: number }
+interface Caption { v: string; c: string; y?: number; fails?: number; /** Since when no clean scan has found the file. */ gone?: number }
 interface State {
   at: number;
   list: (GalleryEntry & { ext: string })[];
@@ -92,7 +92,13 @@ function refresh(): Promise<void> {
       // Words about photos no longer there go; but a share half there must not cost a month of model time.
       if (safeToForget(before, state.list.length, r.skipped)) {
         const live = new Set(state.list.map((e) => e.id));
-        for (const id of seen.keys()) if (!live.has(id)) { seen.delete(id); state.dirty++; }
+        const now = Date.now();
+        for (const [id, c] of seen) {
+          if (live.has(id)) {
+            if (c.gone) { delete c.gone; state.dirty++; }
+          } else if (!c.gone) { c.gone = now; state.dirty++; }
+          else if (goneLongEnough(c.gone, now)) { seen.delete(id); state.dirty++; }
+        }
         if (state.dirty) saveCaptions();
       }
     } catch (e) {

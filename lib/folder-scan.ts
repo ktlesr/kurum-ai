@@ -28,6 +28,13 @@ const troubled = (e: unknown) => SHARE_TROUBLE.has((e as NodeJS.ErrnoException).
  */
 export const safeToForget = (before: number, after: number, skipped: Skipped) => after > 0 && !skipped.unreadable && !skipped.overLimit && after * 2 >= before;
 
+/**
+ * A file really gone stays gone: what was kept for it goes only after every clean scan for this long has missed it. A share half
+ * there for a day, across restarts too, costs nothing. The clock starts again if the file comes back.
+ */
+export const FORGET_AFTER_MS = 7 * 24 * 60 * 60_000;
+export const goneLongEnough = (since: number, now: number) => now - since >= FORGET_AFTER_MS;
+
 /** A file off a share that can hang: whoever waits for it stops waiting, and what it holds (a slot, a queue place) goes free. */
 export function readWithin(file: string, ms: number, signal?: AbortSignal): Promise<Buffer> {
   const stop = signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
@@ -35,7 +42,8 @@ export function readWithin(file: string, ms: number, signal?: AbortSignal): Prom
     const gone = () => no(stop.reason ?? new Error("read_stopped"));
     if (stop.aborted) return gone();
     stop.addEventListener("abort", gone, { once: true });
-    readFile(file).then(ok, no).finally(() => stop.removeEventListener("abort", gone));
+    // The signal ends the read itself between chunks; the race above frees the waiter even if the share hangs inside one.
+    readFile(file, { signal: stop }).then(ok, no).finally(() => stop.removeEventListener("abort", gone));
   });
 }
 

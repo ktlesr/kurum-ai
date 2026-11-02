@@ -1,5 +1,7 @@
 // The forms to choose from: the institution's Şablonlar folder, and the person's own saved ones.
+import { admission, busy, tooMany } from "@/lib/admission";
 import { requireApiUser } from "@/lib/auth";
+import { Busy } from "@/lib/limits";
 import { MAX_BYTES } from "@/lib/server";
 import { readLimited } from "@/lib/filetype";
 import { sharedTemplatesFor } from "@/lib/library";
@@ -23,6 +25,18 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const user = await requireApiUser(req);
   if (user instanceof Response) return user;
+  if (!admission.uploadPerUser.allow(user.id)) return tooMany("şablon");
+  if (Number(req.headers.get("content-length")) > MAX_BYTES + 1024 * 1024) return fail("Şablon 25 MB sınırını aşıyor.", 413);
+  // The same limit as every upload: how many bodies and their checks are in memory at once.
+  try {
+    return await admission.upload.run(() => save(req, user.id), req.signal);
+  } catch (e) {
+    if (e instanceof Busy) return busy();
+    throw e;
+  }
+}
+
+async function save(req: Request, owner: string): Promise<Response> {
   const raw = await readLimited(req.body, MAX_BYTES + 1024 * 1024).catch(() => undefined);
   if (raw === null) return fail("Şablon 25 MB sınırını aşıyor.", 413);
   const form = raw && (await new Response(raw, { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData().catch(() => null));
@@ -33,7 +47,7 @@ export async function POST(req: Request) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const problem = await templateProblem(format, bytes).catch(() => "Şablon okunamadı. Bozuk olabilir.");
   if (problem) return fail(problem, 415);
-  const saved = await saveMyTemplate(user.id, file.name, String(form.get("folder") ?? ""), bytes);
+  const saved = await saveMyTemplate(owner, file.name, String(form.get("folder") ?? ""), bytes);
   if (!saved) return fail(`En fazla ${MAX_MY_TEMPLATES} şablon kaydedilebilir. Önce birini silin.`, 409);
   return Response.json({ id: saved.id, path: saved.folder ? `${saved.folder}/${saved.name}` : saved.name, name: saved.name });
 }

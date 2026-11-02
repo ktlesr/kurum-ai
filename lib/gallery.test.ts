@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { exifYear } from "./exif-date.ts";
 import { parseRange, videoFrame } from "./video-frame.ts";
 import { canSee, parseRules, ruleFindsFolder, ruleFrom, withRule, withoutRule } from "./folder-access.ts";
-import { ScanFailed, readWithin, safeToForget, scanFolder } from "./folder-scan.ts";
+import { FORGET_AFTER_MS, ScanFailed, goneLongEnough, readWithin, safeToForget, scanFolder } from "./folder-scan.ts";
 import { asksMorePhotos, asksPhotos } from "./gallery-intent.ts";
 import { countOf, foldTr, kindAsked, nearFolders, searchGallery, termsOf, type GalleryEntry } from "./gallery-search.ts";
 import { cleanGallery } from "./local-store.ts";
@@ -73,6 +73,8 @@ test("forgetting: not after a partial read, not when much of the list vanished a
   assert.ok(!safeToForget(100, 100, { ...clean, unreadable: 1 }));
   assert.ok(!safeToForget(100, 100, { ...clean, overLimit: 1 }));
   assert.ok(safeToForget(0, 5, clean));
+  assert.ok(!goneLongEnough(1000, 1000 + FORGET_AFTER_MS - 1));
+  assert.ok(goneLongEnough(1000, 1000 + FORGET_AFTER_MS));
 });
 
 test("reading off a share: the reader stops waiting when told or when time is up", async () => {

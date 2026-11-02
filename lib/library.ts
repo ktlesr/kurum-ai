@@ -10,7 +10,7 @@ import { admission } from "./admission";
 import { writeFileAtomic } from "./atomic";
 import { getSetting } from "./db";
 import { canSee, parseRules, type FolderRule } from "./folder-access";
-import { ScanFailed, readWithin, safeToForget, scanFolder, type Skipped } from "./folder-scan";
+import { ScanFailed, goneLongEnough, readWithin, safeToForget, scanFolder, type Skipped } from "./folder-scan";
 import { contentProblem } from "./filetype";
 import { logError } from "./log";
 import { parseFile, UserError } from "./parse";
@@ -20,6 +20,7 @@ import { withJobDir } from "./workspace";
 const ROOT = () => process.env.SOURCES_DIR || path.join(process.cwd(), "kaynaklar");
 const CACHE = path.join(process.cwd(), ".cache", "shared");
 const CACHE_INDEX = path.join(CACHE, "index.json");
+const CACHE_GONE = path.join(CACHE, "gone.json"); // cache file → since when no file has pointed to it
 const EXT = new Set(["pdf", "docx", "xlsx", "xls", "csv", "txt", "md", "html", "htm"]);
 const TEMPLATE_EXT = new Set(["xlsx", "docx", "pdf", "json"]);
 const MAX_DEPTH = 8;
@@ -159,21 +160,26 @@ function sweepCache() {
     mkdirSync(CACHE, { recursive: true });
     const live = new Set(state.list.map((e) => `${e.id}:${e.size}:${e.mtime}`));
     const index = readIndex();
+    let gone: Record<string, number> = {};
+    try {
+      gone = JSON.parse(readFileSync(CACHE_GONE, "utf8")) as Record<string, number>;
+    } catch {}
+    const now = Date.now();
+    const nextGone: Record<string, number> = {};
     let changed = false;
     for (const [name, keys] of Object.entries(index)) {
-      const left = keys.filter((k) => live.has(k));
-      if (left.length) {
-        if (left.length !== keys.length) changed = true;
-        index[name] = left;
-      } else {
+      if (keys.some((k) => live.has(k))) continue;
+      const since = gone[name] ?? now;
+      if (goneLongEnough(since, now)) {
         rmSync(path.join(CACHE, path.basename(name)), { force: true });
         delete index[name];
         changed = true;
-      }
+      } else nextGone[name] = since;
     }
+    writeFileAtomic(CACHE_GONE, JSON.stringify(nextGone));
     // Extractions from before the index existed have no entry: they can't be matched to a file, so they are read again once.
     const known = new Set(Object.keys(index));
-    for (const f of readdirSync(CACHE)) if (f.endsWith(".json") && f !== "index.json" && !known.has(f)) { rmSync(path.join(CACHE, f), { force: true }); changed = true; }
+    for (const f of readdirSync(CACHE)) if (f.endsWith(".json") && f !== "index.json" && f !== "gone.json" && !known.has(f)) { rmSync(path.join(CACHE, f), { force: true }); changed = true; }
     if (changed) writeFileAtomic(CACHE_INDEX, JSON.stringify(index));
     for (const k of state.loaded.keys()) if (!live.has(k)) state.loaded.delete(k);
   } catch (e) {

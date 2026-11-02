@@ -76,7 +76,7 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 
 Ortak belgeler sunucuda bir klasördedir (`SOURCES_HOST_DIR`, varsayılan `/srv/kurum-ai/kaynaklar`), uygulama salt okunur bağlar. Alt klasörlere dosya koymak yeterlidir; en geç 30 saniye içinde yan menüde görünür. Dosya ilk kullanıldığında okunur, metni önbelleğe alınır. Sohbet belge okumadan başlar: belgeler yan menüden işaretlenince ya da mesajda istenince ("mevzuat klasöründeki kaynakları kullanarak...") okunur.
 
-**NAS:** Klasörü sunucuya bağlayıp `SOURCES_HOST_DIR` ile gösterin. Salt okunur NFS önerilir (`ro,_netdev,nofail,x-systemd.automount`). Tarama arka planda ve süre sınırlıdır; paylaşım koparsa son liste korunur, kullanıcıya ve Yönetim → Kütüphane sayfasına yazılır. Çıkarılan metinler, bir tarama temiz bittiğinde ve dosyanın gerçekten silindiği anlaşıldığında temizlenir.
+**NAS:** Klasörü sunucuya bağlayıp `SOURCES_HOST_DIR` ile gösterin. Salt okunur NFS önerilir (`ro,_netdev,nofail,x-systemd.automount`). Tarama arka planda ve süre sınırlıdır; paylaşım koparsa son liste korunur, kullanıcıya ve Yönetim → Kütüphane sayfasına yazılır. Silinen bir dosyanın çıkarılmış metni ve açıklaması, dosya 7 gün boyunca bütün temiz taramalarda bulunamazsa temizlenir; böylece geçici kopmalarda emek kaybolmaz.
 
 **Yetki:** Kural olmayan klasörü giriş yapan herkes görür. Yönetim → Kütüphane'den klasör başına kullanıcı listesi verilir (`ortak/Personel`, `galeri/2025`). Sohbet, arama, şablon ve görsel isteklerinde aynı şekilde uygulanır.
 
