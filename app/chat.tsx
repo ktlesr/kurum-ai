@@ -2,7 +2,7 @@
 
 import { ProfilePicker, type Profile } from "./profile-picker";
 import { TopLinks } from "./top-links";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -788,7 +788,24 @@ const mdComponents: Components = {
   // Never load images a model answer points to: a URL can carry document text off-site (audit N1). CSP blocks them too.
   img: ({ alt }) => <span className="text-muted">[görsel: {alt || "adsız"}]</span>,
   a: ({ href, children }) => <SafeLink href={href}>{children}</SafeLink>,
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
 };
+
+/** A code block with its language and its own copy button; the bar stays in sight while a long block is scrolled. */
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const pre = useRef<HTMLPreElement>(null);
+  const language = isValidElement<{ className?: string }>(children) ? children.props.className?.match(/language-(\S+)/)?.[1] : undefined;
+  return (
+    <div className="code-block">
+      <div className="code-bar">
+        <span className="min-w-0 truncate">{language ?? "Kod"}</span>
+        {/* Markdown ends every block with a line break that isn't part of the code. */}
+        <CopyButton text={() => (pre.current?.textContent ?? "").replace(/\n$/, "")} title="Kodu kopyala" className="shrink-0 hover:bg-line/60" />
+      </div>
+      <pre ref={pre}>{children}</pre>
+    </div>
+  );
+}
 
 // External links aren't clickable either: a click would hand the URL (and anything the model put in it) to that site.
 function SafeLink({ href, children }: { href?: string; children?: ReactNode }) {
@@ -878,14 +895,47 @@ const timeOf = (at: number) => {
   return d.toLocaleString("tr-TR", today ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 };
 
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+/** Also where the browser has no clipboard API (a page not on https) or refuses it. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const focused = document.activeElement as HTMLElement | null;
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.cssText = "position:fixed;opacity:0";
+    document.body.append(area);
+    area.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      area.remove();
+      focused?.focus();
+    }
+  }
+}
+
+function CopyButton({ text, title, className = "opacity-70 group-hover:opacity-100" }: { text: string | (() => string); title?: string; className?: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   return (
     <button
-      onClick={() => navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}
-      className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted opacity-70 hover:bg-subtle hover:text-fg group-hover:opacity-100"
+      type="button"
+      title={title}
+      onClick={async () => {
+        const done = await copyText(typeof text === "string" ? text : text());
+        setState(done ? "copied" : "failed");
+        clearTimeout(timer.current);
+        timer.current = setTimeout(() => setState("idle"), done ? 1500 : 3000);
+      }}
+      className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted hover:bg-subtle hover:text-fg ${className}`}
     >
-      {copied ? <Check size={13} className="text-ok" /> : <Copy size={13} />} {copied ? "Kopyalandı" : "Kopyala"}
+      {state === "copied" ? <Check size={13} className="text-ok" /> : state === "failed" ? <AlertTriangle size={13} className="text-danger" /> : <Copy size={13} />}
+      <span aria-live="polite">{state === "copied" ? "Kopyalandı" : state === "failed" ? "Kopyalanamadı" : "Kopyala"}</span>
     </button>
   );
 }
