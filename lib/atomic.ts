@@ -9,7 +9,7 @@ import path from "node:path";
  * On Windows NTFS journals the rename itself; a power cut right after can still lose that last rename.
  * `rename` is injectable for tests only.
  */
-export function writeFileAtomic(file: string, data: string, rename = renameSync) {
+export function writeFileAtomic(file: string, data: string | Uint8Array, rename = renameSync) {
   const dir = path.dirname(file);
   mkdirSync(dir, { recursive: true });
   const tmp = `${file}.${randomUUID()}.tmp`;

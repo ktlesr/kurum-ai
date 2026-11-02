@@ -3,7 +3,7 @@ import { countUsage } from "@/lib/usage";
 import { FILE_FORMATS, type FileFormat } from "@/lib/export-doc";
 import { asksForOutline, docOutline, outlineMarkdown } from "@/lib/outline";
 import { cptFor, docsOf, getDoc, recordTokens, type Doc } from "@/lib/server";
-import { isSharedId, sharedDoc, sharedEntry, sharedList, type SharedEntry } from "@/lib/library";
+import { isSharedId, sharedDoc, sharedFor, type SharedEntry } from "@/lib/library";
 import { PICK_PROMPT, matchByName, parsePicked, wantsSources, type SourceEntry } from "@/lib/sources";
 import { parseFile, parsePdf, UserError } from "@/lib/parse";
 import { withJobDir } from "@/lib/workspace";
@@ -206,6 +206,9 @@ export async function POST(req: Request) {
 
   // Another user's doc is indistinguishable from a missing one.
   let selected = fileIds.filter((id) => !isSharedId(id)).map((id) => getDoc(user.id, id)) as Doc[];
+  // Only what this person may see: a closed folder's file looks exactly like a missing one.
+  const visibleShared = await sharedFor(user);
+  const sharedEntry = (id: string) => visibleShared.find((e) => e.id === id);
   const sharedAsked = fileIds.filter(isSharedId).map((id) => sharedEntry(id));
   if (selected.some((d) => !d) || sharedAsked.some((e) => !e)) {
     return fail("Dosya sunucuda bulunamadı. Dosyayı kaldırıp tekrar yükleyin.", 409);
@@ -235,7 +238,7 @@ export async function POST(req: Request) {
         let shared = sharedAsked as SharedEntry[];
         if (!fileIds.length && wantsSources(asked0)) {
           const mine = docsOf(user.id);
-          const entries: SourceEntry[] = [...sharedList().map((e) => ({ id: e.id, path: e.path })), ...mine.map((d) => ({ id: d.id, path: `Belgelerim/${d.folder ? `${d.folder}/` : ""}${d.name}` }))];
+          const entries: SourceEntry[] = [...visibleShared.map((e) => ({ id: e.id, path: e.path })), ...mine.map((d) => ({ id: d.id, path: `Belgelerim/${d.folder ? `${d.folder}/` : ""}${d.name}` }))];
           let picks = matchByName(asked0, entries);
           if (!picks.length && entries.length) {
             status("Kaynaklar taranıyor…");

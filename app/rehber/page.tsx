@@ -17,7 +17,7 @@ const Warn = ({ children }: { children: ReactNode }) => <p className="guide-note
 
 const CONTENTS: [string, string, [string, string][]][] = [
   ["baslarken", "Başlarken", [["giris", "Giriş ve parola"], ["uygulama", "Telefona ve bilgisayara ekleme"], ["veri", "Verileriniz nerede duruyor"]]],
-  ["asistan", "Asistan (sohbet)", [["soru", "Soru sorma"], ["belge", "Belge ekleme"], ["kitaplik", "Ortak belgeler ve Belgelerim"], ["hazir", "Hazır işler ve profiller"], ["kaynak", "Cevapları doğrulama"], ["internet", "İnternet ve bağlantılar"], ["dosya", "Cevabı dosya olarak alma"], ["sablon", "Şablon doldurma"], ["gecmis", "Sohbetleri yönetme ve yedek"], ["sinir", "Sınırlar ve uyarılar"]]],
+  ["asistan", "Asistan (sohbet)", [["soru", "Soru sorma"], ["belge", "Belge ekleme"], ["kitaplik", "Ortak belgeler ve Belgelerim"], ["hazir", "Hazır işler ve profiller"], ["kaynak", "Cevapları doğrulama"], ["internet", "İnternet ve bağlantılar"], ["dosya", "Cevabı dosya olarak alma"], ["sablon", "Şablon doldurma"], ["galeri", "Galeriden fotoğraf getirme"], ["gecmis", "Sohbetleri yönetme ve yedek"], ["sinir", "Sınırlar ve uyarılar"]]],
   ["studyo", "Görsel Stüdyo", [["baslangic", "Başlangıç"], ["sosyal", "Sosyal medya görseli"], ["yapay", "Yapay zekâ ile içerik"], ["sunum", "Sunum"], ["video", "Video / Reels"], ["duzenleme", "Tuvalde düzenleme"], ["marka", "Marka ve logolar"], ["kayit", "Kaydetme ve taşıma"], ["indir", "Dışa aktarma"], ["kisayol", "Klavye kısayolları"]]],
   ["sorun", "Sık karşılaşılan durumlar", []],
 ];
@@ -186,12 +186,24 @@ export default async function GuidePage() {
               <ol className="list-decimal space-y-1 pl-5">
                 <li>Bilginin alınacağı belgeleri sohbete ekleyin.</li>
                 <li>Yazı kutusunun altındaki <L>Şablon doldur</L> simgesine basın ya da <em>“bilgileri şablona aktar”</em> yazın.</li>
-                <li><L>Şablon seç (Excel, Word, PDF, JSON)</L> ile boş şablonu gösterin, varsa özel isteğinizi yazın (örn. yalnızca 2025 kayıtları) ve <L>Belgelerden doldur</L>a basın.</li>
+                <li><em>Kayıtlı şablonlardan</em> birini seçin ya da <L>Şablon seç (Excel, Word, PDF, JSON)</L> ile bilgisayarınızdan gösterin (<L>Şablonlarıma kaydet</L> ile bir daha yüklemezsiniz). Varsa özel isteğinizi yazın (örn. yalnızca 2025 kayıtları) ve <L>Belgelerden doldur</L>a basın.</li>
                 <li>Bulunan değerleri kontrol edin, gerekirse düzeltin, <L>Dolu şablonu indir</L>e basın.</li>
               </ol>
               <p>Her değerin yanında geldiği belge ve bölüm görünür. Belgede aynen bulunamayan bir değer şablona kendiliğinden yazılmaz, <em>“Doğrulanamadı”</em> diye önerilir; doğruysa üstüne basarak kullanırsınız. Belgede olmayan alan boş kalır.</p>
               <p>Boş hücreler, tablo satırları ve <em>Ad:</em> gibi etiketler kendiliğinden tanınır. Tanınmayan yerlere <code>{"{{ad soyad}}"}</code> ya da <code>____</code> gibi işaret koyabilirsiniz.</p>
               <Warn>Kayıtlar boş satırlardan fazlaysa Word&apos;de ve çoğu Excel şablonunda satır eklenir. PDF&apos;e satır eklenemez: sığmayan kayıtlar ve alana sığmayan değerler yazılmaz, size söylenir. Bu durumda şablonun Word ya da Excel halini kullanın. Taranmış (metni olmayan) PDF şablonları okunamaz. Sonucu kullanmadan önce mutlaka kontrol edin.</Warn>
+            </Topic>
+            <Topic id="galeri" title="Galeriden fotoğraf getirme">
+              <p>Kurumun fotoğraf arşivinden sohbetle fotoğraf isteyebilirsiniz:</p>
+              <ul className="list-disc space-y-1 pl-5">
+                <li><em>“uşak kilim projesinin resimlerinden 3 tanesini getir”</em></li>
+                <li><em>“2025 fuar fotoğraflarını göster”</em></li>
+                <li><em>“uşak kilim videolarını göster”</em></li>
+                <li>Devamı için: <em>“3 tane daha”</em></li>
+              </ul>
+              <p>Küçük resme basınca büyür; <L>Stüdyoda kullan</L> ile tasarıma alır, <L>İndir</L> ile aslını indirirsiniz. Stüdyoda <L>Görsel</L> panelindeki <L>Galeriden seç</L> de aynı arşivi açar.</p>
+              <p>Arama önce klasör ve dosya adlarına, sonra yerel modelin fotoğraflara yazdığı açıklamalara bakar. Yalnızca arşivde gerçekten bulunan dosyalar gösterilir, resim üretilmez. Kişileri yüzünden tanımaz.</p>
+              <p>Videolar büyük olsa da sayfada oynatılır ve ileri sarılabilir; video önce tamamen inmez. MP4 ve WEBM genellikle doğrudan oynar. AVI, WMV, MKV gibi biçimler ve bazı MOV dosyaları tarayıcıda oynamaz, <L>İndir</L> ile alırsınız. Videonun içeriği yalnızca bir karesinden tarif edilir, bu yüzden klasör adı videolarda daha da önemlidir.</p>
             </Topic>
             <Topic id="gecmis" title="Sohbetleri yönetme ve yedek">
               <ul className="list-disc space-y-1 pl-5">

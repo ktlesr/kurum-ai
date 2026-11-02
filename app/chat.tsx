@@ -15,7 +15,10 @@ import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
 import { useChats } from "./use-chats";
 import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, plainNumbering, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
-import { keepMessages, searchChats, titleFrom, type Message, type StoredChat } from "@/lib/local-store";
+import { keepMessages, searchChats, titleFrom, type GalleryPhoto, type Message, type StoredChat } from "@/lib/local-store";
+import { asksMorePhotos, asksPhotos } from "@/lib/gallery-intent";
+import { countOf } from "@/lib/gallery-search";
+import { GalleryGrid } from "./gallery-view";
 import { FILE_FORMATS, exportDoc, turnOf, type ExportDoc } from "@/lib/export-doc";
 import { exportRequest } from "@/lib/export-intent";
 import { asksTemplateFill } from "@/lib/template-intent";
@@ -121,6 +124,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const uploads = useRef(new Map<string, AbortController>());
   const uploadedFiles = useRef(new Map<string, File>());
   const [templateOpen, setTemplateOpen] = useState<{ instruction: string } | null>(null);
+  const [sharedDown, setSharedDown] = useState(false);
   const streamingRef = useRef(false);
   const chatIdRef = useRef<string | null>(null);
   const libRef = useRef<LibItem[]>([]);
@@ -176,7 +180,10 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   }, [shared, personal, pendingDocs]);
   const refreshLibrary = useCallback(() => {
     // A failed request keeps the list as it is; the next round tries again.
-    const a = api("/api/library").then(async (r) => r.ok && (setShared(await r.json()), true)).catch(() => false);
+    const a = api("/api/library").then(async (r) => {
+      if (r.ok) setSharedDown(r.headers.get("X-Library-Status") === "down");
+      return r.ok && (setShared(await r.json()), true);
+    }).catch(() => false);
     const b = api("/api/upload")
       .then(async (r) => r.ok && (setPersonal(((await r.json()) as DocMeta[]).map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind, path: `${d.folder ? `${d.folder}/` : ""}${d.name}`, warning: d.warning, verify: d.verify }))), true))
       .catch(() => false);
@@ -297,6 +304,51 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     // An edited question replaces itself and everything after it.
     const earlier = keepMessages(messages.slice(0, editOf), (m) => !m.error);
     const history: Message[] = [...earlier, { role: "user", content: q, at: Date.now() }];
+    // Photos from the archive: found by the server from names and what it saw, so no model is needed and nothing can be made up.
+    const lastPhotos = earlier.findLast((m) => m.gallery)?.gallery;
+    const morePhotos = !!lastPhotos && asksMorePhotos(q);
+    if (editOf === undefined && (morePhotos || asksPhotos(q))) {
+      const query = morePhotos ? lastPhotos.query : q;
+      const n = countOf(q);
+      const offset = morePhotos ? lastPhotos.shown : 0;
+      const id = chatId ?? crypto.randomUUID();
+      const asked: Message = { ...history[history.length - 1], local: true };
+      const save = (all: Message[]) => {
+        setMessages(all);
+        local.upsert(id, (cur) => ({
+          ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
+          updatedAt: Date.now(), model, docIds: ready.map((f) => f.serverId!).filter(Boolean),
+          messages: all.map(stored),
+        }));
+      };
+      setChatId(id);
+      setInput("");
+      setMessages([...earlier, asked, { role: "assistant", content: "", status: "Galeride aranıyor…", startedAt: Date.now(), local: true }]);
+      let reply: Message;
+      try {
+        const r = await api(`/api/gallery?${new URLSearchParams({ q: query, n: String(n), offset: String(offset) })}`);
+        if (!r.ok) throw new Error();
+        const j = (await r.json()) as { total: number; folder?: string; items: GalleryPhoto[]; near?: string[]; down?: boolean };
+        const shown = offset + j.items.length;
+        const away = j.down ? "\n\nGaleri klasörüne şu an ulaşılamıyor, son bilinen liste kullanıldı." : "";
+        reply = j.items.length
+          ? {
+              role: "assistant",
+              local: true,
+              content: `${j.folder ? `**${j.folder}** klasörü ve eşleşen diğer yerlerde` : "Galeride"} ${fmtNum(j.total)} sonuç bulundu, ${offset ? `${offset + 1}-${shown} arası` : `${fmtNum(j.items.length)} tanesi`}:${shown < j.total ? ` Devamı için "${Math.min(n, j.total - shown)} tane daha" yazın.` : ""}${away}`,
+              gallery: { query, shown, total: j.total, items: j.items },
+            }
+          : {
+              role: "assistant",
+              local: true,
+              content: `${morePhotos ? "Gösterilecek başka sonuç kalmadı." : "Galeride bu istekle eşleşen fotoğraf ya da video bulunamadı."}${j.near?.length ? `\n\nBenzer klasörler:\n${j.near.map((d) => `- ${d}`).join("\n")}` : ""}${away}`,
+            };
+      } catch {
+        reply = { role: "assistant", content: "Galeriye ulaşılamadı. Biraz sonra tekrar deneyin.", local: true };
+      }
+      save([...earlier, asked, reply]);
+      return;
+    }
     const wish = exportRequest(q);
     // Only a file of the answer before it: no model has anything to do here, so it works when the model is busy or down too.
     if (wish && !wish.rest) {
@@ -603,7 +655,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         </ul>
       </nav>
 
-      <LibraryPanel shared={shared} personal={personal} attached={attachedIds} onToggle={toggleDocs} onOpen={(id) => setSource({ serverId: id })} onDelete={deleteDoc} onMove={moveDoc} onUpload={() => fileInput.current?.click()} />
+      <LibraryPanel shared={shared} sharedDown={sharedDown} personal={personal} attached={attachedIds} onToggle={toggleDocs} onOpen={(id) => setSource({ serverId: id })} onDelete={deleteDoc} onMove={moveDoc} onUpload={() => fileInput.current?.click()} />
 
       <details className="group border-t border-line px-3 py-2 text-xs text-muted">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md py-1 hover:text-fg">
@@ -1026,7 +1078,7 @@ function Question({ m, busy, onEdit }: { m: Message; busy: boolean; onEdit: (tex
 }
 
 /** What a stored message keeps. */
-const stored = ({ role, content, at, error, meta, timing, files, fileOf, local }: Message): Message => ({ role, content, ...(at ? { at } : {}), ...(error ? { error } : {}), ...(meta ? { meta } : {}), ...(timing ? { timing } : {}), ...(files ? { files } : {}), ...(fileOf !== undefined ? { fileOf } : {}), ...(local ? { local } : {}) });
+const stored = ({ role, content, at, error, meta, timing, files, fileOf, local, gallery }: Message): Message => ({ role, content, ...(gallery ? { gallery } : {}), ...(at ? { at } : {}), ...(error ? { error } : {}), ...(meta ? { meta } : {}), ...(timing ? { timing } : {}), ...(files ? { files } : {}), ...(fileOf !== undefined ? { fileOf } : {}), ...(local ? { local } : {}) });
 const turnFrom = (messages: Message[], i: number) => {
   const m = messages[i];
   const question = messages.slice(0, i).findLast((x) => x.role === "user" && !x.local);
@@ -1093,6 +1145,7 @@ function Bubble({ m, fileReady, live, busy, onEdit, onSource, doc }: { m: Messag
       )}
       {!live && m.meta && <MetaNotes meta={m.meta} onSource={onSource} />}
       {!live && !!m.files?.length && fileReady && <FileCards doc={doc} formats={m.files} />}
+      {!!m.gallery?.items.length && <GalleryGrid items={m.gallery.items} />}
       {!live && m.content && !m.local && (
         <div className="mt-2 flex items-center gap-3">
           <CopyButton text={m.content} />

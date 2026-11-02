@@ -41,6 +41,7 @@ import { BACKDROPS, ENTRANCES, MAX_SCENES, REELS_PACKS, SCENE_SECONDS, TRANSITIO
 import { cleanDeck, listWorks, removeWork, saveWork, thumbnail, type SavedDeck, type Work, patchVideo } from "./works";
 import { cuesOf, toSrt, toVtt } from "@/lib/subtitles";
 import { EXPORTS, SAMPLE, brandKey, download, imageOf, loadBrand, readPicture, thumbOf, useStudioFont, whiteLogo } from "./media";
+import { GalleryPicker } from "../gallery-view";
 import {
   DEFAULT_BRAND, FORMATS, LIMITS, GRADIENT_DIRS, MAX_PIC_ZOOM, SHAPES, TEMPLATES, templatesOf, aabb, alignEls, fitPill, inkOn, shade, cleanEls, distributeEls, type AlignTo, fromTemplate, hug, newId, refit, shapeFrom, shapeStyleOf, changeShape, svgOf, toSvg, isHolder, TEXT_WEIGHTS, editedText, fontsOfText, setTextStyle, textStyleAt, type TextStyle, type GradientDir, type ShapeId, type ShapeStyle,
   type Brand, type Content, type El, type FormatId, type ImageEl, type Picture, type Role, type ShapeEl, type TemplateId, type TextEl,
@@ -697,6 +698,29 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
       setNote({ kind: "error", text: (e as Error).message });
     }
   }
+  // "Stüdyoda kullan" under a photo in the chat: /studio?galeri=<id> opens a new design with it.
+  const [galleryPic, setGalleryPic] = useState<File | null>(null);
+  const beginRef = useRef<((m: Mode) => void) | null>(null);
+  useEffect(() => { beginRef.current = begin; });
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("galeri");
+    if (!id) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    void fetch(`/api/gallery/image?id=${encodeURIComponent(id)}&size=view`)
+      .then(async (r) => {
+        if (!r.ok) throw new Error();
+        beginRef.current?.("gorsel");
+        setGalleryPic(new File([await r.blob()], "galeri.jpg", { type: "image/jpeg" }));
+      })
+      .catch(() => setNote({ kind: "error", text: "Galeriden fotoğraf alınamadı." }));
+  }, []);
+  useEffect(() => {
+    if (!galleryPic || !mode) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- handed over once, as soon as the editor is open
+    setGalleryPic(null);
+    void pick("image", galleryPic);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pick reads the design that is open now
+  }, [galleryPic, mode]);
   const [placing, setPlacing] = useState<string | null>(null);
   // Only while it is the one chosen thing: choosing anything else ends it by itself.
   const placingNow = placing && picked.length === 1 && picked[0] === placing && view.some((e) => e.id === placing && e.kind === "shape" && e.picFill && !isHolder(e)) ? placing : null;
@@ -1853,6 +1877,7 @@ export default function Studio({ username, isAdmin }: { username: string; isAdmi
     if (open === "images") return (
       <section className={section}>
         <Picker label="Görsel yükle" accept=".png,.jpg,.jpeg,.webp" onPick={(f) => pick("image", f)} />
+        <GalleryPicker onPick={(f) => pick("image", f)} />
         <button onClick={() => addLogo()} disabled={!brand.logo} title={brand.logo ? undefined : "Önce Marka panelinden logo ekleyin"} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm hover:border-accent hover:text-accent disabled:opacity-40">
           <Stamp size={15} /> Logoyu tasarıma ekle
         </button>

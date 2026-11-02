@@ -55,6 +55,8 @@ services:
     volumes:
       - appdata:/app/.cache
       - ${SOURCES_HOST_DIR:-/srv/kurum-ai/kaynaklar}:/app/kaynaklar:ro
+      # The photo archive (lib/gallery), kept apart from the documents: it can be on another NAS share.
+      - ${GALLERY_HOST_DIR:-/srv/kurum-ai/galeri}:/app/galeri:ro
     expose: ["3000"]
     # cgroup cap for the app and its Docling child (audit S5: RLIMIT_AS breaks torch; a cgroup limit doesn't).
     mem_limit: ${APP_MEM_LIMIT:-16g}

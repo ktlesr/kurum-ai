@@ -37,6 +37,8 @@ export async function boot() {
   }
   if (!ok) die("aynı veritabanında başka bir Zafer AI instance'ı çalışıyor; bu instance başlatılmadı");
   g.__instanceLock = lock;
+  // After the lock: one worker per database, whatever else is starting.
+  (await import("./gallery")).startGalleryWorker();
 
   // Belt and braces: confirm the lock is still held by this very session (catches a silent reconnect).
   setInterval(async () => {

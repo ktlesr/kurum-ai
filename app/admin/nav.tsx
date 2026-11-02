@@ -1,13 +1,14 @@
 "use client";
 
 // Beside the page on a wide screen, a row above it on a phone. A new section is one more line in ITEMS.
-import { LayoutDashboard, Settings, Users } from "lucide-react";
+import { FolderTree, LayoutDashboard, Settings, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const ITEMS = [
   { href: "/admin", label: "Dashboard", Icon: LayoutDashboard },
   { href: "/admin/kullanicilar", label: "Kullanıcılar", Icon: Users },
+  { href: "/admin/kutuphane", label: "Kütüphane", Icon: FolderTree },
   { href: "/admin/ayarlar", label: "Ayarlar", Icon: Settings },
 ];
 

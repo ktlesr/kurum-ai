@@ -2,12 +2,24 @@
 
 // "Şablon doldur": a blank form of the user's, plus the documents of this chat. The values are shown for checking first: what the
 // documents really say comes filled in with where it stands; what the model said but the documents don't, only as an offer.
-import { AlertTriangle, Check, Download, FileInput, Loader2, Plus, Trash2, Upload, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, Check, Download, FileInput, Loader2, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Layout, Values } from "@/lib/template";
 import type { Extraction, FoundValue } from "@/lib/template-extract";
 
 export interface PanelDoc { id: string; name: string; file?: File }
+/** A form to fill: a file from this computer, or one kept on the server (by id). */
+type Chosen = { name: string; file?: File; id?: string; docId?: string; mine?: boolean };
+type KeptForm = { id: string; path: string; name: string };
+const groups = (top: string, forms: KeptForm[]): [string, KeptForm[]][] => {
+  const by = new Map<string, KeptForm[]>();
+  for (const f of forms) {
+    const dir = f.path.split("/").slice(0, -1).join(" / ");
+    const key = dir ? `${top}: ${dir}` : top;
+    by.set(key, [...(by.get(key) ?? []), f]);
+  }
+  return [...by.entries()];
+};
 type Stage = { step: "setup" } | { step: "reading"; text: string; done?: number; total?: number } | { step: "review" };
 
 export const TEMPLATE_ACCEPT = ".xlsx,.docx,.pdf,.json";
@@ -35,7 +47,10 @@ export function TemplatePanel({ docs, model, initialInstruction, api, onClose }:
   onClose: () => void;
 }) {
   const guessed = guessTemplate(docs);
-  const [template, setTemplate] = useState<{ file: File; docId?: string } | null>(guessed?.file ? { file: guessed.file, docId: guessed.id } : null);
+  const [template, setTemplate] = useState<Chosen | null>(guessed?.file ? { file: guessed.file, name: guessed.file.name, docId: guessed.id } : null);
+  const [kept, setKept] = useState<{ shared: KeptForm[]; mine: KeptForm[] } | null>(null);
+  const [folder, setFolder] = useState("");
+  const [keeping, setKeeping] = useState(false);
   const [off, setOff] = useState<Set<string>>(new Set());
   const [instruction, setInstruction] = useState(initialInstruction);
   const [stage, setStage] = useState<Stage>({ step: "setup" });
@@ -53,6 +68,43 @@ export function TemplatePanel({ docs, model, initialInstruction, api, onClose }:
     if (d && !d.open) d.showModal();
     return () => ac.current?.abort();
   }, []);
+  const loadKept = useCallback(() => {
+    void api("/api/template/library").then(async (r) => { if (r.ok) setKept(await r.json()); }).catch(() => {});
+  }, [api]);
+  useEffect(() => loadKept(), [loadKept]);
+
+  /** On any request: the file itself, or the id of a form kept on the server. */
+  const attach = (body: FormData, t: Chosen) => {
+    if (t.file) body.append("file", t.file);
+    else if (t.id) body.append("templateId", t.id);
+  };
+  const keep = async () => {
+    if (!template?.file) return;
+    setKeeping(true);
+    setError("");
+    const body = new FormData();
+    body.append("file", template.file);
+    body.append("folder", folder);
+    try {
+      const r = await api("/api/template/library", { method: "POST", body });
+      const j = (await r.json().catch(() => ({}))) as { id?: string; name?: string; error?: string };
+      if (!r.ok || !j.id) return setError(j.error ?? "Şablon kaydedilemedi.");
+      setTemplate({ id: j.id, name: j.name ?? template.name, mine: true });
+      loadKept();
+    } catch {
+      setError("Sunucuya ulaşılamadı.");
+    } finally {
+      setKeeping(false);
+    }
+  };
+  const forget = async () => {
+    if (!template?.id) return;
+    setError("");
+    const r = await api(`/api/template/library?id=${encodeURIComponent(template.id)}`, { method: "DELETE" }).catch(() => null);
+    if (!r?.ok) return setError("Şablon silinemedi.");
+    setTemplate(null);
+    loadKept();
+  };
 
   const sources = docs.filter((d) => d.id !== template?.docId && !off.has(d.id));
 
@@ -61,7 +113,7 @@ export function TemplatePanel({ docs, model, initialInstruction, api, onClose }:
     setError("");
     setStage({ step: "reading", text: "Şablon inceleniyor" });
     const body = new FormData();
-    body.append("file", template.file);
+    attach(body, template);
     body.append("action", "read");
     body.append("model", model);
     body.append("instruction", instruction);
@@ -129,7 +181,7 @@ export function TemplatePanel({ docs, model, initialInstruction, api, onClose }:
       tables: Object.fromEntries(Object.entries(found.tables).map(([k, rows]) => [k, rows.map((row) => row.map((c) => c.value))])),
     };
     const body = new FormData();
-    body.append("file", template.file);
+    attach(body, template);
     body.append("action", "fill");
     body.append("values", JSON.stringify(values));
     try {
@@ -143,9 +195,9 @@ export function TemplatePanel({ docs, model, initialInstruction, api, onClose }:
       setNotes([...found.notes, ...said]);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement("a");
-      const dot = template.file.name.lastIndexOf(".");
+      const dot = template.name.lastIndexOf(".");
       a.href = url;
-      a.download = `${template.file.name.slice(0, dot)} (dolu)${template.file.name.slice(dot)}`;
+      a.download = `${template.name.slice(0, dot)} (dolu)${template.name.slice(dot)}`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 30_000);
       setSaved(true);
@@ -170,7 +222,7 @@ export function TemplatePanel({ docs, model, initialInstruction, api, onClose }:
       <div className="flex max-h-[calc(100dvh-48px)] flex-col">
         <header className="flex items-center gap-2 border-b border-line px-4 py-3">
           <FileInput size={17} className="text-accent" />
-          <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold">Şablon doldur{template ? `: ${template.file.name}` : ""}</h2>
+          <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold">Şablon doldur{template ? `: ${template.name}` : ""}</h2>
           <button type="button" onClick={close} aria-label="Kapat" className="grid size-8 place-items-center rounded-md text-muted hover:bg-subtle hover:text-fg"><X size={16} /></button>
         </header>
 
@@ -180,15 +232,42 @@ export function TemplatePanel({ docs, model, initialInstruction, api, onClose }:
               <p className="text-xs text-muted">Boş şablonunuz kendi biçimiyle doldurulur. Dosya sunucuda saklanmaz, belgeler kurum dışına çıkmaz.</p>
               <div>
                 <p className="mb-1.5 font-medium">1. Boş şablon</p>
+                {!!kept && kept.shared.length + kept.mine.length > 0 && (
+                  <label className="mb-2 flex flex-col gap-1 text-xs text-muted">
+                    Kayıtlı şablonlardan
+                    <select
+                      aria-label="Kayıtlı şablonlar"
+                      value={template?.id ?? ""}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        const mine = kept.mine.find((t) => t.id === id);
+                        const form = mine ?? kept.shared.find((t) => t.id === id);
+                        setTemplate(form ? { id: form.id, name: form.name, mine: !!mine } : null);
+                      }}
+                      className="h-9 w-full rounded-lg border border-line bg-bg px-2 text-sm text-fg outline-none focus:border-accent"
+                    >
+                      <option value="">Seçin…</option>
+                      {groups("Ortak", kept.shared).map(([group, forms]) => <optgroup key={group} label={group}>{forms.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</optgroup>)}
+                      {groups("Şablonlarım", kept.mine).map(([group, forms]) => <optgroup key={group} label={group}>{forms.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</optgroup>)}
+                    </select>
+                  </label>
+                )}
                 <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-line px-3 py-2.5 hover:bg-subtle">
                   <Upload size={15} className="text-muted" />
-                  <span className="min-w-0 flex-1 truncate">{template ? template.file.name : "Şablon seç (Excel, Word, PDF, JSON)"}</span>
-                  <input type="file" accept={TEMPLATE_ACCEPT} className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) setTemplate({ file: f }); e.target.value = ""; }} />
+                  <span className="min-w-0 flex-1 truncate">{template?.file ? template.name : "Şablon seç (Excel, Word, PDF, JSON)"}</span>
+                  <input type="file" accept={TEMPLATE_ACCEPT} className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) setTemplate({ file: f, name: f.name }); e.target.value = ""; }} />
                 </label>
+                {template?.file && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <input value={folder} onChange={(e) => setFolder(e.target.value)} maxLength={120} aria-label="Şablonlarım içinde klasör" placeholder="Klasör (örn. Excel/Raporlar), isteğe bağlı" className="h-8 min-w-40 flex-1 rounded-md border border-line bg-bg px-2 text-xs outline-none focus:border-accent" />
+                    <button type="button" onClick={() => void keep()} disabled={keeping} className="flex h-8 items-center gap-1.5 rounded-md border border-line px-2.5 text-xs hover:bg-subtle disabled:opacity-50">{keeping ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Şablonlarıma kaydet</button>
+                  </div>
+                )}
+                {template?.mine && <button type="button" onClick={() => void forget()} className="mt-2 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted hover:bg-subtle hover:text-danger"><Trash2 size={13} /> Şablonlarımdan sil</button>}
                 {docs.some((d) => d.file && isTemplateFile(d.name)) && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {docs.filter((d) => d.file && isTemplateFile(d.name)).map((d) => (
-                      <button key={d.id} type="button" onClick={() => setTemplate({ file: d.file!, docId: d.id })} aria-pressed={template?.docId === d.id} className={`max-w-60 truncate rounded-md border px-2 py-1 text-xs ${template?.docId === d.id ? "border-accent bg-accent-soft" : "border-line text-muted hover:bg-subtle"}`}>{d.name}</button>
+                      <button key={d.id} type="button" onClick={() => setTemplate({ file: d.file!, name: d.name, docId: d.id })} aria-pressed={template?.docId === d.id} className={`max-w-60 truncate rounded-md border px-2 py-1 text-xs ${template?.docId === d.id ? "border-accent bg-accent-soft" : "border-line text-muted hover:bg-subtle"}`}>{d.name}</button>
                     ))}
                   </div>
                 )}

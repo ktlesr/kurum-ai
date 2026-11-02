@@ -12,6 +12,7 @@
     "test:restart": "node --env-file-if-exists=.env.local --test tests/restart.test.ts"
   },
   "dependencies": {
+    "@napi-rs/canvas": "1.0.9",
     "@pdf-lib/fontkit": "1.1.1",
     "@xmldom/xmldom": "0.8.15",
     "docx": "9.5.1",

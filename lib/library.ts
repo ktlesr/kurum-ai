@@ -1,66 +1,184 @@
 import "server-only";
-// The shared document library: a read-only folder on the server (SOURCES_DIR, a bind mount), organised by the
-// institution in subfolders. Every signed-in user can read it; files are read and extracted only when a chat asks for
-// them, once per content, and the text is cached under .cache/shared. The browser only ever sends ids from a scan, so
-// no path from a request reaches the disk. Symlinks are skipped: nothing outside the folder can be read through one.
+// The shared document library: a read-only folder on the server (SOURCES_DIR, a bind mount, possibly a NAS), organised by the
+// institution in subfolders. Files are read and extracted only when a chat asks for them, once per content, and the text is cached
+// under .cache/shared. The browser only ever sends ids from a scan, so no path from a request reaches the disk. Who sees what:
+// lib/folder-access. A folder named Şablonlar holds blank forms: they are listed apart and never read as a source.
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { admission } from "./admission";
 import { writeFileAtomic } from "./atomic";
+import { getSetting } from "./db";
+import { canSee, parseRules, type FolderRule } from "./folder-access";
+import { ScanFailed, scanFolder, type Skipped } from "./folder-scan";
 import { contentProblem } from "./filetype";
+import { logError } from "./log";
 import { parseFile, UserError } from "./parse";
 import { MAX_BYTES, type Doc, type DocKind } from "./server";
 import { withJobDir } from "./workspace";
 
 const ROOT = () => process.env.SOURCES_DIR || path.join(process.cwd(), "kaynaklar");
 const CACHE = path.join(process.cwd(), ".cache", "shared");
+const CACHE_INDEX = path.join(CACHE, "index.json");
 const EXT = new Set(["pdf", "docx", "xlsx", "xls", "csv", "txt", "md", "html", "htm"]);
+const TEMPLATE_EXT = new Set(["xlsx", "docx", "pdf", "json"]);
 const MAX_DEPTH = 8;
-const MAX_FILES = 5000;
+const MAX_FILES = Number(process.env.SOURCES_MAX_FILES) || 20_000;
 const SCAN_MS = 15_000; // new files appear within this long
+const SCAN_DEADLINE_MS = Number(process.env.SOURCES_SCAN_MS) || 60_000;
+const SWEEP_MS = 60 * 60_000;
 const MAX_LOADED = 50; // documents kept in memory with their search vectors
 
 export const isSharedId = (id: string) => id.startsWith("s-");
 export interface SharedEntry { id: string; path: string; name: string; size: number; kind: DocKind; mtime: number }
+export type Viewer = { username: string; role: string };
 
 const kindOf = (ext: string): DocKind => (ext === "pdf" ? "pdf" : ext === "docx" ? "docx" : ext === "xlsx" || ext === "xls" || ext === "csv" ? "sheet" : "text");
+const fold = (s: string) => s.toLocaleLowerCase("tr").replace(/ş/g, "s");
+export const isTemplatePath = (p: string) => p.split("/").slice(0, -1).some((seg) => ["sablonlar", "templates"].includes(fold(seg)));
 
-const g = globalThis as typeof globalThis & { __shared?: { at: number; list: SharedEntry[]; loaded: Map<string, Doc>; running: Map<string, Promise<Doc>> } };
-const state = (g.__shared ??= { at: 0, list: [], loaded: new Map(), running: new Map() });
+export interface LibraryStatus { ok: boolean; at: number; count: number; templates: number; skipped: Skipped | null; error?: string; root: string; dirs: string[] }
 
-function walk(dir: string, rel: string, depth: number, out: SharedEntry[]) {
-  if (depth > MAX_DEPTH || out.length >= MAX_FILES) return;
-  let names: string[];
-  try {
-    names = readdirSync(dir).sort((a, b) => a.localeCompare(b, "tr"));
-  } catch {
-    return; // unreadable or missing: an empty library, not an error
-  }
-  for (const n of names) {
-    if (n.startsWith(".") || out.length >= MAX_FILES) continue;
-    const full = path.join(dir, n);
-    const st = lstatSync(full, { throwIfNoEntry: false });
-    if (!st || st.isSymbolicLink()) continue;
-    const r = rel ? `${rel}/${n}` : n;
-    if (st.isDirectory()) walk(full, r, depth + 1, out);
-    else if (st.isFile() && st.size > 0 && st.size <= MAX_BYTES) {
-      const ext = n.toLowerCase().split(".").pop() ?? "";
-      if (EXT.has(ext)) out.push({ id: `s-${createHash("sha256").update(r).digest("hex").slice(0, 40)}`, path: r, name: n, size: st.size, kind: kindOf(ext), mtime: st.mtimeMs });
+interface State {
+  at: number;
+  list: SharedEntry[];
+  templates: SharedEntry[];
+  loaded: Map<string, Doc>;
+  running: Map<string, Promise<Doc>>;
+  scan?: Promise<void>;
+  /** A scan has ended, well or not: before that the list can't be told from an empty one. */
+  scanned: boolean;
+  ok: boolean;
+  error?: string;
+  skipped: Skipped | null;
+  dirs: string[];
+  swept: number;
+  rules?: { at: number; rules: FolderRule[] };
+}
+const g = globalThis as typeof globalThis & { __shared2?: State };
+const state: State = (g.__shared2 ??= { at: 0, list: [], templates: [], loaded: new Map(), running: new Map(), scanned: false, ok: true, skipped: null, dirs: [], swept: 0 });
+
+const entryOf = (f: { path: string; name: string; ext: string; size: number; mtime: number }): SharedEntry => ({ id: `s-${createHash("sha256").update(f.path).digest("hex").slice(0, 40)}`, path: f.path, name: f.name, size: f.size, kind: kindOf(f.ext), mtime: f.mtime });
+
+/** Runs in the background: readers get the last good list at once, and a share that went away keeps that list. */
+function refresh(): Promise<void> {
+  return (state.scan ??= (async () => {
+    try {
+      const r = await scanFolder(ROOT(), {
+        accept: (ext, rel) => (isTemplatePath(rel) ? TEMPLATE_EXT.has(ext) : EXT.has(ext)),
+        maxBytes: MAX_BYTES,
+        maxDepth: MAX_DEPTH,
+        maxFiles: MAX_FILES,
+        deadlineMs: SCAN_DEADLINE_MS,
+      });
+      state.templates = r.files.filter((f) => isTemplatePath(f.path)).map(entryOf);
+      state.list = r.files.filter((f) => !isTemplatePath(f.path)).map(entryOf);
+      state.skipped = r.skipped;
+      state.dirs = r.dirs;
+      state.ok = true;
+      state.error = undefined;
+      sweepCache();
+    } catch (e) {
+      // A folder that was never set up is an empty library, as it always was; a share that was there and went away is an outage.
+      const code = e instanceof ScanFailed ? e.message : "unreadable";
+      if (code === "ENOENT" && !state.list.length) {
+        state.ok = true;
+        state.error = undefined;
+      } else {
+        state.ok = false;
+        state.error = code;
+        if (!(e instanceof ScanFailed)) logError("library", e);
+      }
+    } finally {
+      state.at = Date.now();
+      state.scanned = true;
+      state.scan = undefined;
     }
+  })());
+}
+
+/** Waits only when nothing was ever scanned, and not forever: a hung share must not hold up a question. */
+async function fresh(): Promise<void> {
+  if (Date.now() - state.at > SCAN_MS) {
+    const p = refresh();
+    if (!state.scanned) await Promise.race([p, new Promise((r) => setTimeout(r, 5000))]);
   }
 }
 
-export function sharedList(): SharedEntry[] {
-  if (Date.now() - state.at > SCAN_MS) {
-    const out: SharedEntry[] = [];
-    walk(ROOT(), "", 0, out);
-    state.list = out;
-    state.at = Date.now();
-  }
-  return state.list;
+async function rules(): Promise<FolderRule[]> {
+  if (state.rules && Date.now() - state.rules.at < 5000) return state.rules.rules;
+  // Unreadable rules close the folders they may have closed: everyone but admins sees nothing until they can be read.
+  const r = parseRules(await getSetting("folder_access"));
+  state.rules = { at: Date.now(), rules: r };
+  return r;
 }
-export const sharedEntry = (id: string) => sharedList().find((e) => e.id === id);
+export const dropRulesCache = () => { state.rules = undefined; };
+
+/** What this person may see. */
+export async function sharedFor(who: Viewer): Promise<SharedEntry[]> {
+  await fresh();
+  if (who.role === "admin") return state.list;
+  const rs = await rules().catch(() => null);
+  return rs ? state.list.filter((e) => canSee(e.path, who, rs)) : [];
+}
+export async function sharedTemplatesFor(who: Viewer): Promise<SharedEntry[]> {
+  await fresh();
+  if (who.role === "admin") return state.templates;
+  const rs = await rules().catch(() => null);
+  return rs ? state.templates.filter((e) => canSee(e.path, who, rs)) : [];
+}
+export const sharedEntryFor = async (who: Viewer, id: string) => (await sharedFor(who)).find((e) => e.id === id);
+export const libraryDown = () => !state.ok;
+export const filePathOf = (e: SharedEntry) => path.join(ROOT(), ...e.path.split("/"));
+
+export async function libraryStatus(): Promise<LibraryStatus> {
+  await fresh();
+  return { ok: state.ok, at: state.at, count: state.list.length, templates: state.templates.length, skipped: state.skipped, error: state.error, root: ROOT(), dirs: state.dirs };
+}
+
+/** cache file → the versions of files it stands for; what no live file points to goes. Text of a deleted file must not stay. */
+function readIndex(): Record<string, string[]> {
+  try {
+    return JSON.parse(readFileSync(CACHE_INDEX, "utf8")) as Record<string, string[]>;
+  } catch {
+    return {};
+  }
+}
+function remember(file: string, key: string) {
+  const index = readIndex();
+  const name = path.basename(file);
+  index[name] = [...new Set([...(index[name] ?? []), key])];
+  writeFileAtomic(CACHE_INDEX, JSON.stringify(index));
+}
+function sweepCache() {
+  // Never on an empty list: a share mounted empty for a moment must not cost every extraction.
+  if (Date.now() - state.swept < SWEEP_MS || !state.list.length) return;
+  state.swept = Date.now();
+  try {
+    const live = new Set(state.list.map((e) => `${e.id}:${e.size}:${e.mtime}`));
+    const index = readIndex();
+    let changed = false;
+    for (const [name, keys] of Object.entries(index)) {
+      const left = keys.filter((k) => live.has(k));
+      if (left.length) {
+        if (left.length !== keys.length) changed = true;
+        index[name] = left;
+      } else {
+        rmSync(path.join(CACHE, path.basename(name)), { force: true });
+        delete index[name];
+        changed = true;
+      }
+    }
+    // Extractions from before the index existed have no entry: they can't be matched to a file, so they are read again once.
+    const known = new Set(Object.keys(index));
+    for (const f of readdirSync(CACHE)) if (f.endsWith(".json") && f !== "index.json" && !known.has(f)) { rmSync(path.join(CACHE, f), { force: true }); changed = true; }
+    if (changed) writeFileAtomic(CACHE_INDEX, JSON.stringify(index));
+    for (const k of state.loaded.keys()) if (!live.has(k)) state.loaded.delete(k);
+  } catch (e) {
+    logError("library", e);
+  }
+}
 
 /** The document's text, extracted on first use; a changed file (new content) is extracted again. */
 export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => void, signal: AbortSignal): Promise<Doc> {
@@ -72,7 +190,9 @@ export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => v
   if (running) return running;
   // Held from reading the file to the end of extraction: the same global limit as uploads (a full queue is refused).
   const job = admission.upload.run(async () => {
-    const buf = readFileSync(path.join(ROOT(), ...e.path.split("/")));
+    const buf = await readFile(filePathOf(e)).catch(() => {
+      throw new UserError("ortak klasördeki dosyaya şu an ulaşılamıyor");
+    });
     const hash = createHash("sha256").update(buf).digest("hex");
     // Same bytes under another extension are parsed differently (a table, not plain text).
     const ext = e.name.toLowerCase().split(".").pop() ?? "";
@@ -92,6 +212,7 @@ export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => v
       mkdirSync(CACHE, { recursive: true });
       writeFileAtomic(file, JSON.stringify({ ...doc, chunks: undefined, chunksKey: undefined, digests: undefined }));
     }
+    remember(file, key);
     state.loaded.set(key, doc);
     // ponytail: oldest out first; a large library's most used documents are simply loaded again from the cache.
     if (state.loaded.size > MAX_LOADED) state.loaded.delete(state.loaded.keys().next().value as string);

@@ -5,7 +5,9 @@ import { cptFor, getDoc, MAX_BYTES, NUM_CTX, type Doc } from "@/lib/server";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { contextBudget } from "@/lib/context";
 import { readLimited } from "@/lib/filetype";
-import { isSharedId, sharedDoc, sharedEntry, type SharedEntry } from "@/lib/library";
+import { readFile } from "node:fs/promises";
+import { filePathOf, isSharedId, sharedDoc, sharedEntryFor, sharedTemplatesFor, type SharedEntry } from "@/lib/library";
+import { isMyTemplateId, readMyTemplate } from "@/lib/template-store";
 import { Busy } from "@/lib/limits";
 import { logError } from "@/lib/log";
 import { modelConfig, providerOf } from "@/lib/model-config";
@@ -42,13 +44,32 @@ export async function POST(req: Request) {
     const raw = await readLimited(req.body, MAX_BODY).catch(() => undefined);
     if (raw === null) return fail("Şablon 25 MB sınırını aşıyor.", 413);
     const form = raw && (await new Response(raw, { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData().catch(() => null));
-    const file = form?.get("file");
-    if (!form || !(file instanceof File)) return fail("Şablon dosyası bulunamadı.");
-    if (file.size > MAX_BYTES) return fail("Şablon 25 MB sınırını aşıyor.", 413);
-    if (!file.size) return fail("Şablon dosyası boş.");
-    const format = formatOf(file.name);
+    if (!form) return fail("Şablon dosyası bulunamadı.");
+    // A file sent along, or one of the forms this person may use: by id, so no path comes from a request.
+    const file = form.get("file");
+    const picked = String(form.get("templateId") ?? "");
+    let name: string;
+    let bytes: Uint8Array;
+    if (file instanceof File) {
+      if (file.size > MAX_BYTES) return fail("Şablon 25 MB sınırını aşıyor.", 413);
+      if (!file.size) return fail("Şablon dosyası boş.");
+      name = file.name;
+      bytes = new Uint8Array(await file.arrayBuffer());
+    } else if (isMyTemplateId(picked)) {
+      const mine = await readMyTemplate(user.id, picked);
+      if (!mine) return fail("Şablon bulunamadı.", 404);
+      name = mine.meta.name;
+      bytes = mine.bytes;
+    } else if (isSharedId(picked)) {
+      const e = (await sharedTemplatesFor(user)).find((t) => t.id === picked);
+      if (!e) return fail("Şablon bulunamadı.", 404);
+      const buf = await readFile(filePathOf(e)).catch(() => null);
+      if (!buf) return fail("Ortak klasördeki şablona şu an ulaşılamıyor.", 503);
+      name = e.name;
+      bytes = new Uint8Array(buf);
+    } else return fail("Şablon dosyası bulunamadı.");
+    const format = formatOf(name);
     if (!format) return fail("Şablon Excel (.xlsx), Word (.docx), PDF ya da JSON olmalı. Eski .xls ve .doc dosyalarını yeni biçimde kaydedip deneyin.", 415);
-    const bytes = new Uint8Array(await file.arrayBuffer());
     const problem = await templateProblem(format, bytes).catch(() => "Şablon okunamadı. Bozuk olabilir.");
     if (problem) return fail(problem, 415);
 
@@ -95,7 +116,7 @@ export async function POST(req: Request) {
     const sharedOnes: SharedEntry[] = [];
     for (const id of ids as string[]) {
       if (isSharedId(id)) {
-        const e = sharedEntry(id);
+        const e = await sharedEntryFor(user, id);
         if (!e) return fail("Belge sunucuda bulunamadı. Kaldırıp tekrar ekleyin.", 409);
         sharedOnes.push(e);
       } else {

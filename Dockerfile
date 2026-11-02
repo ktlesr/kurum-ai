@@ -54,7 +54,9 @@ COPY lib/db.ts lib/password.ts /app/lib/
 # Turbopack bundles postgres into the server chunks; the plain-node admin script needs the package itself (no deps).
 COPY --from=deps /src/node_modules/postgres /app/node_modules/postgres
 
+# ffmpeg: a still from each video in the gallery (lib/video-frame). Here and not in "runtime": the Docling layer below stays cached.
 FROM runtime AS app
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY --from=files /app ./
 USER app
 
@@ -79,5 +81,6 @@ FROM searxng/searxng:2026.10.30-ffa88e3ba AS search
 COPY deploy/searxng.yml /etc/searxng/settings.yml
 
 FROM docling AS app-docling
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY --from=files /app ./
 USER app

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { extractDir, holdExtract } from "@/lib/workspace";
 import { deleteDoc, dropExtractIfUnused, docsOf, getDoc, MAX_BYTES, MAX_DOCS_PER_USER, saveDoc, toMeta, uniqueName, type Doc } from "@/lib/server";
 import { docSections } from "@/lib/context";
-import { isSharedId, sharedDoc, sharedEntry } from "@/lib/library";
+import { isSharedId, sharedDoc, sharedEntryFor } from "@/lib/library";
 import { countUsage } from "@/lib/usage";
 import { requireApiUser } from "@/lib/auth";
 import { parseFile, UserError } from "@/lib/parse";
@@ -140,7 +140,7 @@ export async function GET(req: Request) {
   // ?id=…: one doc's extracted text by page/sheet, for the source panel. Someone else's doc is a plain 404.
   const id = new URL(req.url).searchParams.get("id");
   if (id && isSharedId(id)) {
-    const e = sharedEntry(id);
+    const e = await sharedEntryFor(user, id);
     if (!e) return fail("Dosya bulunamadı.", 404);
     if (!admission.uploadPerUser.allow(user.id)) return tooMany("belge okuma");
     try {

@@ -47,6 +47,22 @@ export interface Message {
   fileOf?: number;
   /** The turn that only asked for a file, and its reply: nothing the model needs to read. */
   local?: boolean;
+  /** Photos from the archive: by id only, the server still decides who may see each. */
+  gallery?: GalleryReply;
+}
+
+export interface GalleryPhoto { id: string; name: string; folder: string; caption?: string; video?: boolean; playable?: boolean }
+export interface GalleryReply { query: string; shown: number; total: number; items: GalleryPhoto[] }
+
+/** From a backup file: only what a reply can hold, in the shape it has. */
+export function cleanGallery(g: unknown): GalleryReply | undefined {
+  const x = g as Partial<GalleryReply> | null | undefined;
+  if (!x || typeof x.query !== "string" || !Array.isArray(x.items)) return undefined;
+  const items = x.items.flatMap((p): GalleryPhoto[] => {
+    const i = p as Partial<GalleryPhoto> | null;
+    return i && typeof i.id === "string" && /^g-[0-9a-f]{40}$/.test(i.id) && typeof i.name === "string" ? [{ id: i.id, name: i.name.slice(0, 300), folder: typeof i.folder === "string" ? i.folder.slice(0, 1000) : "", ...(typeof i.caption === "string" ? { caption: i.caption.slice(0, 400) } : {}), ...(i.video === true ? { video: true } : {}), ...(i.playable === true ? { playable: true } : {}) }] : [];
+  }).slice(0, 24);
+  return { query: x.query.slice(0, 300), shown: Number.isInteger(x.shown) ? (x.shown as number) : items.length, total: Number.isInteger(x.total) ? (x.total as number) : items.length, items };
 }
 
 export interface StoredChat {
@@ -167,10 +183,11 @@ export function parseBackup(text: string): StoredChat[] | string {
       model: typeof c.model === "string" ? c.model : undefined,
       docIds: Array.isArray(c.docIds) ? c.docIds.filter((d): d is string => typeof d === "string") : [],
       // Drop transient fields (status) and keep meta only as stored.
-      messages: c.messages.map(({ role, content, at, error, meta, timing, files, fileOf, local }) => {
+      messages: c.messages.map(({ role, content, at, error, meta, timing, files, fileOf, local, gallery }) => {
         const m = cleanMeta(meta);
         const t = cleanTiming(timing);
-        return { role, content, ...(Number.isFinite(at) && Math.abs(at as number) <= 8.64e15 ? { at } : {}), ...(Array.isArray(files) && files.some(isFileFormat) ? { files: files.filter(isFileFormat) } : {}), ...(Number.isInteger(fileOf) && (fileOf as number) >= 0 ? { fileOf } : {}), ...(local === true ? { local: true } : {}), ...(error ? { error: true } : {}), ...(m ? { meta: m } : {}), ...(t ? { timing: t } : {}) };
+        const photos = cleanGallery(gallery);
+        return { role, content, ...(photos ? { gallery: photos } : {}), ...(Number.isFinite(at) && Math.abs(at as number) <= 8.64e15 ? { at } : {}), ...(Array.isArray(files) && files.some(isFileFormat) ? { files: files.filter(isFileFormat) } : {}), ...(Number.isInteger(fileOf) && (fileOf as number) >= 0 ? { fileOf } : {}), ...(local === true ? { local: true } : {}), ...(error ? { error: true } : {}), ...(m ? { meta: m } : {}), ...(t ? { timing: t } : {}) };
       }),
     });
   }

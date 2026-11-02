@@ -125,8 +125,8 @@ function Section({ title, icon, count, children, action }: { title: string; icon
   );
 }
 
-export function LibraryPanel({ shared, personal, attached, onToggle, onOpen, onDelete, onMove, onUpload }: {
-  shared: LibItem[]; personal: LibItem[]; attached: ReadonlySet<string>;
+export function LibraryPanel({ shared, sharedDown, personal, attached, onToggle, onOpen, onDelete, onMove, onUpload }: {
+  shared: LibItem[]; sharedDown?: boolean; personal: LibItem[]; attached: ReadonlySet<string>;
   onToggle: (items: LibItem[], on: boolean) => void; onOpen: (id: string) => void; onDelete: (id: string) => void; onMove: (id: string, folder: string) => void; onUpload: () => void;
 }) {
   const folders = [...new Set(personal.map((f) => f.path.split("/").slice(0, -1).join("/")).filter(Boolean))];
@@ -134,7 +134,8 @@ export function LibraryPanel({ shared, personal, attached, onToggle, onOpen, onD
     <section aria-label="Belge kütüphanesi" className="border-t border-line px-3 py-2">
       <p className="mb-1 flex items-center gap-1.5 px-0.5 text-[11px] text-muted"><LibraryIcon size={12} /> Sohbette yalnızca işaretlediğiniz ya da istediğiniz belgeler okunur.</p>
       <Section title="Ortak belgeler" icon={<Users size={13} />} count={shared.length}>
-        {shared.length ? <Rows node={treeOf(shared)} p={{ attached, onToggle, onOpen }} /> : <p className="px-1 py-1 text-xs text-muted">Sunucudaki ortak klasör henüz boş.</p>}
+        {sharedDown && <p role="status" className="px-1 py-1 text-xs text-warn-fg">Ortak klasöre şu an ulaşılamıyor; son bilinen liste gösteriliyor, bazı belgeler açılmayabilir.</p>}
+        {shared.length ? <Rows node={treeOf(shared)}p={{ attached, onToggle, onOpen }} /> : <p className="px-1 py-1 text-xs text-muted">Sunucudaki ortak klasör henüz boş.</p>}
       </Section>
       <Section
         title="Belgelerim"
