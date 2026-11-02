@@ -8,9 +8,19 @@ export const MAIL_SUBJECT = "Zafer AI hesap bilgileriniz";
 export const MAIL_PREVIEW = "Zafer AI'a giriş için kullanıcı adınız ve parolanız";
 
 export interface Recipient { username: string; password: string; email: string; name: string }
+export interface MailDetails {
+  username: string;
+  password: string;
+  name?: string;
+  /** A password that replaces the old one. */
+  renewed?: boolean;
+  /** Says the password has to be changed at the first sign-in. */
+  changeOnSignIn?: boolean;
+}
+export const subjectOf = (d: Pick<MailDetails, "renewed">) => (d.renewed ? "Zafer AI parolanız yenilendi" : MAIL_SUBJECT);
 export interface RecipientList { recipients: Recipient[]; errors: string[]; warnings: string[] }
 
-const EMAIL_RE = /^[^\s@;,<>"']+@[^\s@;,<>"']+\.[^\s@;,<>"'.]+$/;
+export const EMAIL_RE = /^[^\s@;,<>"']+@[^\s@;,<>"']+\.[^\s@;,<>"'.]+$/;
 const headerOf = (cell: string) => cell.trim().toLocaleLowerCase("tr").replace(/[\s_-]+/g, "");
 const COLUMNS: Record<keyof Recipient, string[]> = {
   username: ["kullanıcı", "kullanıcıadı", "kullanici", "kullaniciadi", "username"],
@@ -64,9 +74,11 @@ const field = (label: string, value: string) =>
   `<tr><td style="padding:12px 16px 2px;${FONT};font-size:12px;color:#4e6075">${label}</td></tr><tr><td style="padding:0 16px 12px;${MONO};font-size:16px;font-weight:bold;color:#14263d;white-space:pre-wrap;word-break:break-all">${escapeHtml(value)}</td></tr>`;
 
 /** The site's light theme, as colours spelled out: --bg, --panel, --subtle, --line, --fg, --muted, --accent, --brand. */
-export function renderMail(r: Pick<Recipient, "username" | "password" | "name">): string {
+export function renderMail(r: MailDetails): string {
+  const lead = r.renewed ? "Zafer AI parolanız yönetici tarafından yenilendi. Eski parolanız artık geçerli değil." : "Zafer AI hesabınız hazır. Aşağıdaki bilgilerle giriş yapabilirsiniz.";
+  const change = r.changeOnSignIn ? " İlk girişinizde parolanızı değiştirmeniz istenecek." : "";
   const greeting = r.name ? `Sayın ${escapeHtml(r.name)},` : "Merhaba,";
-  return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>${MAIL_SUBJECT}</title></head><body style="margin:0;padding:0;background:#f5f8fb"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f8fb"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #d8e2ec;border-radius:8px;border-collapse:separate"><tr><td style="padding:20px 28px;background:#14263d;border-radius:7px 7px 0 0;${FONT};font-size:20px;font-weight:bold;color:#fff">Zafer AI <span style="color:#f2b84b">&#10022;</span><div style="margin-top:2px;font-size:12px;font-weight:normal;color:#d8e2ec">Kurum asistanı</div></td></tr><tr><td style="padding:28px 28px 8px;${FONT};font-size:15px;line-height:1.6;color:#14263d"><p style="margin:0 0 12px">${greeting}</p><p style="margin:0">Zafer AI hesabınız hazır. Aşağıdaki bilgilerle giriş yapabilirsiniz.</p></td></tr><tr><td style="padding:12px 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#edf3f8;border:1px solid #d8e2ec;border-radius:8px;border-collapse:separate">${field("Kullanıcı adı", r.username)}${field("Parola", r.password)}</table></td></tr><tr><td style="padding:12px 28px 20px"><a href="${SIGN_IN_URL}" style="display:inline-block;padding:12px 24px;background:#2e5e8c;border-radius:8px;${FONT};font-size:15px;font-weight:bold;color:#fff;text-decoration:none">Giriş yap</a></td></tr><tr><td style="padding:0 28px 28px;${FONT};font-size:13px;line-height:1.6;color:#4e6075">Bu bilgiler size özeldir, kimseyle paylaşmayın. Bu e-postayı beklemiyorsanız sistem yöneticinize bildirin.</td></tr><tr><td style="padding:16px 28px;border-top:1px solid #d8e2ec;${FONT};font-size:12px;color:#4e6075">Bu e-posta otomatik gönderilmiştir, lütfen yanıtlamayın.</td></tr></table></td></tr></table></body></html>`;
+  return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>${subjectOf(r)}</title></head><body style="margin:0;padding:0;background:#f5f8fb"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f8fb"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #d8e2ec;border-radius:8px;border-collapse:separate"><tr><td style="padding:20px 28px;background:#14263d;border-radius:7px 7px 0 0;${FONT};font-size:20px;font-weight:bold;color:#fff">Zafer AI <span style="color:#f2b84b">&#10022;</span><div style="margin-top:2px;font-size:12px;font-weight:normal;color:#d8e2ec">Kurum asistanı</div></td></tr><tr><td style="padding:28px 28px 8px;${FONT};font-size:15px;line-height:1.6;color:#14263d"><p style="margin:0 0 12px">${greeting}</p><p style="margin:0">${lead}</p></td></tr><tr><td style="padding:12px 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#edf3f8;border:1px solid #d8e2ec;border-radius:8px;border-collapse:separate">${field("Kullanıcı adı", r.username)}${field("Parola", r.password)}</table></td></tr><tr><td style="padding:12px 28px 20px"><a href="${SIGN_IN_URL}" style="display:inline-block;padding:12px 24px;background:#2e5e8c;border-radius:8px;${FONT};font-size:15px;font-weight:bold;color:#fff;text-decoration:none">Giriş yap</a></td></tr><tr><td style="padding:0 28px 28px;${FONT};font-size:13px;line-height:1.6;color:#4e6075">Bu bilgiler size özeldir, kimseyle paylaşmayın.${change} Bu e-postayı beklemiyorsanız sistem yöneticinize bildirin.</td></tr><tr><td style="padding:16px 28px;border-top:1px solid #d8e2ec;${FONT};font-size:12px;color:#4e6075">Bu e-posta otomatik gönderilmiştir, lütfen yanıtlamayın.</td></tr></table></td></tr></table></body></html>`;
 }
 
 /** What the provider said: its answers are XML with a CODE of 0 for success. */

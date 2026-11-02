@@ -9,15 +9,13 @@
 // folder. Sent mails are noted, without passwords, in gonderim/gonderilenler.jsonl, so running again never mails anyone twice.
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import XLSX from "xlsx";
-import { MAIL_PREVIEW, MAIL_SUBJECT, readRecipients, readResponse, renderMail, type Recipient } from "../lib/credentials-mail.ts";
+import { readRecipients, renderMail } from "../lib/credentials-mail.ts";
+import { callProvider, sendMailWith, signIn } from "../lib/iletisim.ts";
 
-const API = process.env.ILETISIM_API_URL ?? "https://live.iletisimmakinesi.com/api";
 const FOLDER = "gonderim";
 const LOG = `${FOLDER}/gonderilenler.jsonl`;
 const LOCK = `${FOLDER}/gonderim.kilit`;
 const EMAIL_SERVICE_ID = "5"; // The provider's number for its e-mail service.
-// The API takes everything in the address, and addresses have a limit. Refused here rather than cut off there.
-const MAX_URL = 8000;
 
 const args = process.argv.slice(2);
 const option = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -28,36 +26,12 @@ const stop = (message: string): never => {
   process.exit(1);
 };
 
-/** The address holds a password or a token: no error here may ever print it. */
-async function call(path: string, params: Record<string, string>) {
-  const url = `${API}/${path}?${new URLSearchParams(params)}`;
-  if (url.length > MAX_URL) stop(`İstek çok uzun (${url.length}), gönderilmedi.`);
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-  return readResponse(await response.text());
-}
-
-async function signIn() {
-  const { ILETISIM_USERNAME: userName, ILETISIM_USERPASS: userPass, ILETISIM_CUSTOMER_CODE: customerCode, ILETISIM_API_KEY: apiKey, ILETISIM_VENDOR_CODE: vendorCode } = process.env;
-  if (!userName || !userPass || !customerCode || !apiKey || !vendorCode) stop("ILETISIM_* ayarları eksik. --env-file=.env.dokploy ile çalıştırın.");
-  const answer = await call("UserGatewayWS/functions/authenticate", { userName: userName!, userPass: userPass!, customerCode: customerCode!, apiKey: apiKey!, vendorCode: vendorCode! });
-  if (!answer.ok || !answer.token) stop(`Giriş yapılamadı: ${answer.message}`);
-  return answer.token!;
-}
-
-const sendMail = (token: string, originatorId: string, r: Pick<Recipient, "username" | "password" | "name" | "email">) =>
-  call("EmailGatewayWS/functions/sendEmail", {
-    token,
-    originatorId,
-    emailAddresses: JSON.stringify([r.email]),
-    emailSubject: MAIL_SUBJECT,
-    previewText: MAIL_PREVIEW,
-    templateContent: renderMail(r),
-  });
+const signInOrStop = () => signIn().catch((e: Error) => stop(e.message));
 
 mkdirSync(FOLDER, { recursive: true });
 
 if (has("kontrol")) {
-  const answer = await call("UserGatewayWS/functions/getOriginators", { token: await signIn(), serviceId: EMAIL_SERVICE_ID });
+  const answer = await callProvider("UserGatewayWS/functions/getOriginators", { token: await signInOrStop(), serviceId: EMAIL_SERVICE_ID });
   if (!answer.ok) stop(`Gönderici adları alınamadı: ${answer.message}`);
   console.log("Giriş başarılı. E-posta gönderici adları:");
   for (const o of answer.originators) console.log(`  ${o.id}  ${o.name}`);
@@ -69,7 +43,7 @@ const originator = option("gonderici");
 const testTo = option("test");
 if (testTo) {
   if (!originator) stop("--gonderici=ID gerekli. Kimlikleri --kontrol listeler.");
-  const answer = await sendMail(await signIn(), originator!, { email: testTo, name: "Örnek Kullanıcı", username: "ornek.kullanici", password: "ornek-parola-123" });
+  const answer = await sendMailWith(await signInOrStop(), originator!, { email: testTo, name: "Örnek Kullanıcı", username: "ornek.kullanici", password: "ornek-parola-123" });
   console.log(answer.ok && answer.validAddresses === 1 ? `Örnek gönderildi (işlem ${answer.transactionId}).` : `Gönderilemedi: ${answer.message}`);
   process.exit(answer.ok && answer.validAddresses === 1 ? 0 : 1);
 }
@@ -120,14 +94,14 @@ if (!originator) stop("--gonderici=ID gerekli. Kimlikleri --kontrol listeler.");
 if (option("onay") !== String(waiting.length)) stop(`Bu gönderim ${waiting.length} kişiye gidecek. Onay için --onay=${waiting.length} ekleyin.`);
 if (unknown.length) stop(`Sonucu belli olmayan gönderim var (${unknown.map((u) => u.username).join(", ")}). Sağlayıcı raporundan bakın; gitmediyse satırlarını ${LOG} dosyasından silip yeniden çalıştırın.`);
 
-const token = await signIn();
+const token = await signInOrStop();
 let sent = 0;
 for (const r of waiting) {
   const note = (status: string, extra: object = {}) => appendFileSync(LOG, `${JSON.stringify({ username: r.username, email: r.email, status, at: new Date().toISOString(), ...extra })}\n`);
   // Noted before it goes: if this program dies between the two, the person is unknown, not unmailed.
   note("belirsiz");
   try {
-    const answer = await sendMail(token, originator!, r);
+    const answer = await sendMailWith(token, originator!, r);
     // Cut short or not the provider's: it may have gone out all the same.
     if (!answer.understood || (answer.ok && answer.validAddresses === undefined)) throw new Error("Beklenmeyen cevap");
     if (!answer.ok || answer.validAddresses !== 1) {

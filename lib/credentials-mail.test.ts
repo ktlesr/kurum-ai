@@ -28,6 +28,9 @@ test("the mail shows the details as text and fits in the address the API reads i
   assert.ok(html.includes("a&lt;b&gt;&amp;&quot;&#39;c-123"));
   assert.ok(html.includes("Sayın &lt;b&gt;Ayşe&lt;/b&gt;,"));
   assert.ok(!html.includes("<img"));
+  assert.ok(!html.includes("değiştirmeniz istenecek"));
+  const renewed = renderMail({ username: "a", password: "b", renewed: true, changeOnSignIn: true });
+  assert.ok(renewed.includes("yenilendi") && renewed.includes("değiştirmeniz istenecek"));
   assert.ok(html.includes("white-space:pre-wrap"));
   assert.ok(renderMail({ username: "a", password: "b", name: "" }).includes("Merhaba,"));
   assert.ok(new URLSearchParams({ templateContent: renderMail({ username: "u".repeat(32), password: "p".repeat(40), name: "İ".repeat(60) }) }).toString().length < 7000);

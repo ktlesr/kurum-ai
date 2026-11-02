@@ -14,6 +14,8 @@ export interface User {
   id: string;
   username: string;
   role: "user" | "admin";
+  /** Everything but the page that changes the password is closed until it is changed. */
+  mustChange: boolean;
 }
 
 export async function createSession(userId: string) {
@@ -24,6 +26,13 @@ export async function createSession(userId: string) {
   // ponytail: expired rows are swept on login; a cron job is overkill at this scale
   await sql`DELETE FROM sessions WHERE expires_at < now()`;
   (await cookies()).set(SESSION_COOKIE, token, { httpOnly: true, secure: SECURE, sameSite: "lax", path: "/", expires });
+}
+
+/** Signs the user out everywhere but here: for after a password change. */
+export async function deleteOtherSessions(userId: string) {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value ?? "";
+  const sql = await db();
+  await sql`DELETE FROM sessions WHERE user_id = ${userId} AND token_hash <> ${tokenHash(token)}`;
 }
 
 export async function deleteSession() {
@@ -41,13 +50,13 @@ export const getUser = cache(async (): Promise<User | null> => {
   // Not `(await db())<User[]>`...``: SWC drops the parentheses there and calls db() as the tag.
   const sql = await db();
   const hash = tokenHash(token);
-  const [u] = await sql<(User & { fresh: boolean })[]>`
-    SELECT u.id, u.username, u.role, s.last_seen > now() - interval '1 minute' AS fresh FROM sessions s JOIN users u ON u.id = s.user_id
+  const [u] = await sql<(Omit<User, "mustChange"> & { must_change_password: boolean; fresh: boolean })[]>`
+    SELECT u.id, u.username, u.role, u.must_change_password, s.last_seen > now() - interval '1 minute' AS fresh FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ${hash} AND s.expires_at > now() AND u.status = 'active'`;
   if (!u) return null;
   // Who is online, for the dashboard: at most one write a minute per session, and nothing waits for it.
   if (!u.fresh) void Promise.resolve(sql`UPDATE sessions SET last_seen = now() WHERE token_hash = ${hash}`).catch(() => {});
-  return { id: u.id, username: u.username, role: u.role };
+  return { id: u.id, username: u.username, role: u.role, mustChange: u.must_change_password };
 });
 
 /** For admin pages: the signed-in admin; others go to login, or get the same 404 as for any unknown page. */
@@ -55,6 +64,7 @@ export async function requireAdmin(): Promise<User> {
   const me = await getUser();
   if (!me) redirect("/login");
   if (me.role !== "admin") notFound();
+  if (me.mustChange) redirect("/hesap");
   return me;
 }
 
@@ -85,5 +95,6 @@ export async function requireApiUser(req: Request): Promise<User | Response> {
     console.error(`auth: ${(e as Error).name}`);
     return null;
   });
+  if (user?.mustChange) return Response.json({ error: "Devam etmek için önce parolanızı değiştirin." }, { status: 403 });
   return user ?? Response.json({ error: "Oturum açmanız gerekiyor." }, { status: 401 });
 }

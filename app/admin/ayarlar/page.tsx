@@ -11,7 +11,7 @@ export const metadata = { title: "Ayarlar · Zafer AI" };
 async function setWeb(form: FormData) {
   "use server";
   const me = await getUser();
-  if (me?.role !== "admin") return;
+  if (me?.role !== "admin" || me.mustChange) return;
   const v = form.get("web");
   if (v !== "true" && v !== "false") return;
   await setSetting("web_fetch", v);
@@ -21,7 +21,7 @@ async function setWeb(form: FormData) {
 async function setOffline(form: FormData) {
   "use server";
   const me = await getUser();
-  if (me?.role !== "admin") return;
+  if (me?.role !== "admin" || me.mustChange) return;
   const v = form.get("offline");
   if (v !== "true" && v !== "false") return;
   await setSetting("docling_offline", v);

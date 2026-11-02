@@ -7,12 +7,16 @@ import { createUser, createUsersBulk, type CreateResult } from "../actions";
 const field = "h-9 w-full rounded-lg border border-line bg-panel px-3 text-sm outline-none placeholder:text-muted focus:border-accent";
 const primary = "flex h-9 items-center justify-center gap-1.5 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-40";
 
+const MAIL = { sent: `E-posta gitti`, refused: "E-posta gidemedi", unknown: "E-posta gitmiş olabilir; sağlayıcı raporuna bakın", off: "E-posta ayarlı değil" } as const;
+
 /** Generated passwords are shown once, here: the server only keeps their hash. */
 function Results({ result }: { result: CreateResult }) {
   if (result.error) return <p role="alert" className="mt-3 text-sm text-danger">{result.error}</p>;
   if (!result.rows?.length) return null;
   const made = result.rows.filter((r) => r.ok);
   const passwords = made.filter((r) => r.password);
+  const sent = made.filter((r) => r.mail === "sent").length;
+  const unsent = made.filter((r) => r.mail && r.mail !== "sent").length;
   const saveList = () => {
     const url = URL.createObjectURL(new Blob([`﻿kullanici;parola\n${passwords.map((r) => `${/^[-.]/.test(r.username) ? "'" : ""}${r.username};${r.password}`).join("\n")}\n`], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
@@ -23,15 +27,16 @@ function Results({ result }: { result: CreateResult }) {
   };
   return (
     <div className="mt-3 space-y-2" role="status">
-      <p className="text-sm"><span className="font-medium text-ok">{made.length} kullanıcı oluşturuldu.</span>{result.rows.length > made.length && <span className="text-danger"> {result.rows.length - made.length} satır atlandı.</span>}</p>
-      {passwords.length > 0 && <p className="rounded-lg bg-warn-bg px-3 py-2 text-xs text-warn-fg">Üretilen parolalar yalnızca şimdi görünür. Sayfadan ayrılmadan kaydedip kullanıcılara iletin.</p>}
+      <p className="text-sm"><span className="font-medium text-ok">{made.length} kullanıcı oluşturuldu.</span>{result.rows.length > made.length && <span className="text-danger"> {result.rows.length - made.length} satır atlandı.</span>}{sent > 0 && <span> {sent} kişiye e-posta gönderildi.</span>}{unsent > 0 && <span className="text-danger"> {unsent} kişiye e-posta gidemedi.</span>}</p>
+      {passwords.length > 0 && <p className="rounded-lg bg-warn-bg px-3 py-2 text-xs text-warn-fg">Burada görünen parolalar yalnızca şimdi görünür. Sayfadan ayrılmadan kaydedip kullanıcılara iletin.</p>}
       <div className="max-h-60 overflow-auto rounded-lg border border-line">
         <table className="w-full text-sm">
           <tbody>
             {result.rows.map((r, i) => (
               <tr key={i} className="border-t border-line first:border-t-0">
                 <td className="whitespace-nowrap px-3 py-1.5">{r.username || "(boş)"}</td>
-                <td className={`px-3 py-1.5 ${r.ok ? "font-mono text-xs" : "text-xs text-danger"}`}>{r.ok ? (r.password ?? "Girilen parola") : r.reason}</td>
+                <td className={`px-3 py-1.5 ${r.ok ? "font-mono text-xs" : "text-xs text-danger"}`}>{r.ok ? (r.password ?? (r.mail === "sent" ? "E-postayla gönderildi" : "Girilen parola")) : r.reason}</td>
+                <td className={`px-3 py-1.5 text-xs ${r.mail === "sent" ? "text-ok" : "text-danger"}`}>{r.mail && MAIL[r.mail]}</td>
               </tr>
             ))}
           </tbody>
@@ -42,7 +47,7 @@ function Results({ result }: { result: CreateResult }) {
   );
 }
 
-export function CreateUsers() {
+export function CreateUsers({ mailOn }: { mailOn: boolean }) {
   const [tab, setTab] = useState<"one" | "many">("one");
   const [one, oneAction, onePending] = useActionState(createUser, {});
   const [many, manyAction, manyPending] = useActionState(createUsersBulk, {});
@@ -59,9 +64,12 @@ export function CreateUsers() {
       </div>
       {tab === "one" ? (
         <form action={oneAction}>
-          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-end">
+          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto_auto] sm:items-end">
             <label className="block text-xs font-medium">Kullanıcı adı
               <input name="username" required autoComplete="off" spellCheck={false} maxLength={32} placeholder="ör. ayse.yilmaz" className={`${field} mt-1 font-normal`} />
+            </label>
+            <label className="block text-xs font-medium">E-posta <span className="font-normal text-muted">(giriş bilgileri gider)</span>
+              <input name="email" type="email" autoComplete="off" spellCheck={false} placeholder="ayse.yilmaz@zafer.gov.tr" className={`${field} mt-1 font-normal`} />
             </label>
             <label className="block text-xs font-medium">Parola <span className="font-normal text-muted">(boşsa üretilir)</span>
               <input name="password" type="password" autoComplete="new-password" maxLength={256} className={`${field} mt-1 font-normal`} />
@@ -74,12 +82,13 @@ export function CreateUsers() {
             </label>
             <button disabled={onePending} className={primary}>{onePending ? <Loader2 size={15} className="animate-spin" /> : <UserPlus size={15} />} Oluştur</button>
           </div>
+          {!mailOn && <p className="mt-2 text-xs text-warn-fg">E-posta gönderimi bu kurulumda ayarlı değil: adres kaydedilir, e-posta gitmez.</p>}
           <Results result={one} />
         </form>
       ) : (
         <form action={manyAction}>
-          <label className="block text-xs font-medium">Her satıra bir kullanıcı: <span className="font-mono font-normal">kullanici</span> ya da <span className="font-mono font-normal">kullanici;parola</span>
-            <textarea name="list" value={list} onChange={(e) => setList(e.target.value)} rows={6} required spellCheck={false} placeholder={"ayse.yilmaz\nmehmet.kaya;en-az-10-karakter"} className="mt-1 w-full resize-y rounded-lg border border-line bg-panel px-3 py-2 font-mono text-sm font-normal outline-none placeholder:text-muted focus:border-accent" />
+          <label className="block text-xs font-medium">Her satıra bir kullanıcı: <span className="font-mono font-normal">kullanici;eposta</span> ya da <span className="font-mono font-normal">kullanici;parola;eposta</span> <span className="font-normal text-muted">(e-posta ve parola isteğe bağlı)</span>
+            <textarea name="list" value={list} onChange={(e) => setList(e.target.value)} rows={6} required spellCheck={false} placeholder={"ayse.yilmaz;ayse.yilmaz@zafer.gov.tr\nmehmet.kaya;en-az-10-karakter;mehmet.kaya@zafer.gov.tr"} className="mt-1 w-full resize-y rounded-lg border border-line bg-panel px-3 py-2 font-mono text-sm font-normal outline-none placeholder:text-muted focus:border-accent" />
           </label>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <button disabled={manyPending || !list.trim()} className={primary}>{manyPending ? <Loader2 size={15} className="animate-spin" /> : <Users size={15} />} Hepsini oluştur</button>
@@ -88,7 +97,7 @@ export function CreateUsers() {
               <input type="file" accept=".csv,.txt,text/csv,text/plain" className="sr-only" onChange={(e) => { void e.target.files?.[0]?.text().then(setList); e.target.value = ""; }} />
             </label>
           </div>
-          <p className="mt-2 text-xs text-muted">Parolası yazılmayanlara parola üretilir. Var olan kullanıcılar değiştirilmez. Oluşturulanlar hemen etkin olur.</p>
+          <p className="mt-2 text-xs text-muted">Parolası yazılmayanlara parola üretilir. E-postası olanlara giriş bilgileri hemen gönderilir ve ilk girişte parolalarını değiştirmeleri istenir. Var olan kullanıcıların parolası değişmez, onlara e-posta gitmez; e-postası boşsa yazılan adres kaydedilir. Oluşturulanlar hemen etkin olur.</p>
           <Results result={many} />
         </form>
       )}

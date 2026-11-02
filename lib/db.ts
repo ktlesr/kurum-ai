@@ -39,6 +39,9 @@ const MIGRATIONS = [
   // The admin dashboard: when a session was last seen (who is online), per-day totals (lib/usage); never who did what.
   `ALTER TABLE sessions ADD COLUMN last_seen timestamptz;
   CREATE TABLE usage_daily (day date NOT NULL, kind text NOT NULL, count bigint NOT NULL DEFAULT 0, PRIMARY KEY (day, kind));`,
+  // Where a user's sign-in details are mailed; a password someone else has seen (it was mailed) is changed at the next sign-in.
+  `ALTER TABLE users ADD COLUMN email text;
+  ALTER TABLE users ADD COLUMN must_change_password boolean NOT NULL DEFAULT false;`,
 ];
 
 async function migrate(sql: postgres.Sql) {

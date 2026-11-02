@@ -11,6 +11,7 @@ export default async function StudioPage() {
   const user = await getUser();
   // "from": a shared link's preview (those apps never sign in) still says what the link is.
   if (!user) redirect("/login?from=studio");
+  if (user.mustChange) redirect("/hesap");
   return (
     <>
       <Presence />
