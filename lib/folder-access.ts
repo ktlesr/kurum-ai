@@ -4,7 +4,7 @@
 
 export interface FolderRule { folder: string; users: string[] }
 
-const clean = (p: string) => p.split("/").map((s) => s.trim()).filter(Boolean).join("/");
+const clean = (p: string) => p.normalize("NFC").split("/").map((s) => s.trim()).filter(Boolean).join("/");
 
 /**
  * How paths compare. A rule must never miss its folder by a letter's case or by how a NAS spells "ş" (composed or not): the
@@ -18,7 +18,7 @@ export function canSee(file: string, who: { username: string; role: string }, ru
   let best: FolderRule | undefined;
   for (const r of rules) {
     const k = pathKey(r.folder);
-    if ((f === k || f.startsWith(`${k}/`)) && (!best || r.folder.length > best.folder.length)) best = r;
+    if ((f === k || f.startsWith(`${k}/`)) && (!best || k.length > pathKey(best.folder).length)) best = r;
   }
   return !best || best.users.includes(who.username);
 }

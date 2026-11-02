@@ -76,6 +76,20 @@ Linux/macOS'ta `Scripts/python` yerine `bin/python`. İlk çalıştırmada Docli
 
 Ortak belgeler sunucuda bir klasördedir (`SOURCES_HOST_DIR`, varsayılan `/srv/kurum-ai/kaynaklar`), uygulama salt okunur bağlar. Alt klasörlere dosya koymak yeterlidir; en geç 30 saniye içinde yan menüde görünür. Dosya ilk kullanıldığında okunur, metni önbelleğe alınır. Sohbet belge okumadan başlar: belgeler yan menüden işaretlenince ya da mesajda istenince ("mevzuat klasöründeki kaynakları kullanarak...") okunur.
 
+**NAS:** Klasörü sunucuya bağlayıp `SOURCES_HOST_DIR` ile gösterin. Salt okunur NFS önerilir (`ro,_netdev,nofail,x-systemd.automount`). Tarama arka planda ve süre sınırlıdır; paylaşım koparsa son liste korunur, kullanıcıya ve Yönetim → Kütüphane sayfasına yazılır. Çıkarılan metinler, bir tarama temiz bittiğinde ve dosyanın gerçekten silindiği anlaşıldığında temizlenir.
+
+**Yetki:** Kural olmayan klasörü giriş yapan herkes görür. Yönetim → Kütüphane'den klasör başına kullanıcı listesi verilir (`ortak/Personel`, `galeri/2025`). Sohbet, arama, şablon ve görsel isteklerinde aynı şekilde uygulanır.
+
+**Şablonlar:** Adı `Şablonlar` olan klasörler (alt klasörleriyle) belge olarak listelenmez, Şablon doldur panelinde seçilir. Kullanıcıların kendi şablonları `.cache/usertemplates` altında kişiye özel durur.
+
+## Galeri
+
+Fotoğraf ve video arşivi ayrı bir klasördür (`GALLERY_HOST_DIR`, varsayılan `/srv/kurum-ai/galeri`), salt okunur bağlanır. Sohbette "uşak kilim resimlerinden 3 tanesini getir" ya da "uşak videolarını göster" yazılınca model kullanılmadan adlardan aranır; Stüdyo'da **Galeriden seç** ile açılır.
+
+- **Görsel türleri:** JPG, PNG, WEBP (en fazla 80 MB). HEIC listelenmez, Kütüphane sayfasında sayısı görünür.
+- **Video:** MP4, M4V, MOV, WEBM, MKV, AVI, WMV, MPG, MTS, 3GP. Dosya belleğe alınmaz, parça parça akar ve ileri sarılır. Tarayıcının oynatamadığı biçimler indirilir. Küçük resim ve içerik açıklaması `ffmpeg` ile alınan bir kareden üretilir (imajda kurulu).
+- **İçerikle arama:** Yerel görsel model (`VISION_MODEL`) dosyaları birer birer tarif eder, yalnızca kimse modeli beklemiyorken çalışır. Açıklamalar `.cache/gallery` altında kalır. Kütüphane sayfasından durdurulur. Yüz tanıma yapılmaz.
+
 ## Desteklenen dosyalar
 
 PDF, DOCX (eski `.doc` yok), XLSX / XLS / CSV (her sheet Markdown tablo olarak), TXT / MD, PNG / JPG / WEBP görsel (ekran görüntüsü soru kutusuna yapıştırılabilir; metni ve tabloları kurumun kendi görsel modeli `VISION_MODEL` okur, görsel dışarı çıkmaz). Dosya başına en fazla 25 MB. UTF-8 okunamayan TXT/CSV dosyaları Windows-1254 (Türkçe) olarak okunur.

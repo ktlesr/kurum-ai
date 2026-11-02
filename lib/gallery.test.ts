@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { exifYear } from "./exif-date.ts";
 import { parseRange, videoFrame } from "./video-frame.ts";
 import { canSee, parseRules, ruleFindsFolder, ruleFrom, withRule, withoutRule } from "./folder-access.ts";
-import { ScanFailed, scanFolder } from "./folder-scan.ts";
+import { ScanFailed, readWithin, safeToForget, scanFolder } from "./folder-scan.ts";
 import { asksMorePhotos, asksPhotos } from "./gallery-intent.ts";
 import { countOf, foldTr, kindAsked, nearFolders, searchGallery, termsOf, type GalleryEntry } from "./gallery-search.ts";
 import { cleanGallery } from "./local-store.ts";
@@ -64,6 +64,31 @@ test("scan: a missing or stuck share fails out loud, so the last good list stays
   }
 });
 
+test("forgetting: not after a partial read, not when much of the list vanished at once", () => {
+  const clean = { type: {}, tooBig: 0, tooDeep: 0, overLimit: 0, unreadable: 0 };
+  assert.ok(safeToForget(100, 99, clean));
+  assert.ok(safeToForget(100, 50, clean));
+  assert.ok(!safeToForget(100, 49, clean), "half gone at once: a share half there");
+  assert.ok(!safeToForget(100, 0, clean));
+  assert.ok(!safeToForget(100, 100, { ...clean, unreadable: 1 }));
+  assert.ok(!safeToForget(100, 100, { ...clean, overLimit: 1 }));
+  assert.ok(safeToForget(0, 5, clean));
+});
+
+test("reading off a share: the reader stops waiting when told or when time is up", async () => {
+  const d = temp();
+  try {
+    writeFileSync(path.join(d, "a"), "merhaba");
+    assert.equal(String(await readWithin(path.join(d, "a"), 5000)), "merhaba");
+    const ac = new AbortController();
+    ac.abort();
+    await assert.rejects(readWithin(path.join(d, "a"), 5000, ac.signal));
+    await assert.rejects(readWithin(path.join(d, "yok"), 5000));
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
 test("access: open without a rule; a rule closes the folder and below; the closest rule decides; admins see all", () => {
   const rules = [{ folder: "ortak/Personel", users: ["ayse"] }, { folder: "ortak/Personel/Duyurular", users: ["ayse", "ali"] }, { folder: "galeri/Gizli", users: [] }];
   const ali = { username: "ali", role: "user" };
@@ -78,6 +103,10 @@ test("access: open without a rule; a rule closes the folder and below; the close
   // A rule can't miss by a letter's case, or by how the NAS spells a Turkish letter.
   assert.ok(!canSee("ORTAK/personel/a.pdf", ali, rules));
   assert.ok(!canSee("ortak/Şirket/a.pdf".normalize("NFD"), ali, [{ folder: "ortak/Şirket", users: [] }]));
+  // The closest rule by what it matches, not by how many bytes its spelling takes.
+  const nfd = "ortak/Ş".normalize("NFD");
+  assert.ok(nfd.length > "ortak/ş/x".normalize("NFC").length - 2);
+  assert.ok(canSee("ortak/ş/x/a.pdf", ali, [{ folder: nfd, users: [] }, { folder: "ortak/ş/x", users: ["ali"] }]));
   assert.ok(ruleFindsFolder({ folder: "ortak/personel", users: [] }, ["ortak/Personel/Alt"]));
   assert.ok(!ruleFindsFolder({ folder: "ortak/yok", users: [] }, ["ortak/Personel"]));
 });
@@ -144,7 +173,8 @@ test("videos: asked for by name, kept apart from photos; ranges for a player", (
   assert.deepEqual(search("uşak videolarını göster"), ["2.mp4"]);
   assert.deepEqual(search("uşak resimlerini göster"), ["1.jpg"]);
   assert.ok(asksPhotos("uşak videolarını göster"));
-  assert.ok(asksPhotos("fuar kaydını getir"));
+  assert.ok(asksPhotos("fuar videosunu getir"));
+  for (const q of ["personel kayıtlarını göster", "2025 yılına ait kayıtları getir"]) assert.ok(!asksPhotos(q), q);
   assert.equal(countOf("2 video göster"), 2);
   assert.equal(parseRange(null, 100), null);
   assert.deepEqual(parseRange("bytes=0-", 100), { start: 0, end: 99 });

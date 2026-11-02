@@ -5,13 +5,12 @@ import "server-only";
 // lib/folder-access. A folder named Şablonlar holds blank forms: they are listed apart and never read as a source.
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { admission } from "./admission";
 import { writeFileAtomic } from "./atomic";
 import { getSetting } from "./db";
 import { canSee, parseRules, type FolderRule } from "./folder-access";
-import { ScanFailed, scanFolder, type Skipped } from "./folder-scan";
+import { ScanFailed, readWithin, safeToForget, scanFolder, type Skipped } from "./folder-scan";
 import { contentProblem } from "./filetype";
 import { logError } from "./log";
 import { parseFile, UserError } from "./parse";
@@ -28,6 +27,7 @@ const MAX_FILES = Number(process.env.SOURCES_MAX_FILES) || 20_000;
 const SCAN_MS = 15_000; // new files appear within this long
 const SCAN_DEADLINE_MS = Number(process.env.SOURCES_SCAN_MS) || 60_000;
 const SWEEP_MS = 60 * 60_000;
+export const READ_MS = 2 * 60_000; // one file off the share
 const MAX_LOADED = 50; // documents kept in memory with their search vectors
 
 export const isSharedId = (id: string) => id.startsWith("s-");
@@ -72,13 +72,14 @@ function refresh(): Promise<void> {
         maxFiles: MAX_FILES,
         deadlineMs: SCAN_DEADLINE_MS,
       });
+      const before = state.list.length;
       state.templates = r.files.filter((f) => isTemplatePath(f.path)).map(entryOf);
       state.list = r.files.filter((f) => !isTemplatePath(f.path)).map(entryOf);
       state.skipped = r.skipped;
       state.dirs = r.dirs;
       state.ok = true;
       state.error = undefined;
-      sweepCache();
+      if (safeToForget(before, state.list.length, r.skipped)) sweepCache();
     } catch (e) {
       // A folder that was never set up is an empty library, as it always was; a share that was there and went away is an outage.
       const code = e instanceof ScanFailed ? e.message : "unreadable";
@@ -152,8 +153,7 @@ function remember(file: string, key: string) {
   writeFileAtomic(CACHE_INDEX, JSON.stringify(index));
 }
 function sweepCache() {
-  // Never on an empty list: a share mounted empty for a moment must not cost every extraction.
-  if (Date.now() - state.swept < SWEEP_MS || !state.list.length) return;
+  if (Date.now() - state.swept < SWEEP_MS) return;
   state.swept = Date.now();
   try {
     mkdirSync(CACHE, { recursive: true });
@@ -191,7 +191,7 @@ export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => v
   if (running) return running;
   // Held from reading the file to the end of extraction: the same global limit as uploads (a full queue is refused).
   const job = admission.upload.run(async () => {
-    const buf = await readFile(filePathOf(e)).catch(() => {
+    const buf = await readWithin(filePathOf(e), READ_MS).catch(() => {
       throw new UserError("ortak klasördeki dosyaya şu an ulaşılamıyor");
     });
     const hash = createHash("sha256").update(buf).digest("hex");

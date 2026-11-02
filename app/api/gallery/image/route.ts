@@ -17,7 +17,11 @@ export async function GET(req: Request) {
   if (!e) return new Response(null, { status: 404 });
   const size = u.get("size") ?? "thumb";
   const download = u.get("indir") === "1";
-  const headers: Record<string, string> = { "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff" };
+  // The browser keeps a copy but asks every time: the sign-in and folder rights above run on each request, so a closed folder's
+  // picture can't come out of its cache for the next person on this computer. Unchanged files answer in a few bytes.
+  const etag = `"${e.id}-${e.size}-${Math.round(e.mtime)}-${size}"`;
+  const headers: Record<string, string> = { "Cache-Control": "private, no-cache", ETag: etag, Vary: "Cookie", "X-Content-Type-Options": "nosniff" };
+  if (req.headers.get("if-none-match") === etag && !req.headers.get("range")) return new Response(null, { status: 304, headers });
   try {
     if (size in THUMB) {
       const out = await galleryThumb(e, size as ImageSize, req.signal);
@@ -42,7 +46,7 @@ export async function GET(req: Request) {
         },
       });
     }
-    const buf = await galleryBytes(e);
+    const buf = await galleryBytes(e, req.signal);
     return new Response(new Uint8Array(buf), {
       headers: { ...headers, "Content-Type": CONTENT_TYPE[e.ext] ?? "application/octet-stream", ...(download ? { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(e.name)}` } : {}) },
     });

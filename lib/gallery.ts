@@ -12,7 +12,7 @@ import { writeFileAtomic } from "./atomic";
 import { getSetting } from "./db";
 import { exifYear } from "./exif-date";
 import { canSee, parseRules } from "./folder-access";
-import { ScanFailed, scanFolder, type Skipped } from "./folder-scan";
+import { ScanFailed, readWithin, safeToForget, scanFolder, type Skipped } from "./folder-scan";
 import type { GalleryEntry } from "./gallery-search";
 import { logError } from "./log";
 import { videoFrame } from "./video-frame";
@@ -78,6 +78,7 @@ function refresh(): Promise<void> {
     try {
       const r = await scanFolder(ROOT(), { accept: (ext) => PHOTO_EXT.has(ext) || VIDEO_EXT.has(ext), maxBytes: (ext) => (VIDEO_EXT.has(ext) ? MAX_VIDEO_BYTES : MAX_PHOTO_BYTES), maxDepth: 12, maxFiles: MAX_FILES, deadlineMs: DEADLINE_MS });
       const seen = captions();
+      const before = state.list.length;
       state.list = r.files.map((f) => {
         const id = `g-${createHash("sha256").update(f.path).digest("hex").slice(0, 40)}`;
         const c = seen.get(id);
@@ -88,8 +89,8 @@ function refresh(): Promise<void> {
       state.dirs = r.dirs;
       state.ok = true;
       state.error = undefined;
-      // Words about photos no longer there go. Not on an empty list: a share mounted empty must not cost a month of model time.
-      if (state.list.length) {
+      // Words about photos no longer there go; but a share half there must not cost a month of model time.
+      if (safeToForget(before, state.list.length, r.skipped)) {
         const live = new Set(state.list.map((e) => e.id));
         for (const id of seen.keys()) if (!live.has(id)) { seen.delete(id); state.dirty++; }
         if (state.dirty) saveCaptions();
@@ -127,7 +128,7 @@ export async function galleryFor(who: { username: string; role: string }): Promi
 }
 export const galleryDown = () => !state.ok;
 export const fileOf = (e: { path: string }) => path.join(ROOT(), ...e.path.split("/"));
-export const galleryBytes = (e: { path: string }) => readFile(fileOf(e));
+export const galleryBytes = (e: { path: string }, signal?: AbortSignal) => readWithin(fileOf(e), 2 * 60_000, signal);
 
 const thumbWork = new Semaphore(2, 200);
 // @napi-rs/canvas: already what PDF pages are drawn with; loaded on demand so a missing native build fails one picture, not the app.
@@ -152,7 +153,7 @@ export async function galleryThumb(e: GalleryEntry, size: ImageSize, signal: Abo
   const file = path.join(THUMBS, name);
   if (existsSync(file)) return readFile(file);
   return thumbWork.run(async () => {
-    const source = e.kind === "video" ? await videoFrame(fileOf(e), THUMB.view, signal) : await galleryBytes(e);
+    const source = e.kind === "video" ? await videoFrame(fileOf(e), THUMB.view, signal) : await galleryBytes(e, signal);
     const out = await shrink(source, THUMB[size], size === "thumb" ? 72 : 84);
     mkdirSync(THUMBS, { recursive: true });
     writeFileAtomic(file, out);
@@ -170,6 +171,8 @@ async function captionOne(e: GalleryEntry) {
   // A video is seen by one still: enough to find it, and the file itself is never read whole.
   const buf = e.kind === "video" ? await videoFrame(fileOf(e), 1024) : await galleryBytes(e);
   const small = await shrink(buf, 1024, 80);
+  // Reading and shrinking took a while: someone may be waiting now, and they come first.
+  if (admission.model.full) return;
   const year = e.kind === "video" ? undefined : exifYear(buf.subarray(0, 256 * 1024));
   const signal = AbortSignal.timeout(5 * 60_000);
   const r = await admission.model.run(() => providerOf(vision).chat({ model: vision.model, messages: [{ role: "user", content: CAPTION_PROMPT, images: [small.toString("base64")] }], maxTokens: CAPTION_TOKENS, signal }), signal);

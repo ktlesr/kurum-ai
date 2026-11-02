@@ -1,6 +1,6 @@
 // "Uşak kilim projesinin resimlerinden 3 tanesini getir": photos from the archive, not a question for the model. Stays narrow: a
 // wrong yes takes a question away from the chat. "Belgedeki resmi anlat", "resim çiz", "bu fotoğrafta ne var" aren't requests.
-const NOUN = "(?:resim|resmi|fotoğraf|foto|görsel|galeri|video|film|klip|klib|kayıt|kayd)";
+const NOUN = "(?:resim|resmi|fotoğraf|foto|görsel|galeri|video|film|klip|klib)";
 const VERB = "(?:getir|göster|bul|listele)(?:ir|in|iniz|sene|ebilir|abilir|ir misin|ir misiniz|ebilir misin|abilir misin)?";
 const ABOUT_A_FILE = /(?:belge|dosya|pdf|word|excel|sunum|internet|web|google|sayfa|site)/u;
 const ABOUT_MAKING = /(?:\bçiz|\boluştur|\btasarla|\büret|\bhazırla|\byap\b)/u;

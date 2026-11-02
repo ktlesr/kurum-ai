@@ -5,8 +5,8 @@ import { cptFor, getDoc, MAX_BYTES, NUM_CTX, type Doc } from "@/lib/server";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { contextBudget } from "@/lib/context";
 import { readLimited } from "@/lib/filetype";
-import { readFile } from "node:fs/promises";
-import { filePathOf, isSharedId, sharedDoc, sharedEntryFor, sharedTemplatesFor, type SharedEntry } from "@/lib/library";
+import { readWithin } from "@/lib/folder-scan";
+import { READ_MS, filePathOf, isSharedId, sharedDoc, sharedEntryFor, sharedTemplatesFor, type SharedEntry } from "@/lib/library";
 import { isMyTemplateId, readMyTemplate } from "@/lib/template-store";
 import { Busy } from "@/lib/limits";
 import { logError } from "@/lib/log";
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
     } else if (isSharedId(picked)) {
       const e = (await sharedTemplatesFor(user)).find((t) => t.id === picked);
       if (!e) return fail("Şablon bulunamadı.", 404);
-      const buf = await readFile(filePathOf(e)).catch(() => null);
+      const buf = await readWithin(filePathOf(e), READ_MS, req.signal).catch(() => null);
       if (!buf) return fail("Ortak klasördeki şablona şu an ulaşılamıyor.", 503);
       name = e.name;
       bytes = new Uint8Array(buf);

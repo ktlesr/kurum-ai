@@ -1,6 +1,6 @@
 // Walking a folder that may live on a NAS: nothing here blocks the server, a slow or dead share ends in a clear "couldn't", and
 // what is left out is counted, so nobody has to wonder why a file doesn't show. Pure fs: tests drive it.
-import { lstat, readdir, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 export interface ScanFile { path: string; name: string; ext: string; size: number; mtime: number }
@@ -16,6 +16,28 @@ export interface ScanOptions {
 }
 
 export class ScanFailed extends Error {}
+
+/** The share itself is in trouble, whichever folder it shows in: not "this folder is closed". */
+const SHARE_TROUBLE = new Set(["EIO", "ESTALE", "ETIMEDOUT", "EHOSTDOWN", "EHOSTUNREACH", "ENETDOWN", "ENETUNREACH", "ECONNRESET", "ECONNABORTED", "EREMOTEIO", "ENOTCONN", "EBUSY", "ENOMEM"]);
+const troubled = (e: unknown) => SHARE_TROUBLE.has((e as NodeJS.ErrnoException).code ?? "");
+
+/**
+ * Whether files missing from this scan may be taken as deleted, and what was kept for them dropped. Not after anything went
+ * unread, and not when much of the list vanished at once: that looks like a share half there, and the cost of being wrong is
+ * every extraction and every description made so far.
+ */
+export const safeToForget = (before: number, after: number, skipped: Skipped) => after > 0 && !skipped.unreadable && !skipped.overLimit && after * 2 >= before;
+
+/** A file off a share that can hang: whoever waits for it stops waiting, and what it holds (a slot, a queue place) goes free. */
+export function readWithin(file: string, ms: number, signal?: AbortSignal): Promise<Buffer> {
+  const stop = signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
+  return new Promise<Buffer>((ok, no) => {
+    const gone = () => no(stop.reason ?? new Error("read_stopped"));
+    if (stop.aborted) return gone();
+    stop.addEventListener("abort", gone, { once: true });
+    readFile(file).then(ok, no).finally(() => stop.removeEventListener("abort", gone));
+  });
+}
 
 const within = <T>(p: Promise<T>, ms: number): Promise<T> => {
   let timer: ReturnType<typeof setTimeout>;
@@ -42,7 +64,9 @@ export async function scanFolder(root: string, o: ScanOptions): Promise<ScanResu
       names = (await within(readdir(dir), left())).sort((a, b) => a.localeCompare(b, "tr"));
     } catch (e) {
       // The share going away midway is a failed scan, not an empty folder; one closed subfolder only counts.
-      if (e instanceof ScanFailed || !rel) throw e instanceof ScanFailed ? e : new ScanFailed("unreadable");
+      if (e instanceof ScanFailed) throw e;
+      if (!rel || troubled(e)) throw new ScanFailed((e as NodeJS.ErrnoException).code ?? "unreadable");
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return; // deleted while walking
       out.skipped.unreadable++;
       return;
     }
@@ -54,7 +78,8 @@ export async function scanFolder(root: string, o: ScanOptions): Promise<ScanResu
         st = await within(lstat(full), left());
       } catch (e) {
         if (e instanceof ScanFailed) throw e;
-        out.skipped.unreadable++;
+        if (troubled(e)) throw new ScanFailed((e as NodeJS.ErrnoException).code!);
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") out.skipped.unreadable++;
         continue;
       }
       if (st.isSymbolicLink()) continue; // nothing outside the folder can be read through one

@@ -324,9 +324,13 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       setChatId(id);
       setInput("");
       setMessages([...earlier, asked, { role: "assistant", content: "", status: "Galeride aranıyor…", startedAt: Date.now(), local: true }]);
+      // Like any answer: nothing else starts meanwhile, and leaving the chat or pressing stop ends it.
+      setStreaming(true);
+      const ac = new AbortController();
+      abortRef.current = ac;
       let reply: Message;
       try {
-        const r = await api(`/api/gallery?${new URLSearchParams({ q: query, n: String(n), offset: String(offset) })}`);
+        const r = await api(`/api/gallery?${new URLSearchParams({ q: query, n: String(n), offset: String(offset) })}`, { signal: ac.signal });
         if (!r.ok) throw new Error();
         const j = (await r.json()) as { total: number; folder?: string; items: GalleryPhoto[]; near?: string[]; down?: boolean };
         const shown = offset + j.items.length;
@@ -335,7 +339,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           ? {
               role: "assistant",
               local: true,
-              content: `${j.folder ? `**${j.folder}** klasörü ve eşleşen diğer yerlerde` : "Galeride"} ${fmtNum(j.total)} sonuç bulundu, ${offset ? `${offset + 1}-${shown} arası` : `${fmtNum(j.items.length)} tanesi`}:${shown < j.total ? ` Devamı için "${Math.min(n, j.total - shown)} tane daha" yazın.` : ""}${away}`,
+              content: `${j.folder ? `**${j.folder}** klasörü ve eşleşen diğer yerlerde` : "Galeride"} ${fmtNum(j.total)} sonuç bulundu, ${offset ? `${offset + 1}-${shown} arası` : `${fmtNum(j.items.length)} tanesi`} gösteriliyor.${shown < j.total ? ` Devamı için "${Math.min(n, j.total - shown)} tane daha" yazın.` : ""}${away}`,
               gallery: { query, shown, total: j.total, items: j.items },
             }
           : {
@@ -346,7 +350,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       } catch {
         reply = { role: "assistant", content: "Galeriye ulaşılamadı. Biraz sonra tekrar deneyin.", local: true };
       }
-      save([...earlier, asked, reply]);
+      setStreaming(false);
+      if (!ac.signal.aborted) save([...earlier, asked, reply]);
       return;
     }
     const wish = exportRequest(q);
