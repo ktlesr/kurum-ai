@@ -112,6 +112,37 @@ function readRows(raw: unknown, table: TableSlot, docs: string[], w: SourceWindo
   return rows;
 }
 
+/** The model refused the request as too large (vLLM/OpenAI answer 400 to a prompt over the context). */
+const tooLong = (e: unknown) => e instanceof Error && e.message === "model_http_400";
+/** Below this a window is no longer too long; a 400 is about something else. */
+const MIN_HALF = 2000;
+/** A table's title and header carried into the second half: a few lines, never a part of the document itself. */
+const MAX_HEAD = 3000;
+/** A window cut in two at the line nearest its middle (a table row stays whole); null when too small to cut. */
+export function halve(w: SourceWindow): [SourceWindow, SourceWindow] | null {
+  if (w.text.length < MIN_HALF * 2) return null;
+  const mid = w.text.length >> 1;
+  const before = w.text.lastIndexOf("\n", mid);
+  const after = w.text.indexOf("\n", mid);
+  const cut = before > MIN_HALF / 2 ? before : after > 0 && after < w.text.length - MIN_HALF / 2 ? after : mid;
+  const first = w.text.slice(0, cut);
+  // A table cut in the middle: its header (from its "## " title down to the |---| line) goes with the second half
+  // too, which would otherwise hold figures without saying what they are.
+  const sep = [...first.matchAll(/^\|(?:\s*:?-+:?\s*\|)+[ \t]*$/gm)].at(-1); // the table being cut: the last one begun
+  let head = "";
+  if (sep) {
+    const end = sep.index + sep[0].length;
+    head = first.slice(first.lastIndexOf("\n## ", sep.index) + 1, end);
+    if (head.length > MAX_HEAD) head = first.slice(first.lastIndexOf("\n", sep.index - 2) + 1, end); // the header row alone
+    if (head.length > MAX_HEAD) head = "";
+  }
+  const rest = w.text.slice(cut).replace(/^\n/, "");
+  return [
+    { ...w, label: `${w.label} (1. yarı)`, text: first },
+    { ...w, label: `${w.label} (2. yarı)`, text: head && !rest.startsWith(head) ? `${head}\n${rest}` : rest },
+  ];
+}
+
 export async function extractValues(
   layout: Layout,
   windows: SourceWindow[],
@@ -125,15 +156,27 @@ export async function extractValues(
   const seen = new Map<string, Set<string>>();
   let failed = 0;
   let read = 0;
-  for (const w of windows) {
+  const queue = [...windows];
+  for (let w = queue.shift(); w; w = queue.shift()) {
     // Every field proved and no table to collect for: the rest of the documents has nothing to add.
     const unproved = [...open].length > 0;
     if (!unproved && !layout.tables.length) break;
-    progress(read, windows.length);
-    read++;
+    const total = read + queue.length + 1;
+    progress(read, total);
     const { text, names } = fieldList(layout, open);
     const user = `${instruction ? `Kullanıcının isteği: ${instruction}\n\n` : ""}Doldurulacak alanlar:\n${text}\n\n<belge ad="${w.doc.replace(/[<>"]/g, "")}" bolum="${w.label.replace(/[<>"]/g, "")}">\n${w.text.replace(/<\/?belge/gi, "< belge")}\n</belge>`;
-    const answer = parseAnswer(await ask(SYSTEM, user));
+    let said: string;
+    try {
+      said = await ask(SYSTEM, user);
+    } catch (e) {
+      // The window is still more than the model takes at once (its size is an estimate): read it in two halves.
+      const halves = tooLong(e) ? halve(w) : null;
+      if (!halves) throw e;
+      queue.unshift(...halves);
+      continue;
+    }
+    read++;
+    const answer = parseAnswer(said);
     if (!answer) {
       failed++;
       continue;
@@ -165,7 +208,7 @@ export async function extractValues(
       }
     });
   }
-  progress(read, windows.length);
+  progress(read, read);
   if (failed) out.notes.push(`Belgelerin ${failed} bölümünde modelin cevabı okunamadı; o bölümlerdeki bilgiler eksik kalmış olabilir.`);
   return out;
 }

@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { docSections, dropListPositions, linkPages, repairListMarks, parseSource, plainNumbering, type ChatMeta, type MdNode } from "./context.ts";
+import { cptOf, docSections, dropListPositions, linkPages, repairListMarks, parseSource, plainNumbering, type ChatMeta, type MdNode } from "./context.ts";
 
 test("docSections splits on page and sheet markers, keeps the outline", () => {
   const t = "Özet satırı\n--- Sayfa 1 ---\nbir\n--- Sayfa 2 ---\niki\n## Sheet: Bütçe\n| a |";
@@ -73,4 +73,12 @@ test("repairListMarks: only what the list's own order decides", () => {
   assert.equal(repairListMarks('"c) Başlık\nIİ) A\n2) B'), '"c) Başlık\n1) A\n2) B');
   // No neighbours to say otherwise, or a list that may really skip.
   for (const t of ["1) A\ni) Alt\nii) Alt\n2) B", "1) A\nI) Alt\nII) Alt\n2) B", "c) A\n  1) Alt\nd) B", "c) A\n1) Alt\nd) B", "1) A\na) Alt\n3) B", "h) A\n1) Alt\n\nParagraf", "a) A\nb) B\n2) Alt", "1) A\nb) B", "a) A\nc) B", "e) Tek satır", "b) A\n1) B\n2) C", "a) A\nx) B\nd) C", "Sayfa 2) gibi"]) assert.equal(repairListMarks(t), t);
+});
+
+test("cptOf: a digit is a token, prose keeps the measured rate", () => {
+  assert.equal(cptOf(["yatırım teşvik"], 2.9), 2.9);
+  assert.equal(cptOf(["1234"], 2.9), 1);
+  assert.equal(cptOf([], 2.9), 2.9);
+  // Half digits: 50 tokens of digits + 50/2.9 of the rest.
+  assert.ok(Math.abs(cptOf(["a".repeat(50), "5".repeat(50)], 2.9) - 100 / (50 + 50 / 2.9)) < 1e-9);
 });

@@ -13,7 +13,7 @@ import { parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
-import { contextBudget, contextRatio, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
+import { contextBudget, contextRatio, cptOf, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
 import { retrieve, TOP_K, windows } from "@/lib/rag";
@@ -434,7 +434,8 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           }
         }
         const totalChars = selected.reduce((n, d) => n + d.chars, 0) + web.length;
-        const fits = contextRatio(totalChars, NUM_CTX, cptFor(model)) >= 1;
+        // The documents' own rate: a spreadsheet of figures takes far more tokens than its length suggests (lib/context cptOf).
+        const fits = contextRatio(totalChars, NUM_CTX, cptOf([...selected.map((d) => d.text), web], cptFor(model))) >= 1;
         if (fits) {
           context = selected.map((d) => `<doküman ad="${d.name}">\n${d.text}\n</doküman>`).join("\n\n");
         } else {
@@ -445,10 +446,10 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           }
           if (whole) {
             // Map (once per document, cached on it): question-independent notes of each window. Reduce: answer from them.
-            const budget = Math.floor(contextBudget(NUM_CTX, cptFor(model)) * 0.85);
             const notes: string[] = [];
             meta.sources = [];
             for (const d of selected) {
+              const budget = Math.floor(contextBudget(NUM_CTX, cptOf([d.text], cptFor(model))) * 0.85);
               // A shared run may report progress after this request ended; its stream is closed by then.
               const items = await digestOf(chat, `${cfg.chat.kind}|${cfg.chat.url}`, d, model, budget, (s) => { try { status(s); } catch {} }, signal);
               for (const it of items) {

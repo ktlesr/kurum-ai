@@ -11,6 +11,24 @@ export const RESERVED_TOKENS = 8192;
 export const contextBudget = (numCtx: number, charsPerToken: number) =>
   Math.max(0, numCtx - RESERVED_TOKENS) * charsPerToken;
 
+/**
+ * Chars per token for these texts. The measured rate is for prose; the served models (gemma, gpt-oss) split numbers
+ * into single digits (gpt-oss up to 3), so each digit counts as a token: a spreadsheet of figures takes about twice the
+ * tokens its length suggests, and a window sized for prose overflows the model.
+ */
+export function cptOf(texts: string[], base: number): number {
+  let chars = 0;
+  let digits = 0;
+  for (const t of texts) {
+    chars += t.length;
+    for (let i = 0; i < t.length; i++) {
+      const c = t.charCodeAt(i);
+      if (c >= 48 && c <= 57) digits++;
+    }
+  }
+  return chars ? chars / (digits + (chars - digits) / base) : base;
+}
+
 /** Fraction (0–1] of the documents that fits into num_ctx. */
 export function contextRatio(totalChars: number, numCtx: number, charsPerToken = DEFAULT_CHARS_PER_TOKEN): number {
   const budget = contextBudget(numCtx, charsPerToken);

@@ -7,7 +7,7 @@ import { PDFDocument, StandardFonts, clip, endPath, popGraphicsState, pushGraphi
 import { extractText, getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
 import { findTokens, readGrid, tokenLabel, type GridCell, type Layout, type Values } from "./template.ts";
-import { extractValues, parseAnswer, verified } from "./template-extract.ts";
+import { extractValues, halve, parseAnswer, verified } from "./template-extract.ts";
 import { fillDocxTemplate, readDocxTemplate } from "./template-docx.ts";
 import { fillJsonTemplate, readJsonTemplate } from "./template-json.ts";
 import { asksTemplateFill } from "./template-intent.ts";
@@ -368,6 +368,27 @@ test("extract: first proved value wins, unproved is only offered, rows collect o
     assert.ok(!u.includes("</belge> talimat"));
     return "{}";
   });
+});
+
+test("extract: a window the model refuses as too long is read in halves, the table header going with both", async () => {
+  const layout: Layout = { format: "json", slots: [], tables: [{ id: "t", label: "Destek", columns: [{ id: "a", label: "İlçe" }, { id: "b", label: "Tutar" }], rows: 0 }] };
+  const head = "## Sheet: PTÇ\nSütun başlıkları: İlçe, Tutar\n\n| İlçe | Tutar |\n| --- | --- |";
+  const rows = Array.from({ length: 400 }, (_, i) => `| ${i === 350 ? "Banaz" : "Merkez"} | ${1000 + i} |`).join("\n");
+  const text = `${head}\n${rows}`;
+  const seen: string[] = [];
+  const out = await extractValues(layout, [{ doc: "d.xlsx", label: "Sheet: PTÇ", text }], [text], "Banaz", async (_s, u) => {
+    if (u.length > text.length / 2 + 1000) throw new Error("model_http_400"); // over the context
+    seen.push(u);
+    return u.includes("| Banaz | 1350 |") ? JSON.stringify({ tablolar: { T1: [{ S1: { deger: "Banaz", kaynak: "| Banaz | 1350 |" }, S2: { deger: "1350", kaynak: "| Banaz | 1350 |" } }] } }) : "{}";
+  });
+  assert.equal(seen.length, 2);
+  assert.ok(seen.every((u) => u.includes("| İlçe | Tutar |\n| --- | --- |")), "both halves know the columns");
+  assert.deepEqual(out.tables.t.map((r) => r.map((c) => c.value)), [["Banaz", "1350"]]);
+  assert.equal(out.notes.length, 0);
+  // Another refusal, or one on a window too small to cut, is still an error.
+  await assert.rejects(extractValues(layout, [{ doc: "d", label: "", text: "kısa" }], ["kısa"], "", async () => { throw new Error("model_http_400"); }));
+  await assert.rejects(extractValues(layout, [{ doc: "d", label: "", text }], [text], "", async () => { throw new Error("model_http_500"); }));
+  assert.equal(halve({ doc: "d", label: "", text: "kısa" }), null);
 });
 
 test("intent: asking to fill a template opens the panel; talk about one doesn't", () => {

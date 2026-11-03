@@ -3,7 +3,7 @@
 import { requireApiUser } from "@/lib/auth";
 import { cptFor, getDoc, MAX_BYTES, NUM_CTX, type Doc } from "@/lib/server";
 import { admission, busy, tooMany } from "@/lib/admission";
-import { contextBudget } from "@/lib/context";
+import { contextBudget, cptOf } from "@/lib/context";
 import { readLimited } from "@/lib/filetype";
 import { readWithin } from "@/lib/folder-scan";
 import { READ_MS, filePathOf, isSharedId, sharedDoc, sharedEntryFor, sharedTemplatesFor, type SharedEntry } from "@/lib/library";
@@ -155,7 +155,9 @@ export async function POST(req: Request) {
           }
           // The field list takes its share of what the model can read at once.
           const fieldChars = [...layout.slots.map((s) => s.label.length + 8), ...layout.tables.flatMap((t) => t.columns.map((c) => c.label.length + 8))].reduce((a, b) => a + b, 0);
-          const budget = Math.max(4000, contextBudget(NUM_CTX, cptFor(model)) - fieldChars - 1500);
+          // At the documents' own rate: figures take a token per digit (lib/context cptOf), prose its measured rate. The rate
+          // is the documents' average, and a window can be denser: 15% kept free (as chat's scan), halving catches the rest.
+          const budget = Math.max(4000, contextBudget(NUM_CTX, cptOf(docs.map((d) => d.text), cptFor(model))) * 0.85 - fieldChars - 1500);
           const all = windows(docs.map((d) => ({ name: d.name, text: d.text })), budget);
           const wins = all.slice(0, MAX_WINDOWS);
           const found = await extractValues(layout, wins, docs.map((d) => d.text), instruction, async (system, user2) => {
