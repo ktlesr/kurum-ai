@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { aboutTheDocument, isClearNo, parseRelevant, parseSearchQuery, passage, saysNotWritten, searchWeb } from "./websearch.ts";
+import { aboutTheDocument, isClearNo, parseRelevant, parseSearchQuery, passage, safeQuery, saysNotWritten, searchWeb } from "./websearch.ts";
 
 let asked = "";
 const server = createServer((req, res) => {
@@ -89,6 +89,15 @@ test("saysNotWritten: the answers that went without a search", () => {
 test("isClearNo: only a plain no skips the search; empty or unclear doesn't", () => {
   for (const no of ["HAYIR", "Hayır.", "**hayır**", "HAYIR\n"]) assert.ok(isClearNo(no), no);
   for (const other of ["", "EVET", "Bence hayır", "Hayırlı", "HAYIR,EVET", "HAYIRı", "ıHAYIR"]) assert.ok(!isClearNo(other), other);
+});
+
+test("safeQuery: the document gives its subject, never a name, place or number", () => {
+  const doc = "YENİ TEŞVİK SİSTEMİNİN KURGUSU\nyatırım teşvik sistemi kapsamında bölgeler. Halit ÇAĞDAŞ görevden alındı. Karar 2026/363, Sakarya İl Müdürü.";
+  assert.equal(safeQuery("yatırım teşvik sistemi bölgeler tablosu", "bölgeler tablosunu excel olarak hazırlar mısın", doc), "yatırım teşvik sistemi bölgeler tablosu");
+  assert.equal(safeQuery("Halit Çağdaş Sakarya 2026/363 atama kararı", "atamaları json yazar mısın", doc), "atama"); // "atama" the user typed; "Karar" only capitalized
+  assert.equal(safeQuery("Sakarya il müdürü", "Sakarya il müdürü kim", doc), "Sakarya il müdürü"); // the user's own words always go
+  assert.equal(safeQuery("teşvik", "x", "TEŞVİK"), ""); // capitals only: could be a name
+  assert.equal(safeQuery("kurgu yatırım teşvik sistemi bölgeler", "", doc), "yatırım teşvik sistemi bölgeler"); // "kurgu" only in capitals; and at most 4
 });
 
 test("parseRelevant: only a plain list of result numbers picks", () => {

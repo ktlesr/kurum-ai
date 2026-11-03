@@ -117,6 +117,26 @@ export function isClearNo(said: string): boolean {
   return /^[\s*_"'`]*hay[ıi]r[\s*_"'`.!]*$/iu.test(said);
 }
 
+/** How many words a query may take from the document side: its subject in a few words, nothing more. */
+const MAX_DOC_WORDS = 4;
+/**
+ * The query with only what may leave the institution: the user's own words, and from the document only common words
+ * that name its subject. A word the user didn't type goes only if the document also writes it in small letters (so not a
+ * name, a place or an institution: those are always capitalized) and has no digit (no number, date, decision no, ID).
+ */
+export function safeQuery(query: string, typed: string, doc: string): string {
+  const own = low(typed);
+  const typedByUser = (w: string) => new RegExp(`(?<![\p{L}\p{N}])${w.slice(0, /\d/.test(w) ? w.length : 5)}`, "u").test(own); // Turkish suffixes: a stem will do
+  let added = 0;
+  return query.split(/\s+/).filter((w) => {
+    const word = low(w).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+    if (!word) return false;
+    if (typedByUser(word.replace(/[^\p{L}\p{N}]/gu, ""))) return true;
+    const common = !/\d/.test(word) && /^\p{L}+$/u.test(word) && new RegExp(`(?<!\\p{L})${word}`, "u").test(doc);
+    return common && ++added <= MAX_DOC_WORDS;
+  }).join(" ");
+}
+
 /** The relevance check's pick: result numbers (1-based) to 0-based indexes; YOK, an empty or any other reply picks none. */
 export function parseRelevant(said: string, count: number): number[] {
   const line = said.trim().split("\n").at(-1)?.trim() ?? ""; // a reasoning model may think on lines above
