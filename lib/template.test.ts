@@ -389,6 +389,22 @@ test("extract: a window the model refuses as too long is read in halves, the tab
   await assert.rejects(extractValues(layout, [{ doc: "d", label: "", text: "kısa" }], ["kısa"], "", async () => { throw new Error("model_http_400"); }));
   await assert.rejects(extractValues(layout, [{ doc: "d", label: "", text }], [text], "", async () => { throw new Error("model_http_500"); }));
   assert.equal(halve({ doc: "d", label: "", text: "kısa" }), null);
+  // A long header carried along can't keep a half as long as its window: halving again and again always ends.
+  for (const t of [`| ${"x".repeat(2900)} |\n| --- |\n${"| 1 |\n".repeat(400)}`, `## T\n| a |\n| --- |\n${"| 12345 |\n".repeat(5000)}`]) {
+    let pieces = [{ doc: "d", label: "", text: t }];
+    for (let round = 0; pieces.length; round++) {
+      assert.ok(round < 30, "halving ends");
+      pieces = pieces.flatMap((p) => {
+        const h = halve(p);
+        if (h) for (const x of h) assert.ok(x.text.length <= p.text.length * 0.75);
+        return h ?? [];
+      });
+    }
+  }
+  // A refusal on every window, however small: ends with the error, after a bounded number of calls.
+  let calls = 0;
+  await assert.rejects(extractValues(layout, [{ doc: "d", label: "", text: "| a |\n".repeat(200000) }], ["x"], "", async () => { calls++; throw new Error("model_http_400"); }));
+  assert.ok(calls <= 33, `${calls} calls`);
 });
 
 test("intent: asking to fill a template opens the panel; talk about one doesn't", () => {

@@ -118,6 +118,8 @@ const tooLong = (e: unknown) => e instanceof Error && e.message === "model_http_
 const MIN_HALF = 2000;
 /** A table's title and header carried into the second half: a few lines, never a part of the document itself. */
 const MAX_HEAD = 3000;
+/** Halvings in one reading at most: a refusal that splitting doesn't cure ends as the error it is. */
+const MAX_SPLITS = 32;
 /** A window cut in two at the line nearest its middle (a table row stays whole); null when too small to cut. */
 export function halve(w: SourceWindow): [SourceWindow, SourceWindow] | null {
   if (w.text.length < MIN_HALF * 2) return null;
@@ -137,9 +139,12 @@ export function halve(w: SourceWindow): [SourceWindow, SourceWindow] | null {
     if (head.length > MAX_HEAD) head = "";
   }
   const rest = w.text.slice(cut).replace(/^\n/, "");
+  const second = head && !rest.startsWith(head) ? `${head}\n${rest}` : rest;
+  // Each half clearly shorter than the window, so halving always ends (the header can't keep a half as long).
+  if (Math.max(first.length, second.length) > w.text.length * 0.75) return null;
   return [
     { ...w, label: `${w.label} (1. yarı)`, text: first },
-    { ...w, label: `${w.label} (2. yarı)`, text: head && !rest.startsWith(head) ? `${head}\n${rest}` : rest },
+    { ...w, label: `${w.label} (2. yarı)`, text: second },
   ];
 }
 
@@ -157,6 +162,7 @@ export async function extractValues(
   let failed = 0;
   let read = 0;
   const queue = [...windows];
+  let splits = 0;
   for (let w = queue.shift(); w; w = queue.shift()) {
     // Every field proved and no table to collect for: the rest of the documents has nothing to add.
     const unproved = [...open].length > 0;
@@ -170,8 +176,9 @@ export async function extractValues(
       said = await ask(SYSTEM, user);
     } catch (e) {
       // The window is still more than the model takes at once (its size is an estimate): read it in two halves.
-      const halves = tooLong(e) ? halve(w) : null;
+      const halves = tooLong(e) && splits < MAX_SPLITS ? halve(w) : null;
       if (!halves) throw e;
+      splits++;
       queue.unshift(...halves);
       continue;
     }
