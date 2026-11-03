@@ -16,6 +16,7 @@ import { Busy } from "@/lib/limits";
 import { contextBudget, contextRatio, cptOf, ERROR_SEP, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
+import { parseReading, rowsNamed } from "@/lib/sheet-focus";
 import { retrieve, TOP_K, windows } from "@/lib/rag";
 import { getSetting } from "@/lib/db";
 import { findUrls, MAX_CHARS_TOTAL, onSite, parsePick, siteOf, WebError, webReason, type Page } from "@/lib/web";
@@ -91,7 +92,14 @@ const FOLLOW = `Kullanıcının sorusu, okunan bir web sayfasının metni ve o s
 /** Links followed per question (all named pages together), when those pages don't hold the answer themselves. */
 const MAX_FOLLOW = 2;
 
-const CLASSIFY = `Aşağıdaki soru bir dokümana soruluyor. Cevaplamak için dokümanın TAMAMINI okumak mı gerekir (özet, genel değerlendirme, tüm maddeleri/rakamları listeleme, tutarlılık kontrolü, karşılaştırma), yoksa dokümandaki BELİRLİ bir bilgiyi bulmak yeterli mi? Yalnızca TÜM ya da BELİRLİ yaz.`;
+// Before the document is searched: what the question asks about, in the words a document would use. General knowledge
+// only (the document isn't shown); an expansion the model isn't sure of is left out rather than guessed.
+const UNDERSTAND = `Kullanıcının bir belgeye sorduğu soru verilecek; belgeyi görmüyorsun. Belgede aramadan önce soruyu bir uzman gibi genel bilginle yorumla: sorudaki kod, kısaltma, bölge, grup, dönem ya da kategori ifadelerinin neyi kapsadığını aç (ör. bir İBBS bölge kodu → o bölgedeki illerin adları; "Karadeniz'e kıyısı olan iller" → o illerin adları; "turunçgiller" → portakal, mandalina, limon, greyfurt). Cevabın ilgili olduğu yer, kurum, ürün ya da kişi adlarını belgede geçebileceği resmi tam haliyle yaz; sorudaki adları da ekle.
+Yalnızca şu JSON nesnesini yaz: {"anlam":"sorunun açılmış hali, tek cümle","adlar":["ad1","ad2"]}
+Soru belirli adlarla ilgili değilse (özet, genel değerlendirme, yazım) adlar boş liste olsun. Emin olmadığın bir açılımı yazma; o zaman adlar yalnızca sorudaki adlar olsun.`;
+const READING_TOKENS = 400;
+
+const CLASSIFY =`Aşağıdaki soru bir dokümana soruluyor. Cevaplamak için dokümanın TAMAMINI okumak mı gerekir (özet, genel değerlendirme, tüm maddeleri/rakamları listeleme, tutarlılık kontrolü, karşılaştırma), yoksa dokümandaki BELİRLİ bir bilgiyi bulmak yeterli mi? Yalnızca TÜM ya da BELİRLİ yaz.`;
 
 // Question-independent notes of one window, made once per document and reused by every whole-document question
 // (summaries, comparisons, evaluations), so a follow-up question doesn't re-read the whole document.
@@ -433,11 +441,35 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             return void ctrl.close();
           }
         }
-        const totalChars = selected.reduce((n, d) => n + d.chars, 0) + web.length;
-        // The documents' own rate: a spreadsheet of figures takes far more tokens than its length suggests (lib/context cptOf).
-        const fits = contextRatio(totalChars, NUM_CTX, cptOf([...selected.map((d) => d.text), web], cptFor(model))) >= 1;
+        // The question read the way a person would before looking anything up: codes, abbreviations, regions and groups
+        // opened up from general knowledge ("TR33 illeri" → the four provinces), so the document is searched for what
+        // it actually holds, not for the user's shorthand. The model sees only the question here; no reading, as before.
+        status("Soru yorumlanıyor…");
+        const reading = parseReading(await chatOnce(chat, model, [{ role: "system", content: UNDERSTAND }, { role: "user", content: question }], signal, READING_TOKENS).catch((e) => {
+          if (signal.aborted) throw e;
+          logError("reading", e);
+          return "";
+        }));
+        const names = reading?.names ?? [];
+        const meaning = reading?.meaning && names.length ? `\n\nSorunun yorumu (genel bilgiye göre, belgeden değil): ${reading.meaning}\nBelgede bu adlarla ara: ${names.join(", ")}. Cevapta bu yorumu bir kez "Genel bilgiye göre" diye belirt; sorudaki kısaltma belgede geçmiyor diye "belgede yok" deme.` : "";
+        if (meaning) console.info(`question reading: ${names.length} names`);
+        const sizeOf = (docs: Doc[]) => contextRatio(docs.reduce((n, d) => n + d.text.length, 0) + web.length, NUM_CTX, cptOf([...docs.map((d) => d.text), web], cptFor(model)));
+        let fits = sizeOf(selected) >= 1;
+        // Too big to read whole, and the question is about named things: of a workbook, every row naming them (code, not
+        // a keyword pick of a few chunks). Used when that fits; otherwise the search below, with the names in its query.
+        let read = selected;
+        if (!fits && names.length) {
+          const narrowed = selected.map((d) => {
+            const t = rowsNamed(d.text, names);
+            return t ? { ...d, text: t, chars: t.length } : d;
+          });
+          if (narrowed.some((d, i) => d !== selected[i]) && sizeOf(narrowed) >= 1) {
+            read = narrowed;
+            fits = true;
+          }
+        }
         if (fits) {
-          context = selected.map((d) => `<doküman ad="${d.name}">\n${d.text}\n</doküman>`).join("\n\n");
+          context = read.map((d) => `<doküman ad="${d.name}">\n${d.text}\n</doküman>`).join("\n\n");
         } else {
           let whole = scope === "all";
           if (!whole && scope !== "part") {
@@ -466,7 +498,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             context = notes.map((n) => (n.length > share ? `${n.slice(0, share)}\n…(kısaltıldı)` : n)).join("\n\n") || "(Hiçbir bölümde soruyla ilgili bilgi bulunamadı.)";
           } else {
             status("İlgili bölümler aranıyor…");
-            const { chunks, semantic, matched } = await retrieve(selected, question, signal);
+            const { chunks, semantic, matched } = await retrieve(selected, names.length ? `${question}\n${names.join(" ")}` : question, signal);
             meta.mode = "rag";
             meta.sources = [...new Set(chunks.map((c) => (selected.length > 1 ? `${c.doc} · ${c.label}` : c.label)))];
             if (!semantic) {
@@ -485,7 +517,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         let analysis = false;
         if (SEARCH_URL && !pages.length && !urls.length && scope !== "all" && meta.mode !== "scan" && selected.some((d) => d.text.trim())) {
           status("Belgede kanıt aranıyor…");
-          const said = await chatOnce(chat, model, [{ role: "system", content: `${EVIDENCE}${hint}\n\n${context}` }, ...history], signal, EVIDENCE_TOKENS).catch((e) => {
+          const said = await chatOnce(chat, model, [{ role: "system", content: `${EVIDENCE}${hint}${meaning}\n\n${context}` }, ...history], signal, EVIDENCE_TOKENS).catch((e) => {
             if (signal.aborted) throw e;
             logError("evidence", e);
             return "";
@@ -501,7 +533,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         } else {
           if (admission.model.full) status("Sırada bekleniyor…");
           if (think) status("Düşünüyor…");
-          const final: Msg[] = [{ role: "system", content: `${SYSTEM}${hint}${rule}\n\n${context}` }, ...withWeb(history)];
+          const final: Msg[] = [{ role: "system", content: `${SYSTEM}${hint}${meaning}${rule}\n\n${context}` }, ...withWeb(history)];
           answer = await streamChat(chat, model, final, think, signal, send, (n) => {
             // Keeps the connection busy and shows the wait isn't stuck.
             if (n % 50 === 0) status("Düşünüyor…"); // also keeps the connection busy

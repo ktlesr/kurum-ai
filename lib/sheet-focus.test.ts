@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { districtsAsked, focusSheets } from "./sheet-focus.ts";
+import { districtsAsked, focusSheets, parseReading, rowsNamed } from "./sheet-focus.ts";
 
 test("districtsAsked: a district of the region as a name, Merkez only with its province", () => {
   assert.deepEqual(districtsAsked("ZAFER Destekler Veriler Tablosuna göre Banaz ilçesine verilen ajans destekleri"), [{ il: "Uşak", ilce: "Banaz" }]);
@@ -60,4 +60,39 @@ test("focusSheets: the district's rows with each sheet's header; İcmal and shee
   assert.equal(focusSheets(book, [{ il: "Manisa", ilce: "Salihli" }]), null);
   assert.equal(focusSheets(book, []), null);
   assert.equal(focusSheets("Banaz ilçesi düz metin", [{ il: "Uşak", ilce: "Banaz" }]), null);
+});
+
+test("parseReading: the model's reading, bounded; anything else is none", () => {
+  assert.deepEqual(parseReading('```json\n{"anlam":"TR33 = Afyonkarahisar, Kütahya, Manisa, Uşak","adlar":["Afyonkarahisar","Kütahya","Manisa","Uşak","Uşak",3,"x"]}\n```'),
+    { meaning: "TR33 = Afyonkarahisar, Kütahya, Manisa, Uşak", names: ["Afyonkarahisar", "Kütahya", "Manisa", "Uşak"] });
+  assert.equal(parseReading("bilmiyorum"), null);
+  assert.equal(parseReading("{bozuk"), null);
+});
+
+test("rowsNamed: every sheet's rows naming one of the things, as a word; nothing matched is null", () => {
+  const stats = [
+    "## Sheet: Meyve",
+    "Satır: 3, Sütun: 3",
+    "",
+    "| Ürün | Yıl | İl |",
+    "| --- | --- | --- |",
+    "| Portakal | 2023 | Mersin-33 |",
+    "| Elma | 2023 | Uşak-64 |",
+    "| Kiraz | 2023 | AFYONKARAHİSAR-03 |",
+    "| Vişne | 2023 | Uşaklı |",
+    "",
+    "## Sheet: İcmal",
+    "",
+    "| İl | Toplam |",
+    "| --- | --- |",
+    "| Uşak | 5 |",
+  ].join("\n");
+  const out = rowsNamed(stats, ["Afyonkarahisar", "Uşak", "a.b(c"])!;
+  assert.match(out, /Uşak-64/);
+  assert.match(out, /AFYONKARAHİSAR-03/);
+  assert.match(out, /\| Uşak \| 5 \|/); // totals sheets stay: a province question may need them
+  assert.doesNotMatch(out, /Mersin|Uşaklı/);
+  assert.match(out, /3 satır/);
+  assert.equal(rowsNamed(stats, ["Manisa"]), null);
+  assert.equal(rowsNamed("düz metin Uşak", ["Uşak"]), null);
 });
