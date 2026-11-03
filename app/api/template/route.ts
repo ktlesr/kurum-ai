@@ -16,6 +16,7 @@ import { LIMITS } from "@/lib/validate";
 import { countUsage } from "@/lib/usage";
 import { TemplateError } from "@/lib/template";
 import { extractValues } from "@/lib/template-extract";
+import { districtsAsked, focusSheets } from "@/lib/sheet-focus";
 import { CONTENT_TYPES, fillTemplate, formatOf, parseValues, readTemplate, templateProblem } from "@/lib/template-file";
 
 export const runtime = "nodejs";
@@ -153,12 +154,16 @@ export async function POST(req: Request) {
             send({ type: "progress", stage: `Belge okunuyor: ${e.name}` });
             docs.push(await sharedDoc(e, () => {}, signal));
           }
+          // A district of the region asked: of a support workbook only that district's rows are read (lib/sheet-focus),
+          // seconds instead of many minutes. Values are still proved against the whole documents.
+          const places = districtsAsked(instruction);
+          const read = docs.map((d) => ({ name: d.name, text: focusSheets(d.text, places) ?? d.text }));
           // The field list takes its share of what the model can read at once.
           const fieldChars = [...layout.slots.map((s) => s.label.length + 8), ...layout.tables.flatMap((t) => t.columns.map((c) => c.label.length + 8))].reduce((a, b) => a + b, 0);
           // At the documents' own rate: figures take a token per digit (lib/context cptOf), prose its measured rate. The rate
           // is the documents' average, and a window can be denser: 15% kept free (as chat's scan), halving catches the rest.
-          const budget = Math.max(4000, contextBudget(NUM_CTX, cptOf(docs.map((d) => d.text), cptFor(model))) * 0.85 - fieldChars - 1500);
-          const all = windows(docs.map((d) => ({ name: d.name, text: d.text })), budget);
+          const budget = Math.max(4000, contextBudget(NUM_CTX, cptOf(read.map((d) => d.text), cptFor(model))) * 0.85 - fieldChars - 1500);
+          const all = windows(read.map((d) => ({ name: d.name, text: d.text })), budget);
           const wins = all.slice(0, MAX_WINDOWS);
           const found = await extractValues(layout, wins, docs.map((d) => d.text), instruction, async (system, user2) => {
             const r = await admission.model.run(() => chat.chat({ model, messages: [{ role: "system", content: system }, { role: "user", content: user2 }], maxTokens: MAX_ANSWER, signal }), signal);
