@@ -23,6 +23,8 @@ import { CONTENT_TYPES, fillTemplate, formatOf, parseValues, readTemplate, templ
 export const runtime = "nodejs";
 
 const fail = (error: string, status = 400) => Response.json({ error }, { status });
+/** A model answer's structure without its content: JSON keys and punctuation stay readable, data doesn't. */
+const shape = (s: string) => s.replace(/\p{L}/gu, "a").replace(/\p{N}/gu, "0");
 const MAX_BODY = MAX_BYTES + 4 * 1024 * 1024; // the file, and the values typed over it
 // A form's values, not an essay: ~50 table records (about 120 tokens each); more and the window is read in halves.
 const MAX_ANSWER = 6000;
@@ -176,8 +178,9 @@ export async function POST(req: Request) {
               return admission.model.run(() => chat.chat({ model, messages, maxTokens: MAX_ANSWER, signal }), signal);
             });
             if (r.truncated) throw new Error(ANSWER_CUT); // read again in halves, not lost
-            // What the model wrote when it isn't JSON: its size and edges only, to see why without the document in the log.
-            if (!parseAnswer(r.text)) console.info(`template answer unreadable: ${r.text.length} chars, starts ${JSON.stringify(r.text.slice(0, 120))}, ends ${JSON.stringify(r.text.slice(-120))}`);
+            // What the model wrote when it isn't JSON: its size and the shape of its edges, letters and digits masked so
+            // no name or figure of the document reaches the log ("S2": 00,000.00 still shows why it broke).
+            if (!parseAnswer(r.text)) console.info(`template answer unreadable: ${r.text.length} chars, starts ${JSON.stringify(shape(r.text.slice(0, 120)))}, ends ${JSON.stringify(shape(r.text.slice(-120)))}`);
             return r.text;
           }, (done, total) => send({ type: "progress", stage: "Belgeler okunuyor", done, total }));
           if (all.length > wins.length) found.notes.push(`Belgeler çok uzun: ${all.length} bölümün ilk ${wins.length} tanesi okundu. Gerekli bölümü ayrı bir belge olarak verin.`);
