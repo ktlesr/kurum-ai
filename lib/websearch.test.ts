@@ -103,7 +103,8 @@ halit.cagdas@kurum.gov.tr https://kurum.gov.tr/halit cagdas
 </bölüm>`;
   assert.equal(safeQuery("halit cagdas atama", "x", leaky), "");
   // A typed stem doesn't carry what's glued to it; a short word doesn't pass as the start of a longer one.
-  assert.equal(safeQuery("tablo_halitcagdas tablo.halit", "tablosunu hazırla", doc), "");
+  assert.equal(safeQuery("tablo_halitcagdas tablo.halit tablohalitcagdas", "tablosunu hazırla", doc), "");
+  assert.equal(safeQuery("atamalar tablosu", "atama tablosunu", ""), "atamalar tablosu"); // a suffix, either way
   assert.equal(safeQuery("hal", "x", "halinde halinde"), "");
   // Mostly capitalized, though written in small letters twice: a name.
   assert.equal(safeQuery("çağdaş", "x", "çağdaş çağdaş Çağdaş ÇAĞDAŞ Çağdaş"), "");

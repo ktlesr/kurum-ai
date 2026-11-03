@@ -119,6 +119,8 @@ export function isClearNo(said: string): boolean {
 
 /** How many words a query may take from the document side: its subject in a few words, nothing more. */
 const MAX_DOC_WORDS = 4;
+/** Letters a query word may have past what it shares with a typed word: one Turkish suffix ("-ları", "-nin"). */
+const MAX_OWN_SUFFIX = 4;
 /**
  * The query with only what may leave the institution: the user's own words, and from the document only common words
  * that name its subject. A word the user didn't type goes only if the document also writes it in small letters (so not a
@@ -127,8 +129,14 @@ const MAX_DOC_WORDS = 4;
 export function safeQuery(query: string, typed: string, doc: string): string {
   const own = tokens(low(typed));
   // Turkish suffixes: a stem will do ("tablosu" for "tablosunu"); a short word or one with a digit only whole.
-  // A stem only for a letters-only word: "tablo_halit" must not pass as "tablo".
-  const stem = (w: string, t: string) => (w.length >= 5 && /^\p{L}+$/u.test(w) ? t.startsWith(w.slice(0, 5)) : t === w);
+  // The same word with another suffix ("tablosu" for "tablosunu"): letters only, a shared start of 5+ letters and at most
+  // a short suffix of its own, so "tablo_halit" or "tablohalitcagdas" don't pass as "tablo".
+  const stem = (w: string, t: string) => {
+    if (!/^\p{L}+$/u.test(w)) return false;
+    let same = 0;
+    while (same < w.length && w[same] === t[same]) same++;
+    return same >= 5 && w.length - same <= MAX_OWN_SUFFIX;
+  };
   const typedByUser = (w: string) => own.some((t) => t === w || stem(w, t));
   // Running text only: no tag (its file name), and no address, e-mail or file name, whose small letters may be a name.
   const words = tokens(doc.replace(/<[^>]*>/g, " "));
