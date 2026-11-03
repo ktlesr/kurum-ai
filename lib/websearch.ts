@@ -127,16 +127,23 @@ const MAX_DOC_WORDS = 4;
 export function safeQuery(query: string, typed: string, doc: string): string {
   const own = tokens(low(typed));
   // Turkish suffixes: a stem will do ("tablosu" for "tablosunu"); a short word or one with a digit only whole.
-  const typedByUser = (w: string) => own.some((t) => (w.length < 5 || /\d/.test(w) ? t === w : t.startsWith(w.slice(0, 5))));
+  // A stem only for a letters-only word: "tablo_halit" must not pass as "tablo".
+  const stem = (w: string, t: string) => (w.length >= 5 && /^\p{L}+$/u.test(w) ? t.startsWith(w.slice(0, 5)) : t === w);
+  const typedByUser = (w: string) => own.some((t) => t === w || stem(w, t));
   // Running text only: no tag (its file name), and no address, e-mail or file name, whose small letters may be a name.
-  const plain = tokens(doc.replace(/<[^>]*>/g, " ")).filter((t) => /^\p{L}+$/u.test(t) && t === low(t));
+  const words = tokens(doc.replace(/<[^>]*>/g, " "));
+  const plain = words.filter((t) => /^\p{L}+$/u.test(t) && t === low(t));
+  const capital = words.filter((t) => t !== low(t)).map(low);
   let added = 0;
   return query.split(/\s+/).filter((w) => {
     const word = low(w).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
     if (!word) return false;
     if (typedByUser(word)) return true;
-    // A common word, written in small letters at least twice: a stray lowercase name doesn't make it.
-    const common = word.length >= 3 && /^\p{L}+$/u.test(word) && plain.filter((t) => t.startsWith(word)).length >= 2;
+    // A common word: letters only, written in small letters at least twice and at least as often as capitalized (a name
+    // is almost never in small letters; a subject word is mostly, headings aside). A prefix (Turkish suffixes) from 5 letters.
+    const match = (t: string) => t === word || (word.length >= 5 && t.startsWith(word));
+    const small = plain.filter(match).length;
+    const common = word.length >= 3 && /^\p{L}+$/u.test(word) && small >= 2 && small >= capital.filter(match).length;
     return common && ++added <= MAX_DOC_WORDS;
   }).join(" ");
 }

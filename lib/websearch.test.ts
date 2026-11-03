@@ -102,6 +102,11 @@ test("safeQuery: the document gives its subject, never a name, place or number",
 halit.cagdas@kurum.gov.tr https://kurum.gov.tr/halit cagdas
 </bölüm>`;
   assert.equal(safeQuery("halit cagdas atama", "x", leaky), "");
+  // A typed stem doesn't carry what's glued to it; a short word doesn't pass as the start of a longer one.
+  assert.equal(safeQuery("tablo_halitcagdas tablo.halit", "tablosunu hazırla", doc), "");
+  assert.equal(safeQuery("hal", "x", "halinde halinde"), "");
+  // Mostly capitalized, though written in small letters twice: a name.
+  assert.equal(safeQuery("çağdaş", "x", "çağdaş çağdaş Çağdaş ÇAĞDAŞ Çağdaş"), "");
   assert.equal(safeQuery("ali", "alır mısın", "ali ali"), "ali"); // two plain lowercase occurrences: a common word…
   assert.equal(safeQuery("ali", "alır mısın", "Ali geldi"), ""); // …but not a short stem of a typed word
   assert.equal(safeQuery("kurgu yatırım teşvik sistemi bölgeler", "", doc), "yatırım teşvik sistemi bölgeler"); // "kurgu" only in capitals; and at most 4
