@@ -15,7 +15,7 @@ import { windows } from "@/lib/rag";
 import { LIMITS } from "@/lib/validate";
 import { countUsage } from "@/lib/usage";
 import { TemplateError } from "@/lib/template";
-import { extractValues } from "@/lib/template-extract";
+import { ANSWER_CUT, extractValues } from "@/lib/template-extract";
 import { districtsAsked, focusSheets } from "@/lib/sheet-focus";
 import { CONTENT_TYPES, fillTemplate, formatOf, parseValues, readTemplate, templateProblem } from "@/lib/template-file";
 
@@ -23,7 +23,8 @@ export const runtime = "nodejs";
 
 const fail = (error: string, status = 400) => Response.json({ error }, { status });
 const MAX_BODY = MAX_BYTES + 4 * 1024 * 1024; // the file, and the values typed over it
-const MAX_ANSWER = 4000; // a form's values, not an essay
+// A form's values, not an essay: ~50 table records (about 120 tokens each); more and the window is read in halves.
+const MAX_ANSWER = 6000;
 // ponytail: enough for ~6 hundred pages at this window size; said out loud when a document is longer.
 const MAX_WINDOWS = 60;
 
@@ -167,6 +168,7 @@ export async function POST(req: Request) {
           const wins = all.slice(0, MAX_WINDOWS);
           const found = await extractValues(layout, wins, docs.map((d) => d.text), instruction, async (system, user2) => {
             const r = await admission.model.run(() => chat.chat({ model, messages: [{ role: "system", content: system }, { role: "user", content: user2 }], maxTokens: MAX_ANSWER, signal }), signal);
+            if (r.truncated) throw new Error(ANSWER_CUT); // read again in halves, not lost
             return r.text;
           }, (done, total) => send({ type: "progress", stage: "Belgeler okunuyor", done, total }));
           if (all.length > wins.length) found.notes.push(`Belgeler çok uzun: ${all.length} bölümün ilk ${wins.length} tanesi okundu. Gerekli bölümü ayrı bir belge olarak verin.`);

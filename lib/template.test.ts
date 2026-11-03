@@ -7,7 +7,7 @@ import { PDFDocument, StandardFonts, clip, endPath, popGraphicsState, pushGraphi
 import { extractText, getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
 import { findTokens, readGrid, tokenLabel, type GridCell, type Layout, type Values } from "./template.ts";
-import { extractValues, halve, parseAnswer, verified } from "./template-extract.ts";
+import { ANSWER_CUT, extractValues, halve, numberRows, parseAnswer, verified } from "./template-extract.ts";
 import { fillDocxTemplate, readDocxTemplate } from "./template-docx.ts";
 import { fillJsonTemplate, readJsonTemplate } from "./template-json.ts";
 import { asksTemplateFill } from "./template-intent.ts";
@@ -377,7 +377,7 @@ test("extract: a window the model refuses as too long is read in halves, the tab
   const text = `${head}\n${rows}`;
   const seen: string[] = [];
   const out = await extractValues(layout, [{ doc: "d.xlsx", label: "Sheet: PTÇ", text }], [text], "Banaz", async (_s, u) => {
-    if (u.length > text.length / 2 + 1000) throw new Error("model_http_400"); // over the context
+    if (u.length > text.length * 0.75) throw new Error("model_http_400"); // over the context
     seen.push(u);
     return u.includes("| Banaz | 1350 |") ? JSON.stringify({ tablolar: { T1: [{ S1: { deger: "Banaz", kaynak: "| Banaz | 1350 |" }, S2: { deger: "1350", kaynak: "| Banaz | 1350 |" } }] } }) : "{}";
   });
@@ -405,6 +405,36 @@ test("extract: a window the model refuses as too long is read in halves, the tab
   let calls = 0;
   await assert.rejects(extractValues(layout, [{ doc: "d", label: "", text: "| a |\n".repeat(200000) }], ["x"], "", async () => { calls++; throw new Error("model_http_400"); }));
   assert.ok(calls <= 33, `${calls} calls`);
+});
+
+test("extract: a table record names its numbered row, each value is proved against that row; a cut answer halves the window", async () => {
+  const layout: Layout = { format: "json", slots: [], tables: [{ id: "t", label: "Destek", columns: [{ id: "a", label: "Başvuru Sahibi" }, { id: "b", label: "Tutar" }], rows: 0 }] };
+  const text = "## Sheet: PTÇ\n\n| Başvuru Sahibi | İlçe | Tutar |\n| --- | --- | --- |\n| Uşak İl Özel İdaresi | Banaz | 74,520.00 |\n| Banaz Belediyesi | Banaz | 1,250.50 |";
+  assert.deepEqual([...numberRows(text).rows.keys()], ["R1", "R2", "R3"]); // header, rows; not the |---| line
+  assert.ok(numberRows(text).text.includes("R2 | Uşak İl Özel İdaresi |"));
+  const out = await extractValues(layout, [{ doc: "d.xlsx", label: "Sheet: PTÇ", text }], [text], "", async (_s, u) => {
+    assert.ok(u.includes("R3 | Banaz Belediyesi | Banaz | 1,250.50 |"));
+    return JSON.stringify({ tablolar: { T1: [{ satir: "R2", S1: "Uşak İl Özel İdaresi", S2: "74,520.00" }, { satir: "r3", S1: "Banaz Belediyesi", S2: "9,999.00" }] } });
+  });
+  const [first, second] = out.tables.t;
+  assert.deepEqual(first.map((c) => c.value), ["Uşak İl Özel İdaresi", "74,520.00"]);
+  assert.equal(first[1].quote, "| Uşak İl Özel İdaresi | Banaz | 74,520.00 |");
+  // A figure the named row doesn't hold is only offered.
+  assert.deepEqual(second.map((c) => [c.value, c.suggestion]), [["Banaz Belediyesi", undefined], ["", "9,999.00"]]);
+
+  // An answer stopped at its limit: the window is read again in halves; one too small to halve is noted, not fatal.
+  const rows = Array.from({ length: 300 }, (_, i) => `| Firma ${i} | Banaz | ${1000 + i} |`).join("\n");
+  const big = `| Başvuru Sahibi | İlçe | Tutar |\n| --- | --- | --- |\n${rows}`;
+  let calls = 0;
+  const cut = await extractValues(layout, [{ doc: "d", label: "", text: big }], [big], "", async (_s, u) => {
+    calls++;
+    if (u.length > big.length * 0.75) throw new Error(ANSWER_CUT);
+    return "{}";
+  });
+  assert.equal(calls, 3);
+  assert.equal(cut.notes.length, 0);
+  const lost = await extractValues(layout, [{ doc: "d", label: "", text: "kısa" }], ["kısa"], "", async () => { throw new Error(ANSWER_CUT); });
+  assert.equal(lost.notes.length, 1);
 });
 
 test("intent: asking to fill a template opens the panel; talk about one doesn't", () => {
