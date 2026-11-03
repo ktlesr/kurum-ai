@@ -214,12 +214,20 @@ export async function extractValues(
       queue.unshift(...halves);
       continue;
     }
-    read++;
     const answer = parseAnswer(said);
     if (!answer) {
+      // Not JSON: a smaller window asks for a smaller answer, read again in halves before giving up on it.
+      const halves = splits < MAX_SPLITS ? halve(w) : null;
+      if (halves) {
+        splits++;
+        queue.unshift(...halves);
+        continue;
+      }
+      read++;
       failed++;
       continue;
     }
+    read++;
     const fields = (answer.alanlar ?? {}) as Record<string, unknown>;
     for (const [name, raw] of typeof fields === "object" ? Object.entries(fields) : []) {
       const id = names.get(name);

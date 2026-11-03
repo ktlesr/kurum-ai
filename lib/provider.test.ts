@@ -90,6 +90,18 @@ test("openai (vLLM): SSE deltas, reasoning, finish_reason, usage, images as data
   assert.equal(body.messages[0].content, "s");
   assert.deepEqual(body.messages[1].content, [{ type: "text", text: "x" }, { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } }]);
   assert.equal(seen.at(-1)!.headers.authorization, "Bearer k");
+  assert.equal(body.response_format, undefined); // only when asked
+});
+
+test("json: the server is told the answer is a JSON object (vLLM response_format, Ollama format)", async () => {
+  routes["/v1/chat/completions"] = send(["data: [DONE]\n\n"]);
+  await makeProvider("openai", base + "/v1", { numCtx: 1 }).chat({ model: "gemma4-26b", messages: [], maxTokens: 1, signal, json: true });
+  assert.deepEqual(seen.at(-1)!.body.response_format, { type: "json_object" });
+  routes["/api/chat"] = send(['{"done":true}']);
+  await makeProvider("ollama", base, { numCtx: 1 }).chat({ model: "gemma4:12b", messages: [], maxTokens: 1, signal, json: true });
+  assert.equal(seen.at(-1)!.body.format, "json");
+  await makeProvider("ollama", base, { numCtx: 1 }).chat({ model: "gemma4:12b", messages: [], maxTokens: 1, signal });
+  assert.equal(seen.at(-1)!.body.format, undefined);
 });
 
 test("openai (vLLM): embeddings keep input order, models, http errors", async () => {

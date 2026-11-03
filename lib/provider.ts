@@ -15,6 +15,8 @@ export interface ChatOpts {
   onText?: (piece: string) => void;
   /** Running count of reasoning chunks (the UI shows "thinking…"). */
   onThinking?: (n: number) => void;
+  /** The answer is a JSON object: the server constrains the output to valid JSON (vLLM response_format, Ollama format). */
+  json?: boolean;
 }
 
 export interface ChatResult {
@@ -62,10 +64,11 @@ function ollama(base: string, numCtx: number): Provider {
   const post = (path: string, body: object, signal: AbortSignal) => fetch(`${base}${path}`, { method: "POST", signal, body: JSON.stringify(body) });
   return {
     kind: "ollama",
-    async chat({ model, messages, think = false, maxTokens, signal, onText, onThinking }) {
+    async chat({ model, messages, think = false, maxTokens, signal, onText, onThinking, json }) {
       const res = await post("/api/chat", {
         model,
         stream: true,
+        ...(json ? { format: "json" } : {}),
         think: isGptOss(model) ? effort(think) : think,
         // Same num_ctx on every call: a different value makes Ollama reload the model.
         // Always capped: at temperature 0 a model can fall into a repetition loop and generate until num_ctx
@@ -125,7 +128,7 @@ function openai(base: string, apiKey: string | undefined): Provider {
       : { role: m.role, content: m.content };
   return {
     kind: "openai",
-    async chat({ model, messages, think = false, maxTokens, signal, onText, onThinking }) {
+    async chat({ model, messages, think = false, maxTokens, signal, onText, onThinking, json }) {
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
         signal,
@@ -140,6 +143,7 @@ function openai(base: string, apiKey: string | undefined): Provider {
           // Qwen/Gemma-style templates read enable_thinking; gpt-oss takes an effort. Unknown kwargs are ignored.
           chat_template_kwargs: { enable_thinking: think },
           ...(isGptOss(model) ? { reasoning_effort: effort(think) } : {}),
+          ...(json ? { response_format: { type: "json_object" } } : {}),
         }),
       });
       if (!res.ok || !res.body) throw new Error(`model_http_${res.status}`);

@@ -11,11 +11,12 @@ import { isMyTemplateId, readMyTemplate } from "@/lib/template-store";
 import { Busy } from "@/lib/limits";
 import { logError } from "@/lib/log";
 import { modelConfig, providerOf } from "@/lib/model-config";
+import type { Msg } from "@/lib/provider";
 import { windows } from "@/lib/rag";
 import { LIMITS } from "@/lib/validate";
 import { countUsage } from "@/lib/usage";
 import { TemplateError } from "@/lib/template";
-import { ANSWER_CUT, extractValues } from "@/lib/template-extract";
+import { ANSWER_CUT, extractValues, parseAnswer } from "@/lib/template-extract";
 import { districtsAsked, focusSheets } from "@/lib/sheet-focus";
 import { CONTENT_TYPES, fillTemplate, formatOf, parseValues, readTemplate, templateProblem } from "@/lib/template-file";
 
@@ -167,8 +168,16 @@ export async function POST(req: Request) {
           const all = windows(read.map((d) => ({ name: d.name, text: d.text })), budget);
           const wins = all.slice(0, MAX_WINDOWS);
           const found = await extractValues(layout, wins, docs.map((d) => d.text), instruction, async (system, user2) => {
-            const r = await admission.model.run(() => chat.chat({ model, messages: [{ role: "system", content: system }, { role: "user", content: user2 }], maxTokens: MAX_ANSWER, signal }), signal);
+            const messages: Msg[] = [{ role: "system", content: system }, { role: "user", content: user2 }];
+            // JSON mode: the server can only write valid JSON (Gemma wrote figures like 74,520.00 unquoted). A server
+            // that refuses the option answers 400, which would read as "too long": asked once more without it.
+            const r = await admission.model.run(() => chat.chat({ model, messages, maxTokens: MAX_ANSWER, signal, json: true }), signal).catch((e) => {
+              if (!(e instanceof Error && e.message === "model_http_400")) throw e;
+              return admission.model.run(() => chat.chat({ model, messages, maxTokens: MAX_ANSWER, signal }), signal);
+            });
             if (r.truncated) throw new Error(ANSWER_CUT); // read again in halves, not lost
+            // What the model wrote when it isn't JSON: its size and edges only, to see why without the document in the log.
+            if (!parseAnswer(r.text)) console.info(`template answer unreadable: ${r.text.length} chars, starts ${JSON.stringify(r.text.slice(0, 120))}, ends ${JSON.stringify(r.text.slice(-120))}`);
             return r.text;
           }, (done, total) => send({ type: "progress", stage: "Belgeler okunuyor", done, total }));
           if (all.length > wins.length) found.notes.push(`Belgeler çok uzun: ${all.length} bölümün ilk ${wins.length} tanesi okundu. Gerekli bölümü ayrı bir belge olarak verin.`);

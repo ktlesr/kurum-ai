@@ -435,6 +435,11 @@ test("extract: a table record names its numbered row, each value is proved again
   assert.equal(cut.notes.length, 0);
   const lost = await extractValues(layout, [{ doc: "d", label: "", text: "kısa" }], ["kısa"], "", async () => { throw new Error(ANSWER_CUT); });
   assert.equal(lost.notes.length, 1);
+  // An answer that isn't JSON: read again in halves; the halves answer, nothing is lost.
+  let asked = 0;
+  const retried = await extractValues(layout, [{ doc: "d", label: "", text: big }], [big], "", async () => (++asked === 1 ? '{"tablolar": {"T1": [{"S2": 74,520.00}]}}' : "{}"));
+  assert.equal(asked, 3);
+  assert.equal(retried.notes.length, 0);
 });
 
 test("intent: asking to fill a template opens the panel; talk about one doesn't", () => {
