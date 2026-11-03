@@ -7,7 +7,7 @@ import { exifYear } from "./exif-date.ts";
 import { parseRange, videoFrame } from "./video-frame.ts";
 import { canSee, parseRules, ruleFindsFolder, ruleFrom, withRule, withoutRule } from "./folder-access.ts";
 import { FORGET_AFTER_MS, ScanFailed, goneLongEnough, readWithin, safeToForget, scanFolder } from "./folder-scan.ts";
-import { asksMorePhotos, asksPhotos } from "./gallery-intent.ts";
+import { asksMorePhotos, asksPhotos, clarifies } from "./gallery-intent.ts";
 import { countOf, foldTr, kindAsked, nearFolders, searchGallery, termsOf, type GalleryEntry } from "./gallery-search.ts";
 import { cleanGallery } from "./local-store.ts";
 import { deleteMyTemplate, listMyTemplates, readMyTemplate, saveMyTemplate, cleanFolder } from "./template-store.ts";
@@ -288,4 +288,16 @@ test("my templates: saved per owner, the same name replaces, another person's id
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("intent: asking whether there are any, or naming the archive; the asking words aren't searched for", () => {
+  const asked = "kütahya domaniç kadın kooperatifi görselleri var mı? video veya resim";
+  assert.ok(asksPhotos(asked));
+  assert.ok(asksPhotos("zaferortak klasöründeki galeride demek istedim"));
+  assert.ok(clarifies("zaferortak klasöründeki galeride demek istedim"));
+  for (const q of ["belgede görsel var mı", "bu fotoğrafta ne var", "galeri açılışı için konuşma metni yaz", "sanat galerisi nedir"]) assert.ok(!asksPhotos(q), q);
+  assert.deepEqual(termsOf(asked, 2026).terms, ["kutahya", "domanic", "kadin", "kooperatifi"]);
+  // The folder needn't name the province: of four words one may miss.
+  const list = [photo("Projeler/Domaniç Kadın Kooperatifi/1.jpg"), photo("Projeler/Simav Sera/2.jpg")];
+  assert.deepEqual(searchGallery(list, asked, { count: 5, thisYear: 2026 }).items.map((i) => i.name), ["1.jpg"]);
 });

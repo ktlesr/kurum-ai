@@ -16,7 +16,7 @@ import { logout } from "./login/actions";
 import { useChats } from "./use-chats";
 import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, plainNumbering, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
 import { keepMessages, searchChats, titleFrom, type GalleryPhoto, type Message, type StoredChat } from "@/lib/local-store";
-import { asksMorePhotos, asksPhotos } from "@/lib/gallery-intent";
+import { asksMorePhotos, asksPhotos, clarifies } from "@/lib/gallery-intent";
 import { countOf } from "@/lib/gallery-search";
 import { GalleryGrid } from "./gallery-view";
 import { FILE_FORMATS, exportDoc, turnOf, type ExportDoc } from "@/lib/export-doc";
@@ -308,7 +308,9 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     const lastPhotos = earlier.findLast((m) => m.gallery)?.gallery;
     const morePhotos = !!lastPhotos && asksMorePhotos(q);
     if (editOf === undefined && (morePhotos || asksPhotos(q))) {
-      const query = morePhotos ? lastPhotos.query : q;
+      // "Galeride demek istedim": this says where to look; what to look for is the question before it.
+      const before = earlier.findLast((m) => m.role === "user")?.content;
+      const query = morePhotos ? lastPhotos.query : clarifies(q) && before ? before : q;
       const n = countOf(q);
       const offset = morePhotos ? lastPhotos.shown : 0;
       const id = chatId ?? crypto.randomUUID();
