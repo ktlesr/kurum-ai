@@ -107,12 +107,21 @@ const OF_THE_DOC = /(?<!\p{L})(?:(?:do|dö)küman(?:ın|ı|daki|lar|ları|ların
  */
 export function aboutTheDocument(question: string): boolean {
   const q = low(question);
-  return OF_THE_DOC.test(q) && !/internet|web'|web |google/.test(q);
+  return (OF_THE_DOC.test(q) || AS_FORMAT.test(q)) && !/internet|web'|web |google/.test(q);
 }
+/** "…excel olarak hazırla", "…json formatında yaz": the document's own content in another form; the web has no part in it. */
+const AS_FORMAT = /(?<!\p{L})(?:excel|xlsx|json|csv|xml|word|docx|pdf|markdown|tablo|liste|madde)(?:\s+(?:olarak|formatında|biçiminde|şeklinde|halinde|haline)|(?:ya|ye)\s+(?:dök|çevir|dönüştür|aktar))(?!\p{L})/u;
 
 /** "HAYIR" with its capital I, which /hayır/i doesn't match. */
 export function isClearNo(said: string): boolean {
   return /^[\s*_"'`]*hay[ıi]r[\s*_"'`.!]*$/iu.test(said);
+}
+
+/** The relevance check's pick: result numbers (1-based) to 0-based indexes; YOK, an empty or any other reply picks none. */
+export function parseRelevant(said: string, count: number): number[] {
+  const line = said.trim().split("\n").at(-1)?.trim() ?? ""; // a reasoning model may think on lines above
+  if (!/^[\d\s,.]+$/.test(line)) return [];
+  return [...new Set(line.match(/\d+/g)!.map(Number))].filter((n) => n >= 1 && n <= count).map((n) => n - 1);
 }
 
 /** The model's one-line query; null when it says no search is needed or wrote something else than a query. */

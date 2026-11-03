@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { aboutTheDocument, isClearNo, parseSearchQuery, passage, saysNotWritten, searchWeb } from "./websearch.ts";
+import { aboutTheDocument, isClearNo, parseRelevant, parseSearchQuery, passage, saysNotWritten, searchWeb } from "./websearch.ts";
 
 let asked = "";
 const server = createServer((req, res) => {
@@ -91,7 +91,13 @@ test("isClearNo: only a plain no skips the search; empty or unclear doesn't", ()
   for (const other of ["", "EVET", "Bence hayır", "Hayırlı", "HAYIR,EVET", "HAYIRı", "ıHAYIR"]) assert.ok(!isClearNo(other), other);
 });
 
+test("parseRelevant: only a plain list of result numbers picks", () => {
+  assert.deepEqual(parseRelevant("1,3", 3), [0, 2]);
+  assert.deepEqual(parseRelevant("düşünce\n2, 2, 9", 3), [1]);
+  for (const none of ["YOK", "", "Hiçbiri. 1", "1 ve 2"]) assert.deepEqual(parseRelevant(none, 3), [], none);
+});
+
 test("a question about the attached document itself doesn't go to the web", () => {
-  for (const q of ["Dokümanın ana başlıklarını ve bölümlerini sırayla, sayfa numaralarıyla listele.", "Dokümanın tamamını özetle", "Dokümanları madde bazında karşılaştır", "Dokümandaki şartları çıkar", "Tablolardaki sütunları açıkla", "bu belgeyi özetle", "BELGENİN AMACI NE"]) assert.ok(aboutTheDocument(q), q);
-  for (const q of ["493 sayılı kararnamede Tarım Kurumu nereye bağlı?", "Belgede yazan kurumun başkanı kim?", "Dokümanı internetten doğrula", "Türkiye'nin başkenti neresi", "Periyodik tablonun mucidi kim?", "Başvuru için gerekli belgeler neler?"]) assert.ok(!aboutTheDocument(q), q);
+  for (const q of ["Dokümanın ana başlıklarını ve bölümlerini sırayla, sayfa numaralarıyla listele.", "Dokümanın tamamını özetle", "Dokümanları madde bazında karşılaştır", "Dokümandaki şartları çıkar", "Tablolardaki sütunları açıkla", "bu belgeyi özetle", "BELGENİN AMACI NE", "bölgeler tablosunu excel olarak hazırlar mısın", "atamaları json formatında yazar mısın", "Kararları tabloya dök", "isimleri liste halinde ver"]) assert.ok(aboutTheDocument(q), q);
+  for (const q of ["493 sayılı kararnamede Tarım Kurumu nereye bağlı?", "Belgede yazan kurumun başkanı kim?", "Dokümanı internetten doğrula", "Türkiye'nin başkenti neresi", "Periyodik tablonun mucidi kim?", "Başvuru için gerekli belgeler neler?", "Excel'de düşeyara nasıl yapılır?", "bölgeleri internetten excel olarak hazırla"]) assert.ok(!aboutTheDocument(q), q);
 });
