@@ -17,6 +17,7 @@ import { contextBudget, contextRatio, cptOf, ERROR_SEP, META_SEP, STATUS_SEP, ty
 import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
 import { parseReading, rowsNamed } from "@/lib/sheet-focus";
+import { isProvince, knownTerms } from "@/lib/regions";
 import { retrieve, TOP_K, windows } from "@/lib/rag";
 import { getSetting } from "@/lib/db";
 import { findUrls, MAX_CHARS_TOTAL, onSite, parsePick, siteOf, WebError, webReason, type Page } from "@/lib/web";
@@ -444,14 +445,18 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         // The question read the way a person would before looking anything up: codes, abbreviations, regions and groups
         // opened up from general knowledge ("TR33 illeri" → the four provinces), so the document is searched for what
         // it actually holds, not for the user's shorthand. The model sees only the question here; no reading, as before.
+        // Official classifications (İBBS regions, agencies) come from lib/regions as fact: the model's memory of them is wrong
+        // too often, and its other provinces are dropped when a region is named.
+        const known = knownTerms(question);
+        const facts = known.facts.length ? `\n\nKesin tanımlar (resmi sınıflandırma, bunlara uy):\n${known.facts.join("\n")}` : "";
         status("Soru yorumlanıyor…");
-        const reading = parseReading(await chatOnce(chat, model, [{ role: "system", content: UNDERSTAND }, { role: "user", content: question }], signal, READING_TOKENS).catch((e) => {
+        const reading = parseReading(await chatOnce(chat, model, [{ role: "system", content: UNDERSTAND }, { role: "user", content: question + facts }], signal, READING_TOKENS).catch((e) => {
           if (signal.aborted) throw e;
           logError("reading", e);
           return "";
         }));
-        const names = reading?.names ?? [];
-        const meaning = reading?.meaning && names.length ? `\n\nSorunun yorumu (genel bilgiye göre, belgeden değil): ${reading.meaning}\nBelgede bu adlarla ara: ${names.join(", ")}. Cevapta bu yorumu bir kez "Genel bilgiye göre" diye belirt; sorudaki kısaltma belgede geçmiyor diye "belgede yok" deme.` : "";
+        const names = [...new Set([...known.names, ...(reading?.names ?? []).filter((n) => !known.names.length || !isProvince(n))])];
+        const meaning = names.length && (reading?.meaning || facts) ? `${facts}${reading?.meaning ? `\n\nSorunun yorumu (genel bilgiye göre, belgeden değil): ${reading.meaning}` : ""}\nBelgede bu adlarla ara: ${names.join(", ")}. Kesin tanımları cevapta bir kez "Resmi sınıflandırmaya göre", yorumu "Genel bilgiye göre" diye belirt; sorudaki kısaltma belgede geçmiyor diye "belgede yok" deme.` : "";
         if (meaning) console.info(`question reading: ${names.length} names`);
         const sizeOf = (docs: Doc[]) => contextRatio(docs.reduce((n, d) => n + d.text.length, 0) + web.length, NUM_CTX, cptOf([...docs.map((d) => d.text), web], cptFor(model)));
         let fits = sizeOf(selected) >= 1;
