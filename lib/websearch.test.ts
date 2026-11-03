@@ -92,11 +92,18 @@ test("isClearNo: only a plain no skips the search; empty or unclear doesn't", ()
 });
 
 test("safeQuery: the document gives its subject, never a name, place or number", () => {
-  const doc = "YENİ TEŞVİK SİSTEMİNİN KURGUSU\nyatırım teşvik sistemi kapsamında bölgeler. Halit ÇAĞDAŞ görevden alındı. Karar 2026/363, Sakarya İl Müdürü.";
+  const doc = "YENİ TEŞVİK SİSTEMİNİN KURGUSU\nyatırım teşvik sistemi kapsamında bölgeler. Halit ÇAĞDAŞ görevden alındı. Karar 2026/363, Sakarya İl Müdürü.\nyatırım teşvik sistemi bölgeleri ve yatırım teşvik sisteminin kurgusu.";
   assert.equal(safeQuery("yatırım teşvik sistemi bölgeler tablosu", "bölgeler tablosunu excel olarak hazırlar mısın", doc), "yatırım teşvik sistemi bölgeler tablosu");
   assert.equal(safeQuery("Halit Çağdaş Sakarya 2026/363 atama kararı", "atamaları json yazar mısın", doc), "atama"); // "atama" the user typed; "Karar" only capitalized
   assert.equal(safeQuery("Sakarya il müdürü", "Sakarya il müdürü kim", doc), "Sakarya il müdürü"); // the user's own words always go
   assert.equal(safeQuery("teşvik", "x", "TEŞVİK"), ""); // capitals only: could be a name
+  // Lowercase names in a file name, an e-mail or an address, or written only once, don't leave.
+  const leaky = `<bölüm doküman="halit_cagdas_atama.pdf" konum="s. 1">
+halit.cagdas@kurum.gov.tr https://kurum.gov.tr/halit cagdas
+</bölüm>`;
+  assert.equal(safeQuery("halit cagdas atama", "x", leaky), "");
+  assert.equal(safeQuery("ali", "alır mısın", "ali ali"), "ali"); // two plain lowercase occurrences: a common word…
+  assert.equal(safeQuery("ali", "alır mısın", "Ali geldi"), ""); // …but not a short stem of a typed word
   assert.equal(safeQuery("kurgu yatırım teşvik sistemi bölgeler", "", doc), "yatırım teşvik sistemi bölgeler"); // "kurgu" only in capitals; and at most 4
 });
 

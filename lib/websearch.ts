@@ -125,17 +125,23 @@ const MAX_DOC_WORDS = 4;
  * name, a place or an institution: those are always capitalized) and has no digit (no number, date, decision no, ID).
  */
 export function safeQuery(query: string, typed: string, doc: string): string {
-  const own = low(typed);
-  const typedByUser = (w: string) => new RegExp(`(?<![\p{L}\p{N}])${w.slice(0, /\d/.test(w) ? w.length : 5)}`, "u").test(own); // Turkish suffixes: a stem will do
+  const own = tokens(low(typed));
+  // Turkish suffixes: a stem will do ("tablosu" for "tablosunu"); a short word or one with a digit only whole.
+  const typedByUser = (w: string) => own.some((t) => (w.length < 5 || /\d/.test(w) ? t === w : t.startsWith(w.slice(0, 5))));
+  // Running text only: no tag (its file name), and no address, e-mail or file name, whose small letters may be a name.
+  const plain = tokens(doc.replace(/<[^>]*>/g, " ")).filter((t) => /^\p{L}+$/u.test(t) && t === low(t));
   let added = 0;
   return query.split(/\s+/).filter((w) => {
     const word = low(w).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
     if (!word) return false;
-    if (typedByUser(word.replace(/[^\p{L}\p{N}]/gu, ""))) return true;
-    const common = !/\d/.test(word) && /^\p{L}+$/u.test(word) && new RegExp(`(?<!\\p{L})${word}`, "u").test(doc);
+    if (typedByUser(word)) return true;
+    // A common word, written in small letters at least twice: a stray lowercase name doesn't make it.
+    const common = word.length >= 3 && /^\p{L}+$/u.test(word) && plain.filter((t) => t.startsWith(word)).length >= 2;
     return common && ++added <= MAX_DOC_WORDS;
   }).join(" ");
 }
+/** Whitespace-separated words with the punctuation around them taken off; what's inside (@ / _ .) stays, so it isn't a plain word. */
+const tokens = (s: string) => s.split(/\s+/).map((t) => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")).filter(Boolean);
 
 /** The relevance check's pick: result numbers (1-based) to 0-based indexes; YOK, an empty or any other reply picks none. */
 export function parseRelevant(said: string, count: number): number[] {
