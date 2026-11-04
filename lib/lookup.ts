@@ -251,7 +251,7 @@ export async function lookup(start: Msg[], env: LookupEnv): Promise<Found> {
 }
 
 /** In the answer call's system turn while hesapla is offered. */
-export const CALC_RULE = `\n\nHesap gerekiyorsa (toplam, fark, oran, yüzde, ortalama) sonucu kendin hesaplama: önce hesapla aracını belgedeki sayılarla çağır; birden çok toplam varsa her biri için ayrı çağrı yap, bir toplamın bütün sayılarını tek ifadede ver. Cevapta aracın döndürdüğü işlemi ve sonucu aynen yaz, sayıların arasına etiket koyma; neyin toplandığını işlemden önce bir cümleyle söyle.`;
+export const CALC_RULE = `\n\nHesap gerekiyorsa (toplam, fark, oran, yüzde, ortalama) sonucu kendin hesaplama: önce hesapla aracını belgedeki sayılarla çağır; birden çok toplam varsa her biri için ayrı çağrı yap, bir toplamın bütün sayılarını tek ifadede ver. Aracı gerçekten çağır: cevap metnine "hesapla(...)" yazma. Cevapta aracın döndürdüğü işlemi ve sonucu "4725 + 2764 = 7.489" biçiminde aynen yaz, sayıların arasına etiket koyma; neyin toplandığını işlemden önce bir cümleyle söyle.`;
 
 export interface AnswerEnv {
   /** The answer call's messages with the tool exchange so far and a note for the system turn; null when they don't fit. */

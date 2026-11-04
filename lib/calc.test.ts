@@ -267,3 +267,16 @@ test("live case: labelled operands are checked; a wrong long sum is caught with 
     assert.ok(!findCalcs(t).some((c) => c.ok), t);
   }
 });
+
+test("live case (31B): a hesapla call written as text is checked as its expression", () => {
+  const [c] = findCalcs('Elma (Golden) toplam üretimi: hesapla(ifade="4725 + 2764 + 1479 + 343") = 9311');
+  assert.equal(c.ok, true);
+  assert.deepEqual(c.operands, ["4725", "2764", "1479", "343"]);
+  assert.equal(findCalcs("Toplam: hesapla(ifade=\"9311 + 11124\") = 20000")[0].ok, false);
+  assert.deepEqual(findCalcs('hesapla(ifade="4725 + x") = 9311'), []);
+});
+
+test("a written-out hesapla call keeps its expression together (precedence)", () => {
+  assert.equal(findCalcs('Toplam: hesapla(ifade="100 + 200") * 2 = 600')[0].ok, true);
+  assert.equal(findCalcs('Toplam: hesapla(ifade="100 + 200") * 2 = 500')[0].ok, false);
+});

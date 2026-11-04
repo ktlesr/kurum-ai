@@ -212,6 +212,7 @@ async function streamChatUnqueued(
 ): Promise<string> {
   // A looping model is stopped here: it would otherwise hold the GPU up to the length cap.
   const stop = new AbortController();
+  const started = Date.now();
   let sofar = "";
   const r = await chat.chat({
     model, messages, think, maxTokens: numPredict ?? MAX_ANSWER, signal: AbortSignal.any([signal, stop.signal]), onThinking, tools: extra.tools, toolChoice: extra.toolChoice,
@@ -225,13 +226,23 @@ async function streamChatUnqueued(
     },
   });
   if (r.toolCalls?.length) extra.onCalls?.(r.toolCalls);
+  // Where a question's time goes (seen live: the first word after 293 s): each call's tokens in and out, and its time.
+  console.info(`model call: ${r.promptTokens ?? "?"} in, ${r.outputTokens ?? "?"} out, ${((Date.now() - started) / 1000).toFixed(1)} s${extra.tools ? `, tools ${extra.toolChoice ?? "auto"}` : ""}`);
   if (r.truncated && r.text && !numPredict) onText("\n\n…(cevap uzunluk sınırında kesildi)");
   if (r.promptTokens) recordTokens(model, messages.reduce((n, m) => n + m.content.length, 0), r.promptTokens);
   return r.text;
 }
 
 /** Every model call waits for a slot on the shared GPU (lib/admission); a full queue throws Busy. */
-const streamChat = (...args: Parameters<typeof streamChatUnqueued>) => admission.model.run(() => streamChatUnqueued(...args), args[4]);
+const streamChat = (...args: Parameters<typeof streamChatUnqueued>) => {
+  const queued = Date.now();
+  return admission.model.run(() => {
+    // Waiting behind other calls (other users, the gallery's captions) is time the user sees too.
+    const waited = (Date.now() - queued) / 1000;
+    if (waited >= 1) console.info(`model queue: waited ${waited.toFixed(1)} s`);
+    return streamChatUnqueued(...args);
+  }, args[4]);
+};
 
 const chatOnce = async (chat: Provider, model: string, messages: Msg[], signal: AbortSignal, numPredict?: number, extra?: Parameters<typeof streamChatUnqueued>[8]) =>
   (await streamChat(chat, model, messages, false, signal, undefined, undefined, numPredict, extra)).trim();
@@ -262,6 +273,7 @@ export async function POST(req: Request) {
   countUsage("query");
 
   const signal = req.signal; // Esc in the UI aborts generation on the model server too
+  const askedAt = Date.now();
   // The conversation as far back as fits beside the instructions, documents and pages of this call, and the answer
   // (plan P5): newest first, the latest question always. Was the last 8 messages whatever their length.
   const historyFor = (fixed: string[], o: { answer?: number; extraTokens?: number } = {}) => {
@@ -678,6 +690,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           // ratios of the documents' figures worked exactly in code, whether the documents were read whole or not. Each
           // round is budgeted again: the exchange so far goes beside the documents, the conversation gives way to it.
           let stated: Set<string> | undefined;
+          let firstWord = false;
           const r = await answerWithCalc({
             build: (exchange, note) => {
               const spent = exchange.map((m) => m.content + (m.toolCalls ?? []).map((c) => c.name + c.arguments).join(""));
@@ -690,7 +703,11 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             },
             call: async (m, offered) => {
               let calls: ToolCall[] = [];
-              const text = await streamChat(chat, model, m, think, signal, send, (n) => {
+              const text = await streamChat(chat, model, m, think, signal, (piece) => {
+                if (!firstWord) console.info(`first word: ${((Date.now() - askedAt) / 1000).toFixed(1)} s`);
+                firstWord = true;
+                send(piece);
+              }, (n) => {
                 // Keeps the connection busy and shows the wait isn't stuck.
                 if (n % 50 === 0) status("Düşünüyor…");
               }, undefined, { tools: listed(), toolChoice: offered ? "auto" : "none", onCalls: (c) => (calls = c) });

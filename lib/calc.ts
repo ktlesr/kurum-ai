@@ -237,7 +237,9 @@ export function findCalcs(answer: string): Calc[] {
     // dropped, so the sum is checked. Only words, figures and a hyphen inside a word ("Afyon-Golden") make a label: a
     // bracket with any sign of arithmetic ("(1 + oran)", "(oran - 1)", "(x 2)") or no letter ("(2021)") stays, and an
     // expression with it gets no verdict.
-    const line = raw.replace(/\*\*|__/gu, " ").replace(/[−‒]/gu, "-").replace(/\s–\s/gu, " - ").replace(/[·⋅]/gu, "×")
+    // A tool call written out as text ('hesapla(ifade="4725 + 2764") = 7489', seen live with 31B): its expression, in
+    // brackets so it stays one value ('hesapla(ifade="100 + 200") * 2').
+    const line = raw.replace(/\bhesapla\s*\(\s*(?:ifade\s*[=:]\s*)?["“'‘]([^"”'’]*)["”'’]\s*\)/gu, " ($1) ").replace(/\*\*|__/gu, " ").replace(/[−‒]/gu, "-").replace(/\s–\s/gu, " - ").replace(/[·⋅]/gu, "×")
       // A slash only between letters ("TL/yıl"; "oran/2" is a division). The label leaves a space: "100 (TL)200" mustn't
       // become one number 100200.
       .replace(/(\d)\s*\(([^()]*)\)/gu, (all, d: string, inside: string) => (isLabel(inside) ? `${d} ` : all));
