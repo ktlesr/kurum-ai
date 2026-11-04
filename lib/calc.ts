@@ -27,7 +27,27 @@ const EXPR_CHAR = /[\d.,\s+\-–×x*/÷()%]/u;
 const START = /[\p{L}:|>=_"'“”‘’]/u;
 const MAX_LINE = 2000;
 
-type Tok = { n: number; at: number; pct: boolean } | { op: string };
+/**
+ * An exact fraction (d > 0): every figure as written and every step kept exactly, so no rounding can make a wrong result
+ * look right ("10^15 + 1", "0,000001 / (100,000001 - 100)"). d = 0: no value (÷ 0), carried to the end.
+ */
+type Q = { n: bigint; d: bigint };
+const B0 = BigInt(0), B1 = BigInt(1), B2 = BigInt(2), B10 = BigInt(10), B100 = BigInt(100);
+const q = (n: bigint, d: bigint): Q => (d < B0 ? { n: -n, d: -d } : { n, d });
+const NONE: Q = { n: B0, d: B0 };
+const add = (a: Q, b: Q, sign = B1): Q => (a.d && b.d ? q(a.n * b.d + sign * b.n * a.d, a.d * b.d) : NONE);
+const mul = (a: Q, b: Q): Q => (a.d && b.d ? q(a.n * b.n, a.d * b.d) : NONE);
+const div = (a: Q, b: Q): Q => (a.d && b.d && b.n ? q(a.n * b.d, a.d * b.n) : NONE);
+// ponytail: no gcd reduction; a line is at most MAX_LINE characters, so the bigints stay small enough.
+/** A well-formed number ("1.234,56") as the fraction it says; the sign apart. */
+const exact = (s: string): Q => {
+  const [i, f = ""] = normNum(s).split(".");
+  return { n: BigInt(i + f), d: B10 ** BigInt(f.length) };
+};
+/** For display only ("shown", "actual"): a double is fine there. */
+const toNumber = (v: Q) => Number(v.n) / Number(v.d);
+
+type Tok = { n: Q; at: number; pct: boolean } | { op: string };
 const isOp = (t: Tok | undefined, o: string) => !!t && "op" in t && t.op === o;
 
 /** The expression's tokens, its numbers as written; null when it isn't one (or holds a range like "2024-2025"). */
@@ -44,23 +64,23 @@ function tokens(expr: string): { toks: Tok[]; operands: string[] } | null {
     at = re.lastIndex;
     if (m[2]) {
       if (m[1] && m[3]) return null; // "%10%": a percent sign on both sides is no one number
-      if (!WELL_FORMED.test(m[2])) return null; // read only in part by parseFloat: no verdict
-      const n = parseFloat(normNum(m[2]));
-      toks.push({ n: m[1] || m[3] ? n / 100 : n, at: operands.length, pct: !!(m[1] || m[3]) });
+      if (!WELL_FORMED.test(m[2])) return null; // not one number as written: no verdict
+      const n = exact(m[2]);
+      toks.push({ n: m[1] || m[3] ? q(n.n, n.d * B100) : n, at: operands.length, pct: !!(m[1] || m[3]) });
       operands.push(m[2]);
     } else toks.push({ op: { "×": "*", x: "*", "÷": "/" }[m[4]] ?? m[4] });
   }
   return expr.slice(at).trim() ? null : { toks, operands };
 }
 
-/** Value of the tokens, or null when they don't form an expression; NaN for one with no value (÷ 0). */
-function evaluate(t: Tok[]): number | null {
+/** Value of the tokens, exactly, or null when they don't form an expression; NONE (d = 0) for one with no value (÷ 0). */
+function evaluate(t: Tok[]): Q | null {
   let i = 0;
   const op = (o: string) => isOp(t[i], o) && ++i > 0;
-  const factor = (): number | null => {
+  const factor = (): Q | null => {
     if (op("-")) {
       const v = factor();
-      return v === null ? null : -v;
+      return v === null ? null : q(-v.n, v.d);
     }
     if (op("+")) return factor(); // "+100"
     if (op("(")) {
@@ -74,29 +94,23 @@ function evaluate(t: Tok[]): number | null {
     }
     return null;
   };
-  const product = (): number | null => {
+  const product = (): Q | null => {
     let v = factor();
     while (v !== null) {
-      if (op("*")) {
-        const r = factor();
-        v = r === null ? null : v * r;
-      } else if (op("/")) {
-        const r = factor();
-        v = r === null ? null : r === 0 ? NaN : v / r;
-      } else break;
+      const f = op("*") ? mul : op("/") ? div : null;
+      if (!f) break;
+      const r = factor();
+      v = r === null ? null : f(v, r);
     }
     return v;
   };
-  const sum = (): number | null => {
+  const sum = (): Q | null => {
     let v = product();
     while (v !== null) {
-      if (op("+")) {
-        const r = product();
-        v = r === null ? null : v + r;
-      } else if (op("-")) {
-        const r = product();
-        v = r === null ? null : v - r;
-      } else break;
+      const sign = op("+") ? B1 : op("-") ? -B1 : B0;
+      if (!sign) break;
+      const r = product();
+      v = r === null ? null : add(v, r, sign);
     }
     return v;
   };
@@ -141,9 +155,10 @@ function percentFactor(all: Tok[]): number[] | null {
   for (const [k, p] of parts.entries()) {
     const multiplied = p.op === "*" || (k === 0 && parts[1]?.op === "*");
     // The literal number 100, maybe bracketed or signed: "(999 - 899)" comes to 100 too, but its figures are figures.
-    const nums = p.toks.filter((x) => "n" in x) as { n: number; at: number; pct: boolean }[];
+    const nums = p.toks.filter((x) => "n" in x) as { n: Q; at: number; pct: boolean }[];
     const literal = nums.length === 1 && !nums[0].pct && p.toks.every((x) => "n" in x || isOp(x, "(") || isOp(x, ")") || isOp(x, "-") || isOp(x, "+"));
-    if (multiplied && literal && Math.abs(evaluate(p.toks) ?? 0) === 100) return [nums[0].at];
+    const v = literal ? evaluate(p.toks) : null;
+    if (multiplied && v?.d && (v.n === B100 * v.d || v.n === -B100 * v.d)) return [nums[0].at];
   }
   return null;
 }
@@ -153,18 +168,31 @@ const decimalsOf = (said: string) => {
   return n.includes(".") ? n.length - n.indexOf(".") - 1 : 0;
 };
 
-/** Same figure within the precision it was written with ("1.235" for 1234,5; "12,5" for 12.4999); no more slack. */
-function close(actual: number, said: string): boolean {
+/** Same figure within the precision it was written with ("1.235" for 1234,5; "12,5" for 12.4999), exactly; no more slack. */
+function close(actual: Q, said: string): boolean {
   // The sign apart, so "+1.234" is read as the thousands it is ("+1.234" alone isn't a form normNum knows).
-  const n = (said.replace(/[%\s]/g, "").startsWith("-") ? -1 : 1) * parseFloat(normNum(said.replace(/[%\s+-]/g, "")));
-  // Half a unit of the last written digit; the rest only floating-point noise (a few ulps), never a figure's worth.
-  return Math.abs(actual - n) <= 0.5 * 10 ** -decimalsOf(said) + 4 * Number.EPSILON * Math.abs(actual);
+  const w = exact(said.replace(/[%\s+-]/g, ""));
+  const diff = add(actual, said.replace(/[%\s]/g, "").startsWith("-") ? q(-w.n, w.d) : w, -B1);
+  // |diff| <= half a unit of the last written digit: |n| / d <= 1 / (2 * 10^decimals).
+  return (diff.n < B0 ? -diff.n : diff.n) * B2 * B10 ** BigInt(decimalsOf(said)) <= diff.d;
 }
 
 /** "1.550.500" as the answer would write it, one digit finer than the result it corrects ("0,003", "1,2345"). */
 export function trNumber(n: number, said = ""): string {
   const s = n.toLocaleString("tr-TR", { maximumFractionDigits: Math.min(20, Math.max(2, decimalsOf(said) + 1)) });
   return /^-?0$/.test(s) && n !== 0 ? n.toLocaleString("tr-TR", { maximumSignificantDigits: 4 }) : s;
+}
+
+/** trNumber for an exact value: past 2^53 a double would show a neighbour of the right figure ("…992" for "…993"). */
+function trExact(v: Q, said: string): string {
+  const k = Math.min(20, Math.max(2, decimalsOf(said) + 1));
+  const scale = B10 ** BigInt(k);
+  const neg = v.n < B0;
+  const r = ((neg ? -v.n : v.n) * scale * B2 + v.d) / (v.d * B2); // rounded half up at k decimals
+  if (r === B0) return trNumber(toNumber(v), said); // smaller than k decimals show: significant digits instead
+  const int = (r / scale).toString().replace(/\B(?=(\d{3})+$)/g, ".");
+  const frac = (r % scale).toString().padStart(k, "0").replace(/0+$/, "");
+  return `${neg ? "-" : ""}${int}${frac ? `,${frac}` : ""}`;
 }
 
 /** Every written-out calculation in the answer, worked again. */
@@ -221,17 +249,14 @@ export function findCalcs(answer: string): Calc[] {
         if (!t || t.operands.length < 2) continue;
         const v = evaluate(t.toks);
         if (v === null) continue; // not an expression: maybe without the list number it is
-        if (!Number.isFinite(v)) break; // an expression with no value (÷ 0): no verdict, and none for a part of it
-        // Beyond what a double holds exactly (2^53) a last digit can't be told apart: no verdict on such figures.
-        const big = (x: number) => Math.abs(x) > Number.MAX_SAFE_INTEGER / 2;
-        if (big(v) || t.toks.some((x) => "n" in x && big(x.n)) || big(parseFloat(normNum(said.replace(/[%\s+-]/g, ""))))) break;
+        if (!v.d) break; // an expression with no value (÷ 0): no verdict, and none for a part of it
         // A percentage result: the ratio times 100 ("300 / 1.200 = %25"), or the expression already multiplied by 100
         // ("… × 100 = %25"), whose 100 is a scale, not a figure to find in the document.
         const scale = said.includes("%") ? percentFactor(t.toks) : null;
-        const value = said.includes("%") && !scale ? v * 100 : v;
+        const value = said.includes("%") && !scale ? mul(v, { n: B100, d: B1 }) : v;
         out.push({
-          expr: `${expr} = ${said}`, said, actual: value, ok: close(value, said),
-          shown: `${said.includes("%") ? "%" : ""}${trNumber(value, said)}`,
+          expr: `${expr} = ${said}`, said, actual: toNumber(value), ok: close(value, said),
+          shown: `${said.includes("%") ? "%" : ""}${trExact(value, said)}`,
           operands: t.operands.filter((_, k) => !scale?.includes(k)),
           scale: t.operands.filter((_, k) => scale?.includes(k)),
         });
@@ -243,8 +268,16 @@ export function findCalcs(answer: string): Calc[] {
 }
 
 /** A number as derivedNumbers compares it: one value, one key ("300", "300,0" and "300.0" alike; sign and % aside). */
-const key = (raw: string) => String(parseFloat(normNum(raw.replace(/[%\s]/g, "")).replace(/^-/, "")));
+// The sign off first: normNum knows "1.234" as thousands, not "+1.234".
+const key = (raw: string) => canon(normNum(raw.replace(/[%\s+-]/g, "")));
 export { key as numberKey };
+
+/** A normNum figure in one spelling, exactly ("0300.50" → "300.5"; no parseFloat: past 2^53 neighbours would merge). */
+function canon(n: string): string {
+  const [i, f = ""] = n.replace(/^-/, "").split(".");
+  const frac = f.replace(/0+$/, "");
+  return (i.replace(/^0+(?=\d)/, "") || "0") + (frac ? `.${frac}` : "");
+}
 
 /**
  * The numbers the source states, as derivedNumbers compares them: exactly those verifyNumbers knows (lib/checks
@@ -252,7 +285,7 @@ export { key as numberKey };
  */
 export const sourceNumbers = (source: string): Set<string> =>
   // Already in normNum form ("12.345" is twelve point three): read as it is, not normalised a second time.
-  new Set([...knownNumbers(source)].flatMap((k) => (/^-?\d+(?:\.\d+)?$/.test(k) ? [String(parseFloat(k.replace(/^-/, "")))] : [])));
+  new Set([...knownNumbers(source)].flatMap((k) => (/^-?\d+(?:\.\d+)?$/.test(k) ? [canon(k)] : [])));
 
 /**
  * verifyNumbers' "not in the source" list less the results derived from the source (derivedNumbers). Only plain numbers

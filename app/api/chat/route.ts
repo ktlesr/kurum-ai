@@ -13,7 +13,7 @@ import { parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
-import { contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, fitHistory, META_SEP, STATUS_SEP, withDocs, type ChatMeta } from "@/lib/context";
+import { answerFor, askedWith, questionFits, contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, fitHistory, META_SEP, STATUS_SEP, withDocs, type ChatMeta } from "@/lib/context";
 import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
 import { findCalcs, stillUnverified } from "@/lib/calc";
@@ -171,12 +171,14 @@ function digestOf(chat: Provider, server: string, d: Doc, model: string, budget:
 }
 
 // ponytail: fixed caps; thinking tokens count toward them too
-const MAX_ANSWER = 8192;
+const MAX_ANSWER = answerFor(NUM_CTX); // 8192, less where a small context can't hold it beside the prompt
 const MAX_NOTES = 2048;
 
 const fail = (error: string, status: number) => Response.json({ error }, { status });
 
 class Looping extends Error {}
+/** The latest message alone doesn't fit beside the answer, the instructions and the documents of this call. */
+class TooLong extends Error {}
 
 /** One model call (lib/provider). onText gets answer pieces, onThinking the running count of reasoning chunks. */
 async function streamChatUnqueued(
@@ -244,10 +246,15 @@ export async function POST(req: Request) {
   // (plan P5): newest first, the latest question always. Was the last 8 messages whatever their length.
   const historyFor = (fixed: string[]) => {
     const cpt = cptFor(model);
-    const used = fixed.reduce((n, s) => n + s.length / cptOf([s], cpt), 0);
-    return fitHistory(messages, Math.max(0, (NUM_CTX - MAX_ANSWER - 512 - used) * cpt));
+    // Tokens, digits counted as such (cptOf): a history of figures takes about twice what its length suggests.
+    const tokensOf = (s: string) => s.length / cptOf([s], cpt);
+    const used = fixed.reduce((n, s) => n + tokensOf(s), 0);
+    const room = Math.max(0, NUM_CTX - MAX_ANSWER - 512 - used);
+    // fitHistory always keeps the question; one that can't fit on its own would overflow the model: said plainly instead.
+    if (tokensOf(messages.at(-1)?.content ?? "") > room) throw new TooLong();
+    return fitHistory(messages, room, 40, tokensOf);
   };
-  const question = messages.filter((m) => m.role === "user").slice(-2).map((m) => m.content).join("\n");
+  const question = askedWith(messages);
   // Only the latest question's links: earlier ones were read when they were asked.
   const urls = findUrls(messages.findLast((m) => m.role === "user")?.content ?? "");
   const webOn = urls.length > 0 && (await getSetting("web_fetch").catch(() => undefined)) === "true";
@@ -264,6 +271,8 @@ export async function POST(req: Request) {
         // Documents: those attached to this chat; with none, those the message itself asks for. A plain question
         // reads nothing and makes no extra model call. The picker sees file paths only, never contents.
         const asked0 = messages.findLast((m) => m.role === "user")?.content ?? "";
+        // Before any model call: a message that can't fit on its own is never sent (helper calls included).
+        if (!questionFits(messages.at(-1)?.content ?? "", NUM_CTX, cptFor(model))) throw new TooLong();
         let shared = sharedAsked as SharedEntry[];
         if (!fileIds.length && wantsSources(asked0)) {
           const mine = docsOf(user.id);
@@ -647,6 +656,8 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             ERROR_SEP +
               (e instanceof Busy
                 ? "Sunucu şu an çok yoğun. Biraz sonra tekrar deneyin."
+                : e instanceof TooLong
+                ? "Mesajınız, belgelerle birlikte modelin bağlamına sığmayacak kadar uzun. Kısaltın ya da metni belge olarak yükleyip soru sorun."
                 : e instanceof Looping
                 ? "Model aynı ifadeleri tekrar etmeye başladı, cevap durduruldu. Soruyu Otomatik profille yeniden deneyin."
                 : "Model sunucusu cevap üretemedi. Tekrar deneyin; sorun sürerse yöneticinize bildirin."),

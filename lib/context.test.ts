@@ -95,6 +95,30 @@ test("fitHistory: newest first as far as the room holds; the latest message alwa
   assert.equal(reservedFor(131072), 12288);
   assert.equal(reservedFor(8192), 4096);
   assert.equal(contextBudget(8192, 1), 4096);
+  // Measured in tokens when told: a message of digits costs a token per digit, not per 2.9 characters.
+  const digits = [m(0, 0), { role: "user", content: "1".repeat(100), n: 1 }, { role: "assistant", content: "a".repeat(100), n: 2 }, m(3, 10)];
+  const tok = (s: string) => s.length / cptOf([s], 2.9);
+  assert.deepEqual(fitHistory(digits, 120, 40, tok).map((x) => x.n), [2, 3], "100 digits are 100 tokens");
+  assert.deepEqual(fitHistory(digits, 120, 40, (s) => s.length / 2.9).map((x) => x.n), [0, 1, 2, 3], "at the prose rate they'd fit");
+  // The answer's limit leaves the prompt its room: 8192 in a large context, 4096 in the 16k default.
+  const { answerFor } = await import("./context.ts");
+  assert.equal(answerFor(131072), 8192);
+  assert.equal(answerFor(16384), 4096);
+  assert.equal(answerFor(8192), 1024);
+  // Checked before any model call: 16k context, 4096 answer, 4096 prompt → 8192 tokens for the message itself.
+  const { questionFits } = await import("./context.ts");
+  assert.ok(questionFits("1".repeat(8192), 16384, 2.9));
+  assert.ok(!questionFits("1".repeat(8193), 16384, 2.9), "digits are a token each");
+  assert.ok(questionFits("a".repeat(20000), 16384, 2.9), "prose at its measured rate");
+  // Helper calls read the latest question whole and the one before it only up to PREV_CHARS.
+  const { askedWith, PREV_CHARS } = await import("./context.ts");
+  const u = (content: string) => ({ role: "user", content });
+  assert.equal(askedWith([u("önce"), { role: "assistant", content: "cevap" }, u("sonra")]), "önce\nsonra");
+  assert.equal(askedWith([u("tek")]), "tek");
+  assert.equal(askedWith([]), "");
+  const two = askedWith([u("1".repeat(8192)), u("2".repeat(8192))]);
+  assert.equal(two.length, PREV_CHARS + 1 + 8192);
+  assert.ok(two.endsWith("2".repeat(8192)));
 });
 
 test("documents as data: blocks can't be broken out of; they ride with the first user message, system untouched", async () => {

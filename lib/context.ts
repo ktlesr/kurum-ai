@@ -9,20 +9,42 @@ export const DEFAULT_CHARS_PER_TOKEN = 2.2;
 // overflowed a context the documents had filled (plan P5). At most half of a small context (a development model).
 export const RESERVED_TOKENS = 12288;
 export const reservedFor = (numCtx: number) => Math.min(RESERVED_TOKENS, Math.floor(numCtx / 2));
+/** The instructions, the latest question and some conversation: what of the reserve the answer leaves free. */
+export const PROMPT_TOKENS = 4096;
+/** The answer's token limit: 8192 where the reserve holds it beside PROMPT_TOKENS, less in a small context (16k: 4096). */
+export const answerFor = (numCtx: number) => Math.max(1024, Math.min(8192, reservedFor(numCtx) - PROMPT_TOKENS));
+/**
+ * The latest message fits the model on its own, beside the answer and the instructions: checked before any model call,
+ * so one that can't is never sent (the chat says so instead).
+ */
+export const questionFits = (text: string, numCtx: number, charsPerToken: number) =>
+  text.length / cptOf([text], charsPerToken) <= numCtx - answerFor(numCtx) - PROMPT_TOKENS;
+
+/**
+ * The latest question with the one before it (a follow-up's subject), as the helper calls read it. The earlier one is
+ * context only, its end kept to PREV_CHARS: with the latest checked by questionFits, the pair still fits (PROMPT_TOKENS
+ * covers the helper's instructions and the earlier part).
+ */
+export const PREV_CHARS = 2000;
+export function askedWith(messages: { role: string; content: string }[]): string {
+  const [prev, last] = messages.filter((m) => m.role === "user").slice(-2).map((m) => m.content);
+  return last === undefined ? (prev ?? "") : `${prev.slice(-PREV_CHARS)}\n${last}`;
+}
 
 /** How many document characters fit into num_ctx. */
 export const contextBudget = (numCtx: number, charsPerToken: number) =>
   Math.max(0, numCtx - reservedFor(numCtx)) * charsPerToken;
 
 /**
- * The conversation that fits beside what else goes to the model: newest first, as many turns as `room` characters hold
- * (at most `max`). The latest message always goes, whatever its length: it is the question.
+ * The conversation that fits beside what else goes to the model: newest first, as many turns as `room` holds (at most
+ * `max`), each measured by `size` (characters unless told otherwise; the chat passes tokens). The latest message always
+ * goes, whatever its length: it is the question.
  */
-export function fitHistory<T extends { content: string }>(messages: T[], room: number, max = 40): T[] {
+export function fitHistory<T extends { content: string }>(messages: T[], room: number, max = 40, size = (s: string) => s.length): T[] {
   const out: T[] = [];
   let used = 0;
   for (let i = messages.length - 1; i >= 0 && out.length < max; i--) {
-    used += messages[i].content.length;
+    used += size(messages[i].content);
     if (out.length && used > room) break;
     out.unshift(messages[i]);
   }

@@ -150,7 +150,10 @@ test("thirteenth review: the scale is the written 100, ulp-only slack, dates are
   const [ten] = findCalcs("300 / 1.200 × %10000 = %25");
   assert.deepEqual(ten.scale, [], "%10000 comes to 100 but isn't the written 100");
   assert.ok(run("300 ve 1.200", "300 / 1.200 × %10000 = %25").includes("10000"));
+  // Worked exactly: 16 decimals are 16 decimals (fifteenth review).
   assert.equal(findCalcs("0,12345678901 + 0,00000000001 = 0,1234567890200005")[0].ok, false);
+  assert.ok(findCalcs("0,12345678901 + 0,00000000001 = 0,1234567890200000")[0].ok);
+  assert.equal(findCalcs("0,12345678901 + 0,00000000001 = 0,12345678903")[0].ok, false);
   assert.ok(!sourceNumbers("12.03.2026 ve 1").has("12.03"), "a date's text isn't a decimal");
   assert.ok(run("12.03.2026 ve 1", "12,03 × 1 = 12,03").includes("12,03"));
   for (const s of ["2 + 3 = 5!", "100 + 200 = 300 TL × π"]) assert.deepEqual(findCalcs(s), [], s);
@@ -168,7 +171,40 @@ test("fourteenth review: unread continuations, malformed thousands, double perce
   // A signed thousands result is read as thousands; figures past 2^53 get no verdict.
   assert.ok(findCalcs("1.000 + 234 = +1.234")[0]?.ok);
   assert.equal(findCalcs("1.000 + 234 = +1.235")[0]?.ok, false);
-  assert.deepEqual(findCalcs("9.007.199.254.740.992 + 1 = 9.007.199.254.740.992"), []);
+  const [big] = findCalcs("9.007.199.254.740.992 + 1 = 9.007.199.254.740.992");
+  assert.equal(big.ok, false, "past 2^53, worked exactly");
+  assert.equal(big.shown, "9.007.199.254.740.993");
+});
+
+test("fifteenth review: worked exactly, no floating-point slack at any size or step", () => {
+  // Near 10^15 an ulp is a sizeable part of a unit; a step past 2^53 loses the +1; a small divisor magnifies an error.
+  assert.equal(findCalcs("1.000.000.000.000.000 + 1 = 1.000.000.000.000.002")[0].ok, false);
+  assert.ok(findCalcs("1.000.000.000.000.000 + 1 = 1.000.000.000.000.001")[0].ok);
+  assert.equal(findCalcs("1.000.000.000 × 1.000.000.000 + 1 - 1.000.000.000 × 1.000.000.000 = 0")[0].ok, false);
+  assert.ok(findCalcs("1.000.000.000 × 1.000.000.000 + 1 - 1.000.000.000 × 1.000.000.000 = 1")[0].ok);
+  assert.equal(findCalcs("0,000001 / (100,000001 - 100) = 1,000000003")[0].ok, false);
+  assert.ok(findCalcs("0,000001 / (100,000001 - 100) = 1,000000000")[0].ok);
+  // Ordinary figures, rounding as written, decimals and percentages.
+  assert.ok(findCalcs("0,1 + 0,2 = 0,3")[0]?.ok);
+  assert.ok(findCalcs("1 / 3 = 0,33")[0]?.ok);
+  assert.equal(findCalcs("2 / 3 = 0,66")[0]?.ok, false);
+  assert.equal(findCalcs("2 / 3 = 0,66")[0]?.shown, "0,667");
+  assert.ok(findCalcs("(1.550.500 - 1.200.000) / 1.200.000 × 100 = %29,21")[0]?.ok);
+  assert.equal(findCalcs("100 - 250 = -150")[0]?.ok, true);
+  assert.equal(findCalcs("100 - 250 = -140")[0]?.shown, "-150");
+});
+
+test("fifteenth review: source keys are exact; a neighbour past 2^53 isn't the stated figure", async () => {
+  const { verifyNumbers } = await import("./checks.ts");
+  const src = "9.007.199.254.740.992 ve 10";
+  const answer = "9.007.199.254.740.993 + 10 = 9.007.199.254.741.003";
+  assert.ok(findCalcs(answer)[0].ok);
+  assert.ok(stillUnverified(verifyNumbers(answer, src).unverified, findCalcs(answer), src).length > 0, "a made-up operand keeps it unproven");
+  assert.ok(sourceNumbers("12,50 ve 0300").has("12.5") && sourceNumbers("0300").has("300"));
+  // A signed result is the same figure as the unsigned one the check reports.
+  const run = (src: string, ans: string) => stillUnverified(verifyNumbers(ans, src).unverified, findCalcs(ans), src);
+  assert.deepEqual(run("1.000 ve 234", "1.000 + 234 = +1.234"), []);
+  assert.deepEqual(run("1.000 ve 2.234", "1.000 - 2.234 = -1.234"), []);
 });
 
 test("stillUnverified: through verifyNumbers, as the chat uses it", async () => {
