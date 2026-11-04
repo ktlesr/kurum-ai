@@ -1,10 +1,9 @@
 import "server-only";
 import { extractText, getDocumentProxy } from "unpdf";
 import mammoth from "mammoth";
-import * as XLSX from "xlsx";
 import type { DocKind } from "./server";
 import { extractWithDocling, MAX_PAGES, readImage, tooManyPages, type Extracted, type Progress } from "./extract";
-import { SHEET_TR, trDigits } from "./table";
+import { readCsv, readXlsx, sheetText } from "./sheet-text";
 
 export interface Parsed {
   kind: DocKind;
@@ -16,7 +15,6 @@ export interface Parsed {
   verify?: Extracted["verify"];
 }
 
-import { checkTotals } from "./checks";
 import { qualityNotes } from "./quality";
 import { htmlToText } from "./web";
 import { UserError } from "./errors";
@@ -54,9 +52,9 @@ async function parseRaw(name: string, buf: Buffer, onProgress: (p: Progress) => 
       throw new UserError("Eski .doc biçimi desteklenmiyor. Dosyayı Word'de açıp .docx olarak kaydedin.");
     case "xlsx":
     case "xls":
-      return parseSheet(XLSX.read(buf, { type: "buffer" }));
+      return { kind: "sheet", ...sheetText(readXlsx(buf), { csv: false }) };
     case "csv":
-      return parseSheet(XLSX.read(decodeText(buf), { type: "string" }));
+      return { kind: "sheet", ...sheetText(readCsv(decodeText(buf)), { csv: true }) };
     case "png":
     case "jpg":
     case "jpeg":
@@ -126,46 +124,6 @@ async function readPdf(buf: Buffer, signal?: AbortSignal): Promise<Parsed> {
         ? "Metin çıkarılamadı: taranmış (görüntü) PDF olabilir ve bu sunucuda OCR (Docling) kapalı. Yöneticinize bildirin ya da metin içeren bir PDF yükleyin."
         : undefined,
   };
-}
-
-function parseSheet(wb: XLSX.WorkBook): Parsed {
-  let totalRows = 0;
-  const parts = wb.SheetNames.map((sheetName) => {
-    const ws = wb.Sheets[sheetName];
-    // A formula with no stored result (file written by a program, never opened in Excel) reads as an empty cell.
-    const noValue = Object.entries(ws).filter(([k, c]) => !k.startsWith("!") && (c as XLSX.CellObject).f && (c as XLSX.CellObject).v === undefined).length;
-    // SheetJS writes a number cell's formatted text in English ("1,234" is a thousand and more, "2,500.50"); everything
-    // after this reads numbers the Turkish way, where "1,234" is one and a bit. A number cell's text is written in
-    // Turkish here ("1.234", "2.500,50"), dates excepted. The sheet says so (SHEET_TR) for lib/table.
-    for (const [k, c] of Object.entries(ws)) {
-      const cell = c as XLSX.CellObject;
-      if (k.startsWith("!") || cell.t !== "n" || typeof cell.w !== "string" || XLSX.SSF.is_date(String(cell.z ?? "General"))) continue;
-      cell.w = trDigits(cell.w);
-    }
-    const rows = XLSX.utils
-      .sheet_to_json<unknown[]>(ws, { header: 1, defval: "", blankrows: false, raw: false })
-      .map((r) => r.map((c) => String(c).replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim()));
-    const [header = [], ...data] = rows;
-    const cols = Math.max(0, ...rows.map((r) => r.length));
-    totalRows += data.length;
-    const pad = (r: string[]) => Array.from({ length: cols }, (_, i) => r[i] ?? "");
-    const line = (r: string[]) => `| ${pad(r).join(" | ")} |`;
-    const table = cols
-      ? [line(header), `|${" --- |".repeat(cols)}`, ...data.map(line)].join("\n")
-      : "(boş sayfa)";
-    return [
-      `## Sheet: ${sheetName}`,
-      SHEET_TR,
-      `Satır: ${data.length}, Sütun: ${cols}`,
-      `Sütun başlıkları: ${header.filter(Boolean).join(", ") || "(yok)"}`,
-      ...(noValue ? [`> [Kod kontrolü] ${noValue} formül hücresinin dosyada hesaplanmış değeri yok; bu hücreler boş okundu. Dosyayı Excel'de açıp kaydederek yeniden yükleyin.`] : []),
-      "",
-      table,
-      // Totals and shares recomputed from the cells (plan §5.2); spreadsheet values are exact, nothing to cross-check.
-      ...(cols ? checkTotals(`${sheetName}\n${table}`).flatMap((n) => ["", n]) : []),
-    ].join("\n");
-  });
-  return { kind: "sheet", text: parts.join("\n\n"), rows: totalRows, sheets: wb.SheetNames.length };
 }
 
 /** UTF-8, falling back to Windows-1254 (common for older Turkish files). */

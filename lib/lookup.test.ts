@@ -272,3 +272,10 @@ test("lookup (review): a year sent as a JSON number filters as a year, it isn't 
   const f = await lookup([], e.e);
   assert.deepEqual(f.facts, ["5"]);
 });
+
+test("lookup (review 2): a JSON decimal filter value is written the Turkish way (1.5 is 1,5, not fifteen)", async () => {
+  const book = { name: "b.xlsx", text: "## Sheet: S\nSayı biçimi: Türkçe (1.234,5)\n| Oran | Ton |\n| --- | --- |\n| 1,5 | 1 |\n| 15 | 2 |" };
+  const e = env([{ text: "", truncated: false, toolCalls: [call("tablo_sorgula", { sayfa: "S", filtreler: [{ sutun: "Oran", esit: [1.5] }], topla: ["Ton"] })] }], { docs: [book], seen: new Set() });
+  const f = await lookup([], e.e);
+  assert.deepEqual(f.facts, ["1"]);
+});

@@ -192,6 +192,8 @@ const toolsOn = (chat: Provider) => chat.kind === "openai" && process.env.TOOL_C
 const MAX_LOOKUP_CHARS = 40_000;
 /** A workbook beyond this many tokens goes to the model as its shape, its rows by query (lib/table). */
 const TABLE_TOKENS = 8000;
+/** At most this share of the documents' room for a workbook's shape; beyond it the workbook is read as before. */
+const MAX_SHAPE_SHARE = 0.25;
 /**
  * The tools listed on every call on the documents while tools are on: the same list each time, whether a call may use
  * them or not (toolChoice), because the template writes them into the system turn ahead of the documents.
@@ -531,13 +533,20 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         // (sheets, columns, a few values each); the rows and the sums it needs come from tablo_sorgula in the second look,
         // worked exactly in code. Seen live: 80k tokens of rows took two minutes to read, and their sums were made up.
         const readTokens = read.reduce((n, d) => n + d.text.length / cptOf([d.text], cptFor(model)), 0);
-        const sheets = toolsOn(chat) && !!read.length && read.every((d) => isWorkbook(d)) && readTokens > TABLE_TOKENS;
+        const shape = (d: Doc) => docBlock("doküman", { ad: d.name }, `Tablo yapısı (satırlar burada yok):\n\n${schemaOf(tablesFor(d))}`);
+        // Also small next to the context: a shape of many wide sheets that takes much of it leaves no room to query, so
+        // such a workbook is read the way it was before (whole, or by search).
+        const shapeFits = () => {
+          const text = selected.map(shape).join("\n\n");
+          return text.length / cptOf([text], cptFor(model)) <= (NUM_CTX - reservedFor(NUM_CTX)) * MAX_SHAPE_SHARE;
+        };
+        const sheets = toolsOn(chat) && !!read.length && read.every((d) => isWorkbook(d)) && readTokens > TABLE_TOKENS && shapeFits();
         if (sheets) {
           fits = false;
           meta.mode = "rag";
           meta.sources = [];
           hint = "\n\nBelgeler bloğunda Excel dosyalarının yalnızca yapısı var (sayfalar, sütunlar, örnek değerler), satırları değil. Satırlar ve toplamlar, belgeler bloğundaki \"Sorgu:\" bölümlerinde kodla hesaplanmış olarak verilir; cevabı onlara dayandır, toplamları kendin yapma. Sorgu sonucu yoksa bunu söyle.";
-          context = selected.map((d) => docBlock("doküman", { ad: d.name }, `Tablo yapısı (satırlar burada yok):\n\n${schemaOf(tablesFor(d))}`)).join("\n\n");
+          context = selected.map(shape).join("\n\n");
         } else if (fits) {
           context = read.map((d) => docBlock("doküman", { ad: d.name }, d.text)).join("\n\n");
         } else {

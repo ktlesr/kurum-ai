@@ -98,10 +98,31 @@ export function tablesFor(doc: { text: string }): Table[] {
 
 export const isWorkbook = (doc: { text: string }) => tablesFor(doc).some((t) => t.columns.length > 0);
 
-/** A cell's number, exactly, in the sheet's own writing (see Table.english). */
-const numberIn = (t: Table, cell: string) => cellNumber(t.english ? trDigits(cell) : cell);
+const MONEY = String.raw`(?:TL|TRY|USD|EUR|₺|\$|€)`;
+/** "1.234,50 ₺", "₺ 1.234", "%12,5", "12,5 %", "(5)", "-₺1.234", "−5", "1.234*", "1.234 (2)": the number in it. */
+const AMOUNT = new RegExp(String.raw`^(\()?\s*([-−–])?\s*(?:${MONEY}|%)?\s*([-−–])?\s*(\d+(?:[.,]\d+)*)\s*(?:${MONEY}|%)?\s*(\))?\s*(?:[*¹²³⁴⁵⁶⁷⁸⁹⁰]+|\(\d\))?$`, "iu");
+/** An accounting format's zero: a dash, maybe with the currency ("-", " -   ₺ "). */
+const ZERO = new RegExp(String.raw`^(?:[-–—]\s*${MONEY}?|${MONEY}\s*[-–—])$`, "iu");
+
+/**
+ * A cell's number, exactly, in the sheet's own writing (see Table.english): currency, % and footnote marks around it,
+ * "(5)" and "−5" negative, an accounting dash zero (the same forms lib/checks cellNumber reads). Null when the cell is
+ * something else ("—" alone is text here: a missing value, not a zero someone wrote).
+ */
+function numberIn(t: Table, raw: string): Exact | null {
+  const c = (t.english ? trDigits(raw) : raw).replace(/\s+/gu, " ").trim();
+  if (ZERO.test(c) && c !== "—") return cellNumber("0");
+  const m = AMOUNT.exec(c);
+  if (!m || !!m[1] !== !!m[5] || (m[2] && m[3])) return null;
+  const v = cellNumber(m[4]);
+  if (!v) return null;
+  return m[1] || m[2] || m[3] ? { n: -v.n, d: v.d } : v;
+}
 
 const MAX_VALUES = 12;
+/** One value as the schema shows it: long texts cut, so a wide sheet's shape stays small. */
+const MAX_VALUE = 60;
+const short = (v: string) => (v.length > MAX_VALUE ? `${v.slice(0, MAX_VALUE)}…` : v);
 const MAX_NOTES = 1500;
 
 /**
@@ -118,11 +139,11 @@ export function schemaOf(tables: Table[]): string {
       const nums = vals.map((v) => numberIn(t, v));
       if (vals.length && nums.every(Boolean)) {
         const sorted = vals.map((v, i) => [v, nums[i]!] as const).sort((a, b) => (a[1].n * b[1].d < b[1].n * a[1].d ? -1 : 1));
-        return `- ${c}: sayı (${sorted[0][0]} … ${sorted.at(-1)![0]})`;
+        return `- ${short(c)}: sayı (${short(sorted[0][0])} … ${short(sorted.at(-1)![0])})`;
       }
       const distinct = [...new Set(vals)];
-      const shown = distinct.slice(0, MAX_VALUES).join(" | ");
-      return `- ${c}: metin, ${distinct.length} farklı değer: ${shown}${distinct.length > MAX_VALUES ? " | …" : ""}`;
+      const shown = distinct.slice(0, MAX_VALUES).map(short).join(" | ");
+      return `- ${short(c)}: metin, ${distinct.length} farklı değer: ${shown}${distinct.length > MAX_VALUES ? " | …" : ""}`;
     });
     return `Sayfa: ${t.sheet} (${t.rows.length} satır)\nSütunlar:\n${cols.join("\n")}${text}`;
   }).join("\n\n");
@@ -160,16 +181,24 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
   if (unknown.length) return { error: `Bu sütunlar "${t.sheet}" sayfasında yok: ${[...new Set(unknown)].join(", ")}. Sütunlar: ${t.columns.join(", ")}` };
   const empty = (q.filtreler ?? []).filter((f) => ![...(f.esit ?? []), ...(f.icerir ?? [])].some((v) => v.trim()));
   if (empty.length) return { error: `Şu sütunların filtresinde karşılaştırılacak değer yok: ${empty.map((f) => f.sutun).join(", ")}. esit ya da icerir içine en az bir değer yazın.` };
-  const same = (cell: string, v: string) => {
+  // A column of numbers compares as numbers ("2025" and "2.025" where the sheet writes so); any other column as text,
+  // so codes keep their leading zeros ("01" isn't "1").
+  const numeric = new Set(t.columns.map((_, k) => k).filter((k) => {
+    const vals = t.rows.map((r) => r[k]).filter((v) => v !== "");
+    return vals.length > 0 && vals.every((v) => numberIn(t, v));
+  }));
+  const same = (k: number, cell: string, v: string) => {
     if (low(cell) === low(v)) return true;
+    if (!numeric.has(k)) return false;
     const a = numberIn(t, cell);
-    const b = cellNumber(v.trim()) ?? numberIn(t, v.trim());
+    const b = numberIn({ ...t, english: false }, v.trim());
     return !!a && !!b && a.n * b.d === b.n * a.d;
   };
   const passes = (r: string[]) => (q.filtreler ?? []).every((f) => {
-    const cell = r[col(f.sutun)];
+    const k = col(f.sutun);
+    const cell = r[k];
     const has = (f.icerir ?? []).map(low).filter(Boolean);
-    return (f.esit ?? []).some((v) => v.trim() && same(cell, v)) || has.some((h) => low(cell).includes(h));
+    return (f.esit ?? []).some((v) => v.trim() && same(k, cell, v)) || has.some((h) => low(cell).includes(h));
   });
   const hits = t.rows.filter(passes);
   const asked = [
@@ -199,12 +228,17 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
   // Counted once, over the matched rows (a group's sum and the grand total read the same cells).
   const skipped = hits.reduce((n, r) => n + sums.filter((k) => r[k] !== "" && !numberIn(t, r[k])).length, 0);
   const numbers: string[] = [];
+  // A sum with a cell that isn't a number is no sum: said so in its place, and never a figure the check may accept.
   const total = (rows: string[][], k: number) => {
     const vals: Exact[] = [];
+    let bad = 0;
     for (const r of rows) {
-      const v = r[k] === "" ? null : numberIn(t, r[k]);
+      if (r[k] === "") continue;
+      const v = numberIn(t, r[k]);
       if (v) vals.push(v);
+      else bad++;
     }
+    if (bad) return `— (${bad} hücre sayı değil)`;
     const s = sumText(vals);
     numbers.push(s);
     return s;
@@ -215,7 +249,7 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
   const cols = [...keys.map((k) => t.columns[k]), "Satır sayısı", ...sums.map((k) => `${t.columns[k]} toplamı`)];
   const notes = [
     groups.size > MAX_ROWS ? `…(ilk ${MAX_ROWS} grup)` : "",
-    skipped ? `Sayı olmayan ${skipped} hücre toplama katılmadı.` : "",
+    skipped ? `Sayı olmayan ${skipped} hücre var; o hücrelerin bulunduğu toplamlar yazılmadı (—).` : "",
   ].filter(Boolean).join(" ");
   const table = md(cols, body);
   return { text: `${head}\n\n${table}${notes ? `\n${notes}` : ""}`, table, sheet: t.sheet, numbers };

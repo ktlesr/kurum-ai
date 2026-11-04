@@ -50,11 +50,12 @@ test("runQuery: TR33 apple totals by province, exact; filters by equality and co
   assert.ok("text" in r);
   assert.match(r.text, /Eşleşen satır: 6\./);
   assert.match(r.text, /\| Afyonkarahisar-3 \| 2 \| 11\.423 \|/);
-  assert.match(r.text, /\| Uşak-64 \| 2 \| 343 \|/);
-  assert.match(r.text, /\| Toplam \| 6 \| 16\.009 \|/);
-  assert.match(r.text, /Sayı olmayan 1 hücre toplama katılmadı/);
+  // Uşak's "—" isn't a number: its sum and the grand total aren't written, and aren't figures the check may accept.
+  assert.match(r.text, /\| Uşak-64 \| 2 \| — \(1 hücre sayı değil\) \|/);
+  assert.match(r.text, /\| Toplam \| 6 \| — \(1 hücre sayı değil\) \|/);
+  assert.match(r.text, /Sayı olmayan 1 hücre var/);
   assert.ok(!r.text.includes("İzmir"));
-  assert.deepEqual(r.numbers.at(-1), "16.009");
+  assert.deepEqual(r.numbers, ["11.423", "2.764", "1.479"]);
   // Decimals in Turkish form, summed exactly.
   const k = runQuery(tablesOf(book), { sayfa: "İller", filtreler: [{ sutun: "Ürün", esit: ["kiraz"] }], topla: ["Üretim (Ton)"] });
   assert.ok("text" in k && /\| 1 \| 1\.234,5 \|/.test(k.text));
@@ -113,4 +114,12 @@ test("review: a title row above the header and repeated or empty names; every co
   assert.deepEqual(r.numbers, ["1.005", "10"], "the title's 2024 isn't summed");
   const [u] = tablesOf(["## Sheet: U", SHEET_TR, "| a | | c |", "| --- | --- | --- |", "| 1 | 2 | 3 |"].join("\n"));
   assert.deepEqual(u.columns, ["a", "Sütun B", "c"]);
+});
+
+test("review 2: a code column compares as text (leading zeros count); a number column as numbers", () => {
+  const [t] = tablesOf(["## Sheet: K", SHEET_TR, "| Kod | Ton |", "| --- | --- |", "| 01 | 1 |", "| 1 | 2 |", "| A7 | 4 |"].join("\n"));
+  const r = runQuery([t], { sayfa: "K", filtreler: [{ sutun: "Kod", esit: ["1"] }], topla: ["Ton"] });
+  assert.ok("text" in r && r.numbers[0] === "2", "only the 1, not the 01");
+  const n = runQuery([t], { sayfa: "K", filtreler: [{ sutun: "Ton", esit: ["2,0"] }], topla: ["Ton"] });
+  assert.ok("text" in n && n.numbers[0] === "2");
 });

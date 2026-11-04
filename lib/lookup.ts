@@ -224,7 +224,9 @@ export async function lookup(start: Msg[], env: LookupEnv): Promise<Found> {
       // The model's JSON, held to the shape runQuery reads: lists of strings, filters with a column.
       // A year or a code may come as a JSON number ({"esit": [2025]}): taken as written, not dropped (a dropped value
       // would leave a filter that runQuery refuses rather than one that quietly matches every row).
-      const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" || (typeof x === "number" && Number.isFinite(x))).map(String) : []);
+      // Written the Turkish way the sheet reads it: 1.234 (a JSON decimal) is "1,234", not "1.234" (a thousand and more).
+      const asText = (x: unknown) => (typeof x === "number" ? String(x).replace(".", ",") : x);
+      const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" || (typeof x === "number" && Number.isFinite(x))).map((x) => String(asText(x))) : []);
       const filtreler: Filter[] = (Array.isArray(args.filtreler) ? args.filtreler : [])
         .filter((f): f is Record<string, unknown> => !!f && typeof f === "object" && typeof (f as Record<string, unknown>).sutun === "string")
         .map((f) => ({ sutun: f.sutun as string, esit: strs(f.esit), icerir: strs(f.icerir) }));

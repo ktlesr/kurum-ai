@@ -152,6 +152,9 @@ function readIndex(): Record<string, string[]> {
 function remember(file: string, key: string) {
   const index = readIndex();
   const name = path.basename(file);
+  // A file version is in one cache file only: one read again under a new name (spreadsheets, ".tr") leaves its old one
+  // pointing at nothing, so the sweep removes it.
+  for (const [other, keys] of Object.entries(index)) if (other !== name) index[other] = keys.filter((k) => k !== key);
   index[name] = [...new Set([...(index[name] ?? []), key])];
   writeFileAtomic(CACHE_INDEX, JSON.stringify(index));
 }
@@ -206,7 +209,7 @@ export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => v
     // Same bytes under another extension are parsed differently (a table, not plain text).
     const ext = e.name.toLowerCase().split(".").pop() ?? "";
     // Spreadsheets are read again once: their number cells are now written the Turkish way (lib/parse, SHEET_TR); the
-    // old text read "1,234" as one and a bit. The old cache file then has no live file and is cleaned up as usual.
+    // old text read "1,234" as one and a bit. remember() takes the version off the old cache file, and the sweep removes it.
     const file = path.join(CACHE, `${hash}.${ext}${SHEET_EXTS.has(ext) ? ".tr" : ""}.json`);
     // The name goes into prompts inside an attribute: no quote or bracket can close it.
     const name = e.path.replace(/["<>]/g, "");
