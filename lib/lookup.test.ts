@@ -231,3 +231,27 @@ test("answerWithCalc: the other tools are listed on the answer call but only hes
   assert.equal(r.text, "Cevap.");
   assert.match(sent[1].at(-1)!.content, /^HATA: bu aşamada yalnızca hesapla/);
 });
+
+test("lookup: tablo_sorgula answers from the workbook's cells; its sums count as derived; bad shapes are errors", async () => {
+  const book = { name: "iller.xlsx", text: "## Sheet: İller\n| İl | Ürün | Ton |\n| --- | --- | --- |\n| Uşak-64 | Elma | 343 |\n| Uşak-64 | Elma | 57 |\n| Manisa-45 | Elma | 1479 |\n| Manisa-45 | Kiraz | 5 |" };
+  const e = env([{
+    text: "", truncated: false,
+    toolCalls: [
+      call("tablo_sorgula", { sayfa: "İller", filtreler: [{ sutun: "Ürün", esit: ["elma"] }], topla: ["Ton"], grupla: ["İl"] }),
+      call("tablo_sorgula", { sayfa: "Yok" }, "b"),
+      call("tablo_sorgula", { sayfa: "İller", filtreler: "bozuk", topla: [1, "Ton"] }, "c"),
+    ],
+  }], { docs: [book], seen: new Set() });
+  const f = await lookup([], e.e);
+  assert.match(f.blocks[0], /^<bölüm doküman="iller.xlsx" konum="Sorgu: İller">/);
+  assert.match(f.blocks[0], /\| Uşak-64 \| 2 \| 400 \|/);
+  assert.match(f.blocks[0], /\| Toplam \| 3 \| 1\.879 \|/);
+  assert.deepEqual(f.facts.slice(0, 3), ["400", "1.479", "1.879"]);
+  const out = e.sent[1].slice(-3).map((m) => m.content);
+  assert.match(out[1], /^HATA: "Yok" adında sayfa yok\. Sayfalar: İller/);
+  assert.match(out[2], /\| 4 \| 1\.884 \|/, "a filter that isn't a list is ignored, non-string columns dropped");
+  // No workbook among the documents.
+  const none = env([{ text: "", truncated: false, toolCalls: [call("tablo_sorgula", { sayfa: "x" })] }]);
+  await lookup([], none.e);
+  assert.equal(none.sent[1].at(-1)!.content, "HATA: seçili belgelerde tablo yok.");
+});

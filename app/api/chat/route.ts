@@ -24,6 +24,7 @@ import { getSetting } from "@/lib/db";
 import { findUrls, MAX_CHARS_TOTAL, onSite, parsePick, siteOf, WebError, webReason, type Page } from "@/lib/web";
 import { readWeb } from "@/lib/browser";
 import { gatePolicy, parseGate, quoteInDocs } from "@/lib/evidence";
+import { isWorkbook, schemaOf, tablesFor } from "@/lib/table";
 import { answerWithCalc, lookup, LOOKUP, LOOKUP_TOKENS, outline, seenKey, TOOLS } from "@/lib/lookup";
 import { isClearNo, parseRelevant, parseSearchQuery, passage, aboutTheDocument, safeQuery, saysNotWritten, searchWeb } from "@/lib/websearch";
 
@@ -189,6 +190,8 @@ let toolsRefused = false;
 const toolsOn = (chat: Provider) => chat.kind === "openai" && process.env.TOOL_CALLING !== "off" && !toolsRefused;
 /** Found text the second look may add, at most (a long look delays the answer). */
 const MAX_LOOKUP_CHARS = 40_000;
+/** A workbook beyond this many tokens goes to the model as its shape, its rows by query (lib/table). */
+const TABLE_TOKENS = 8000;
 /**
  * The tools listed on every call on the documents while tools are on: the same list each time, whether a call may use
  * them or not (toolChoice), because the template writes them into the system turn ahead of the documents.
@@ -524,7 +527,18 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             fits = true;
           }
         }
-        if (fits) {
+        // The table index (lib/table): workbooks whose rows would take long to read go to the model as their shape only
+        // (sheets, columns, a few values each); the rows and the sums it needs come from tablo_sorgula in the second look,
+        // worked exactly in code. Seen live: 80k tokens of rows took two minutes to read, and their sums were made up.
+        const readTokens = read.reduce((n, d) => n + d.text.length / cptOf([d.text], cptFor(model)), 0);
+        const sheets = toolsOn(chat) && !!read.length && read.every((d) => isWorkbook(d)) && readTokens > TABLE_TOKENS;
+        if (sheets) {
+          fits = false;
+          meta.mode = "rag";
+          meta.sources = [];
+          hint = "\n\nBelgeler bloğunda Excel dosyalarının yalnızca yapısı var (sayfalar, sütunlar, örnek değerler), satırları değil. Satırlar ve toplamlar, belgeler bloğundaki \"Sorgu:\" bölümlerinde kodla hesaplanmış olarak verilir; cevabı onlara dayandır, toplamları kendin yapma. Sorgu sonucu yoksa bunu söyle.";
+          context = selected.map((d) => docBlock("doküman", { ad: d.name }, `Tablo yapısı (satırlar burada yok):\n\n${schemaOf(tablesFor(d))}`)).join("\n\n");
+        } else if (fits) {
           context = read.map((d) => docBlock("doküman", { ad: d.name }, d.text)).join("\n\n");
         } else {
           let whole = scope === "all";
@@ -570,7 +584,10 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         // Plan P6: the first search's sections or a long document's notes may miss what the question needs. A second look
         // through read-only tools (lib/lookup) adds what it finds to the documents block; everything after works on it
         // as before. Only where the documents weren't read whole, only on a model server that takes tools.
-        let toolCalcs: string[] = [];
+        const toolCalcs: string[] = [];
+        // What the second look brought, all of it made by code from the documents (their sections, query results): a
+        // quote from it is a quote from them.
+        const looked: string[] = [];
         // One prefix for every call on the documents (second look, evidence gate, answer): the same system turn, the
         // same conversation, the documents block first; what each call is for goes last, at the end of the latest user
         // turn. vLLM's prefix cache then reads the documents once per question instead of once per call (seen live:
@@ -630,11 +647,14 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           console.info(`lookup: ${found.stop}, ${found.blocks.length} sections, ${found.calcs.length} calcs`);
           if (found.blocks.length) {
             context += `\n\n${found.blocks.join("\n\n")}`;
+            looked.push(...found.blocks);
             meta.sources = [...new Set([...meta.sources, ...found.sources.map((x) => (selected.length > 1 ? `${x.doc} · ${x.label}` : x.label))])];
             later += "\n\nİlk aramadan sonra eksik bilgi için ek bölümler okundu; onlar da belgeler bloğunda.";
           }
+          // Sums from the documents' cells (tablo_sorgula): derived from them, so not "missing" from them.
+          toolCalcs.push(...found.facts);
           if (found.calcs.length) {
-            toolCalcs = found.calcs;
+            toolCalcs.push(...found.calcs);
             later += `\n\nBelgedeki sayılarla araçla yapılmış kesin hesaplar:\n${found.calcs.join("\n")}\nBu sonuçları kullan; cevapta işlemi bu haliyle yaz ve "hesaplanan" de.`;
           }
           // Stopped by a bound, not because the model had what it needed: the answer may rest on less than it looked for.
@@ -675,7 +695,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           const gate = parseGate(said);
           // Not about the documents (a translation, an e-mail): answered as a plain request, no document checks after it.
           // The words settle a document request in code; the model's "general" can't take its checks away.
-          ({ general, analysis, unstated } = gatePolicy(gate, { ofDoc, factGate, quoted: (q) => quoteInDocs(q, selected.map((d) => d.text)) }));
+          ({ general, analysis, unstated } = gatePolicy(gate, { ofDoc, factGate, quoted: (q) => quoteInDocs(q, [...selected.map((d) => d.text), ...looked]) }));
           console.info(`evidence gate: ${gate?.kind ?? "unclear"}${gate?.kind === "fact" ? (unstated ? " unstated" : " quoted") : ""}`);
         }
         if (unstated) {

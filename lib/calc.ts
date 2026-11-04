@@ -225,6 +225,27 @@ function isLabel(inside: string): boolean {
     /^\d+(?:[.,]\d+)*[.,]?$/u.test(w) || (/^\p{L}+(?:[-/'’]\p{L}+)*[.,]?$/u.test(w) && !/^[xX]$/u.test(w)));
 }
 
+/**
+ * A cell as a number, exactly, or null when it isn't one as written ("1.234,5", "-12", "1234.5"; not "12 TL", "—").
+ * For lib/table: a column's sums are worked on these, never on doubles.
+ */
+export function cellNumber(cell: string): Q | null {
+  const t = cell.trim().replace(/\s+/gu, "");
+  const neg = /^[-−]/u.test(t);
+  const body = t.replace(/^[-−+]/u, "");
+  if (!WELL_FORMED.test(body)) return null;
+  const v = exact(body);
+  return neg ? q(-v.n, v.d) : v;
+}
+
+/** The exact sum of numbers from cellNumber, written as the answer would ("1.550.500", "12,75"). */
+export function sumText(values: Q[]): string {
+  const total = values.reduce((s, v) => add(s, v), { n: B0, d: B1 } as Q);
+  return trExact(total, "0,0000");
+}
+
+export type { Q as Exact };
+
 /** Every written-out calculation in the answer, worked again. */
 export function findCalcs(answer: string): Calc[] {
   const out: Calc[] = [];
