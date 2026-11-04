@@ -5,12 +5,12 @@ import { asksForOutline, docOutline, outlineMarkdown } from "@/lib/outline";
 import { cptFor, docsOf, getDoc, recordTokens, type Doc } from "@/lib/server";
 import { isSharedId, sharedDoc, sharedFilesFor, sharedFor, type SharedEntry } from "@/lib/library";
 import { filesCall, FILES_RULE, FILES_TOOL, type FileEntry } from "@/lib/file-search";
-import { PICK_PROMPT, matchByName, parsePicked, wantsSources, type SourceEntry } from "@/lib/sources";
+import { PICK_PROMPT, matchByName, mergePicks, namedScan, parsePicked, wantsSources, type SourceEntry } from "@/lib/sources";
 import { parseFile, parsePdf, UserError } from "@/lib/parse";
 import { withJobDir } from "@/lib/workspace";
 import type { Msg, Provider, ToolCall, ToolDef } from "@/lib/provider";
 import { modelConfig, NUM_CTX, providerOf } from "@/lib/model-config";
-import { parseChatRequest } from "@/lib/validate";
+import { LIMITS, parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
@@ -314,13 +314,30 @@ export async function POST(req: Request) {
         // Before any model call: a message that can't fit on its own is never sent (helper calls included).
         if (!questionFits(messages.at(-1)?.content ?? "", NUM_CTX, cptFor(model))) throw new TooLong();
         let shared = sharedAsked as SharedEntry[];
-        if (!fileIds.length && wantsSources(asked0)) {
-          const mine = docsOf(user.id);
-          const entries: SourceEntry[] = [...visibleShared.map((e) => ({ id: e.id, path: e.path })), ...mine.map((d) => ({ id: d.id, path: `Belgelerim/${d.folder ? `${d.folder}/` : ""}${d.name}` }))];
-          let picks = matchByName(asked0, entries);
+        const mine = docsOf(user.id);
+        const entries: SourceEntry[] = [...visibleShared.map((e) => ({ id: e.id, path: e.path })), ...mine.map((d) => ({ id: d.id, path: `Belgelerim/${d.folder ? `${d.folder}/` : ""}${d.name}` }))];
+        // A file whose name the message writes is read as it is, without the word "belge" and beside the documents the
+        // chat already has (only what this person may see: entries are their visible files).
+        // Those already attached are left out first, so they can't fill the limit and keep a newly named one out.
+        // Every named file (no cut of its own): the chat's capacity alone limits them, and what it leaves out is said.
+        // Scanned over all files, attached ones too, so a file named with its extension shuts out its namesakes everywhere.
+        const scan = namedScan(asked0, entries);
+        const namedAll = scan.hits.filter((e) => !fileIds.includes(e.id));
+        // A chat holds at most LIMITS.files documents (the page keeps no more): named files beyond that aren't read, and
+        // the person is told which, rather than one being read now and lost from the chat after.
+        const named = namedAll.slice(0, Math.max(0, LIMITS.files - fileIds.length));
+        const left = namedAll.slice(named.length);
+        if (left.length) meta.note = [meta.note, `Sohbette en çok ${LIMITS.files} belge olabilir; şunlar okunmadı: ${left.map((e) => e.path.split("/").pop()).join(", ")}. Yan menüden bir belgeyi çıkarıp yeniden deneyin.`].filter(Boolean).join(" ");
+        if (fileIds.length && named.length) {
+          shared = [...shared, ...named.flatMap((p) => (isSharedId(p.id) ? (sharedEntry(p.id) ?? []) : []))];
+          selected = [...selected, ...named.flatMap((p) => (isSharedId(p.id) ? [] : (getDoc(user.id, p.id) ?? [])))];
+        } else if (!fileIds.length && (named.length || wantsSources(asked0))) {
+          // Named files first, and what else the message asks for ("… ve KOSGEB klasöründeki belgeler") beside them.
+          const others = wantsSources(asked0) ? matchByName(asked0, entries).filter((e) => !scan.namesakes.has(e.id)) : [];
+          let picks = mergePicks(named, others, Math.max(8, named.length));
           if (!picks.length && entries.length) {
             status("Kaynaklar taranıyor…");
-            const list = entries.slice(0, 400);
+            const list = entries.filter((e) => !scan.namesakes.has(e.id)).slice(0, 400);
             const answer0 = await chatOnce(chat, model, [{ role: "system", content: PICK_PROMPT }, { role: "user", content: `İstek: ${asked0}\n\n<liste>\n${list.map((e, i) => `${i + 1}. ${e.path.replace(/[<>]/g, "")}`).join("\n")}\n</liste>` }], signal, 60).catch((e) => {
               if (signal.aborted) throw e;
               return "";
@@ -341,9 +358,12 @@ export async function POST(req: Request) {
             meta.note = [meta.note, `${e.name} okunamadı.`].filter(Boolean).join(" ");
           }
         }
-        if (!fileIds.length && selected.length) meta.used = selected.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind }));
+        // The documents this message brought in (not those already attached): the chat keeps them for follow-ups.
+        const added = selected.filter((d) => !fileIds.includes(d.id));
+        if (added.length) meta.used = added.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind }));
         // Attached personal documents show their warnings on their cards; these have no card yet.
-        for (const d of selected) if (d.warning && (isSharedId(d.id) || !fileIds.length)) meta.note = [meta.note, `${d.name}: ${d.warning}`].filter(Boolean).join(" ");
+        // A shared document, or one this message brought in, has no card with its warning yet: the warning goes in the note.
+        for (const d of selected) if (d.warning && (isSharedId(d.id) || !fileIds.includes(d.id))) meta.note = [meta.note, `${d.name}: ${d.warning}`].filter(Boolean).join(" ");
         meta.sources = selected.map((d) => d.name);
         if (selected.length === 1) {
           meta.doc = selected[0].name;

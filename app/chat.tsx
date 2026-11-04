@@ -505,7 +505,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         setLast((m) => ({ ...m, meta: parsedMeta }));
         // Documents the message asked for stay with this chat for the follow-up questions.
         if (parsedMeta.used?.length) {
-          docIds = parsedMeta.used.map((u) => u.id);
+          // Added to what the chat already had (a file named mid-chat joins the attached ones), within the same limit.
+          docIds = [...new Set([...docIds, ...parsedMeta.used.map((u) => u.id)])].slice(0, MAX_CHAT_DOCS);
           setFiles((fs) => [...fs, ...parsedMeta.used!.filter((u) => !fs.some((f) => f.serverId === u.id)).map(cardOf)].slice(0, MAX_CHAT_DOCS));
         }
       }
