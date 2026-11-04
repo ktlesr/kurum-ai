@@ -27,6 +27,20 @@ export function useChats(user: string, onChanged: (id: string) => void) {
     if (s) setChats(sortChats(await s.list()));
   }, []);
 
+  /**
+   * After a write (here or in another tab): only those chats read again and put in place, not the whole archive (every
+   * chat with all its messages) on each question and each answer.
+   */
+  const refresh = useCallback(async (ids: string[]) => {
+    const s = await store.current?.catch(() => null);
+    if (!s) return;
+    const fresh = await Promise.all(ids.map((id) => s.get(id)));
+    setChats((cs) => {
+      const rest = cs.filter((c) => !ids.includes(c.id));
+      return sortChats([...rest, ...fresh.filter((c): c is StoredChat => !!c)]);
+    });
+  }, []);
+
   const refreshStorage = useCallback(async () => {
     if (!navigator.storage?.estimate) return;
     const [persisted, { usage, quota }] = await Promise.all([navigator.storage.persisted?.() ?? false, navigator.storage.estimate()]);
@@ -37,7 +51,9 @@ export function useChats(user: string, onChanged: (id: string) => void) {
     const ch = new BroadcastChannel(`kurum-ai:${user}`);
     channel.current = ch;
     ch.onmessage = (e: MessageEvent<{ ids?: string[] }>) => {
-      reload();
+      // A tab that names the chats it changed: those read again; one that doesn't (an import): everything.
+      if (e.data.ids?.length) refresh(e.data.ids);
+      else reload();
       for (const id of e.data.ids ?? []) changed.current(id);
     };
     store.current = openStore(user);
@@ -46,7 +62,7 @@ export function useChats(user: string, onChanged: (id: string) => void) {
       () => setError("Tarayıcı depolaması açılamadı (gizli pencere ya da depolama kapalı olabilir). Sohbetler kaydedilmeyecek."),
     );
     return () => ch.close();
-  }, [user, reload, refreshStorage]);
+  }, [user, reload, refresh, refreshStorage]);
 
   /** Runs a write, reports failure in the banner, tells the other tabs which chats changed. */
   const write = useCallback(async (fn: (s: LocalStore) => Promise<void>, ids: string[]) => {
@@ -59,9 +75,9 @@ export function useChats(user: string, onChanged: (id: string) => void) {
       return false;
     }
     channel.current?.postMessage({ ids });
-    reload();
+    refresh(ids);
     return true;
-  }, [reload]);
+  }, [refresh]);
 
   /** Read-modify-write of one chat; fn gets the stored copy (or undefined for a new chat). */
   const upsert = useCallback(async (id: string, fn: (cur: StoredChat | undefined) => StoredChat) => {

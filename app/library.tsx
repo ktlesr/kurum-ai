@@ -75,9 +75,11 @@ function FileRow({ f, p }: { f: LibItem; p: RowProps }) {
 function DirRow({ node, p }: { node: Node; p: RowProps }) {
   const files = allFiles(node);
   const on = files.filter((f) => p.attached.has(f.id)).length;
+  // A closed folder's rows aren't made at all: a large shared folder is mostly closed folders.
+  const [open, setOpen] = useState(false);
   return (
     <li>
-      <details className="group/dir">
+      <details className="group/dir" onToggle={(e) => setOpen(e.currentTarget.open)}>
         <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md py-0.5 pr-1 text-xs hover:bg-subtle">
           <ChevronRight size={12} className="shrink-0 text-muted transition-transform group-open/dir:rotate-90" />
           <Folder size={12} className="shrink-0 text-accent" />
@@ -95,7 +97,7 @@ function DirRow({ node, p }: { node: Node; p: RowProps }) {
             {on < files.length ? <Plus size={12} /> : <Check size={12} />}
           </button>
         </summary>
-        <div className="ml-2 border-l border-line pl-1.5"><Rows node={node} p={p} /></div>
+        {open && <div className="ml-2 border-l border-line pl-1.5"><Rows node={node} p={p} /></div>}
       </details>
     </li>
   );

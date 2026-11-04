@@ -179,14 +179,30 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     setPendingDocs((p) => p.filter((d) => !lib.some((x) => x.id === d)));
     setFiles((fs) => [...fs, ...found.filter((c) => !fs.some((f) => f.serverId === c.serverId))].slice(0, MAX_CHAT_DOCS));
   }, [shared, personal, pendingDocs]);
+  const libText = useRef({ shared: "", personal: "" });
   const refreshLibrary = useCallback(() => {
     // A failed request keeps the list as it is; the next round tries again.
     const a = api("/api/library").then(async (r) => {
       if (r.ok) setSharedDown(r.headers.get("X-Library-Status") === "down");
-      return r.ok && (setShared(await r.json()), true);
+      if (!r.ok) return false;
+      // The same list every 15 s: not set again, so the panel and its tree aren't rebuilt for nothing.
+      const text = await r.text();
+      if (text !== libText.current.shared) {
+        libText.current.shared = text;
+        setShared(JSON.parse(text));
+      }
+      return true;
     }).catch(() => false);
     const b = api("/api/upload")
-      .then(async (r) => r.ok && (setPersonal(((await r.json()) as DocMeta[]).map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind, path: `${d.folder ? `${d.folder}/` : ""}${d.name}`, warning: d.warning, verify: d.verify }))), true))
+      .then(async (r) => {
+        if (!r.ok) return false;
+        const text = await r.text();
+        if (text !== libText.current.personal) {
+          libText.current.personal = text;
+          setPersonal((JSON.parse(text) as DocMeta[]).map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind, path: `${d.folder ? `${d.folder}/` : ""}${d.name}`, warning: d.warning, verify: d.verify })));
+        }
+        return true;
+      })
       .catch(() => false);
     Promise.all([a, b]).then(([x, y]) => { if (x && y) setLibOk(true); });
   }, []);
@@ -196,8 +212,13 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     return () => clearInterval(t);
   }, [refreshLibrary]);
 
+  // Follow the conversation down only while the reader is at its end: someone who scrolled up to read stays there.
+  const stick = useRef(true);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
+    stick.current = true; // another chat opened: start at its end
+  }, [chatId]);
+  useEffect(() => {
+    if (stick.current) bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages]);
 
   useEffect(() => {
@@ -296,6 +317,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const send = async (text: string, scope?: "all", editOf?: number) => {
     const q = text.trim();
     if (!q || streaming || docsWait) return;
+    // One's own request, whatever it turns into (an answer, a gallery, a file): what comes back is followed.
+    stick.current = true;
     // Filling a form needs the form's own file, not an answer: the panel takes over, with the words as the request.
     if (editOf === undefined && asksTemplateFill(q)) {
       setTemplateOpen({ instruction: q });
@@ -431,9 +454,22 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       let raw = "";
       // The screen follows the stream once per frame, not once per network piece: each update re-reads the whole answer
       // and re-renders its Markdown, and done per piece it made long answers crawl and the page stutter (seen live).
+      // A long answer's Markdown takes longer to draw than a frame: it is drawn less often as it grows (at most every
+      // 400 ms past 16k characters), so the page and the text box stay responsive while it streams.
       let frame = 0;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let shownAt = 0;
+      const schedule = () => {
+        if (frame || timer !== undefined) return;
+        const wait = Math.max(0, shownAt + Math.min(400, raw.length / 40) - Date.now());
+        timer = setTimeout(() => {
+          timer = undefined;
+          frame = requestAnimationFrame(show);
+        }, wait);
+      };
       const show = () => {
         frame = 0;
+        shownAt = Date.now();
         // Progress lines (STATUS_SEP…STATUS_SEP) are shown while waiting and never become part of the answer.
         const body = raw.split(META_SEP)[0].split(ERROR_SEP)[0];
         const statuses = body.match(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"));
@@ -450,10 +486,12 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           if (done) break;
           raw += value;
           if (first === undefined && /[^\s]/u.test(raw.split(META_SEP)[0].split(ERROR_SEP)[0].replace(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"), "").split(STATUS_SEP)[0])) first = secs();
-          frame ||= requestAnimationFrame(show);
+          schedule();
         }
       } finally {
         // The last pieces are on screen before the answer is closed (and a stopped one shows what had come).
+        // Nothing pending is left to write into this turn (or, after a stop, into another chat).
+        clearTimeout(timer);
         if (frame) cancelAnimationFrame(frame);
         show();
       }
@@ -503,7 +541,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     if (c.id === chatId) newChat();
     local.remove(c);
   };
-  const visibleChats = searchChats(local.chats, query);
+  // Every message of every chat is searched: only when the chats or the search change, not on each key in the box.
+  const visibleChats = useMemo(() => searchChats(local.chats, query), [local.chats, query]);
   const current = chatId ? local.chats.find((c) => c.id === chatId) : undefined;
 
   /** A source chip from an answer → open that doc at that page/sheet in the side panel. */
@@ -528,6 +567,19 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const moveStable = useCallback((id: string, folder: string) => latest.current.moveDoc(id, folder), []);
   const openDoc = useCallback((id: string) => setSource({ serverId: id }), []);
   const closeSource = useCallback(() => setSource(null), []);
+  // For each position, the question asked last before it: one pass per message list, not one search per bubble per key.
+  const askedAt = useMemo(() => {
+    let lastAsked: Message | undefined;
+    return messages.map((m) => {
+      const before = lastAsked;
+      if (m.role === "user" && !m.local) lastAsked = m;
+      return before;
+    });
+  }, [messages]);
+  // A page's own copy of an uploaded file is kept for filling a form from it, while the file is in this chat only.
+  useEffect(() => {
+    for (const id of uploadedFiles.current.keys()) if (!files.some((f) => f.id === id)) uploadedFiles.current.delete(id);
+  }, [files]);
   const pickFiles = useCallback(() => fileInput.current?.click(), []);
 
   // Column headers are the file names as they are: lib/checks checkColumns matches figures to documents by them.
@@ -833,12 +885,15 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           </div>
         ) : (
           <>
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto" onScroll={(e) => {
+              const el = e.currentTarget;
+              stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+            }}>
               <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-8">
                 {messages.map((m, i) => (
                   <Bubble key={i} index={i} m={m} fileReady={m.fileOf === undefined || messages[m.fileOf]?.role === "assistant"} live={streaming && i === messages.length - 1} busy={streaming || docsWait} onEditAt={editAt} onSource={sourceOf}
                     // What its file is made of, as props (the messages keep their identity, so memo still holds).
-                    answer={messages[m.fileOf ?? i]} asked={askedBefore(messages, m.fileOf ?? i)} title={current?.title} />
+                    answer={messages[m.fileOf ?? i]} asked={askedAt[m.fileOf ?? i]} title={current?.title} />
                 ))}
                 <div ref={bottomRef} />
               </div>

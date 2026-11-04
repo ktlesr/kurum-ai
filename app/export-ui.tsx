@@ -73,13 +73,15 @@ export function FileCards({ doc, formats }: { doc: () => ExportDoc; formats: Fil
       setBusy(null);
     }
   };
+  // The answer as a document, made once for the names shown (downloading makes it again, from the latest answer).
+  const current = doc();
   return (
     <ul className="mt-3 flex flex-col gap-2" aria-label="Hazırlanan dosyalar">
       {formats.map((f) => (
         <li key={f} className="flex items-center gap-3 rounded-xl border border-line bg-panel px-3 py-2.5 shadow-card">
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">{ICONS[f]}</span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium" title={fileNameOf(doc(), f)}>{fileNameOf(doc(), f)}</span>
+            <span className="block truncate text-sm font-medium" title={fileNameOf(current, f)}>{fileNameOf(current, f)}</span>
             <span className="block text-xs text-muted">{failed === f ? <span role="alert" className="inline-flex items-center gap-1 text-danger"><AlertTriangle size={12} /> {ERROR}</span> : `${FILE_FORMATS[f].label} dosyası`}</span>
           </span>
           <button type="button" onClick={() => void run(f)} disabled={busy !== null} aria-label={`${FILE_FORMATS[f].label} dosyasını indir`} className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-50">
