@@ -2,16 +2,31 @@
 // any answer is written, and the code checks the quote is really there. Prompt rules alone didn't stop the model filling
 // the gap from the document's general subject.
 
-export type Gate = { kind: "analysis" } | { kind: "fact"; quote: string | null };
+export type Gate = { kind: "analysis" } | { kind: "general" } | { kind: "fact"; quote: string | null };
 
 /** The model's two lines; null when they aren't what was asked for (the caller then answers as usual). */
 export function parseGate(raw: string): Gate | null {
-  const type = /T[ÜU]R\s*:[\s*_]*(OLGU|ANAL[İI]Z)/iu.exec(raw)?.[1];
+  const type = /T[ÜU]R\s*:[\s*_]*(OLGU|ANAL[İI]Z|GENEL)/iu.exec(raw)?.[1];
   if (!type) return null;
+  if (/^genel$/iu.test(type)) return { kind: "general" }; // not about the documents: a plain request
   if (!/^olgu$/iu.test(type)) return { kind: "analysis" };
   const quote = /AL[Iı]NT[Iı]\s*:(.*)/iu.exec(raw)?.[1].replace(/^[\s*_"'“”«]+|[\s*_"'“”»]+$/gu, "");
   if (quote === undefined) return null;
   return { kind: "fact", quote: !quote || /^yok\.?$/iu.test(quote) ? null : quote };
+}
+
+/**
+ * What the gate's verdict does. A plain request (the model's GENEL) skips the document checks, unless the request's own
+ * words are about the document or ask for it as a file (`ofDoc`, decided in code). "Not stated" only where the fact
+ * gate ran in full (`factGate`: the web part exists, a part of the document was searched).
+ */
+export function gatePolicy(gate: Gate | null, o: { ofDoc: boolean; factGate: boolean; quoted: (quote: string) => boolean }) {
+  const general = gate?.kind === "general" && !o.ofDoc;
+  return {
+    general,
+    analysis: gate?.kind === "analysis" || general,
+    unstated: o.factGate && gate?.kind === "fact" && !(gate.quote && o.quoted(gate.quote)),
+  };
 }
 
 // What can change a fact stays: digits with their separators and signs, and word boundaries. Line breaks, table bars and

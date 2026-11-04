@@ -1,10 +1,12 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseGate, quoteInDocs } from "./evidence.ts";
+import { gatePolicy, parseGate, quoteInDocs } from "./evidence.ts";
 
 test("parseGate: reads the two lines, however the model dresses them", () => {
   assert.deepEqual(parseGate("TÜR: ANALİZ\nALINTI: YOK"), { kind: "analysis" });
+  assert.deepEqual(parseGate("TÜR: GENEL\nALINTI: YOK"), { kind: "general" });
+  assert.deepEqual(parseGate("**TÜR:** genel"), { kind: "general" });
   assert.deepEqual(parseGate("**TÜR:** analiz"), { kind: "analysis" });
   assert.deepEqual(parseGate("tür: olgu\nalıntı: yok"), { kind: "fact", quote: null });
   assert.deepEqual(parseGate("TÜR: OLGU\nALINTI: YOK."), { kind: "fact", quote: null });
@@ -35,4 +37,16 @@ test("quoteInDocs: an altered number or a part of a word isn't the document's te
   assert.ok(!quoteInDocs("Bedel 15", docs));
   assert.ok(quoteInDocs("Süre 30 gündür.", ["Süre 30 gündür. Sonra biter."]));
   assert.ok(quoteInDocs("Toplam 20", ["Toplam 20, kalan 5."]));
+});
+
+test("gatePolicy: a plain request skips document checks unless its words are about the document; 'not stated' only where the gate ran", () => {
+  const quoted = (q: string) => q === "Bütçe 5 TL'dir.";
+  const general = { kind: "general" } as const;
+  assert.deepEqual(gatePolicy(general, { ofDoc: false, factGate: true, quoted }), { general: true, analysis: true, unstated: false });
+  assert.deepEqual(gatePolicy(general, { ofDoc: true, factGate: true, quoted }), { general: false, analysis: false, unstated: false }, "about the document: checks stay");
+  assert.equal(gatePolicy({ kind: "fact", quote: null }, { ofDoc: false, factGate: true, quoted }).unstated, true);
+  assert.equal(gatePolicy({ kind: "fact", quote: null }, { ofDoc: false, factGate: false, quoted }).unstated, false, "no web part / whole document: no forced refusal");
+  assert.equal(gatePolicy({ kind: "fact", quote: "Bütçe 5 TL'dir." }, { ofDoc: false, factGate: true, quoted }).unstated, false);
+  assert.equal(gatePolicy({ kind: "fact", quote: "uydurma" }, { ofDoc: false, factGate: true, quoted }).unstated, true);
+  assert.deepEqual(gatePolicy(null, { ofDoc: false, factGate: true, quoted }), { general: false, analysis: false, unstated: false });
 });
