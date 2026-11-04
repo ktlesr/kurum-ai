@@ -14,6 +14,11 @@ const words = (s: string) => foldTr(s).match(/[\p{L}\p{N}]+/gu) ?? [];
 const ASKING = new Set(["bana", "bize", "bir", "birkac", "tane", "adet", "resim", "resmi", "resmini", "resimler", "resimleri", "resimlerini", "resimlerinden", "resimlerden", "fotograf", "fotografi", "fotografini", "fotograflar", "fotograflari", "fotograflarini", "fotograflarindan", "fotograflardan", "foto", "fotolar", "fotolari", "fotolarini", "fotolarindan", "gorsel", "gorseli", "gorselini", "gorseller", "gorselleri", "gorsellerini", "gorsellerinden", "video", "videosu", "videosunu", "videolar", "videolari", "videolarini", "videolarindan", "videolardan", "videoyu", "videoda", "film", "filmi", "filmini", "filmleri", "filmlerini", "klip", "klibi", "klibini", "klipler", "klipleri", "galeri", "galeriden", "galerideki", "getir", "getirir", "getirin", "getirsene", "goster", "gosterir", "gosterin", "gostersene", "bul", "bulur", "bulun", "listele", "listeleyin", "ac", "ver", "verir", "misin", "misiniz", "musun", "lutfen", "ile", "ilgili", "ait", "olan", "icin", "daha", "ve", "de", "da", "su", "bu", "o", "proje", "projesi", "projesinin", "projesine", "projeden", "projenin", "yi", "ten", "den", "nin", "nun", "ayni", "gecen", "yil", "yili", "yilki", "bu",
   // A question about having them ("görselleri var mı?", "video veya resim") and a clarification ("galeride demek istedim").
   "var", "mi", "mu", "veya", "ya", "yok", "mevcut", "bulunuyor", "galeride", "galeriye", "galerideki", "demek", "istedim", "kastettim", "klasor", "klasorde", "klasorden", "klasordeki", "klasorundeki", "klasorunde", "icinde", "icindeki"]);
+/**
+ * The asking verbs in every form lib/gallery-intent accepts (folded: "bulur", "listeler", "gosterebilir", "musunuz"), so a
+ * request it sends here isn't searched for its own verb ("listeler" left as a term matched nothing, seen in review).
+ */
+const ASKING_VERB = /^(?:(?:getir|goster|bul|listele)(?:ir|ur|er|ar|r|in|un|iniz|unuz|sene|ebilir|abilir)?|m[iu]s[iu]n(?:iz|uz)?)$/u;
 const NUMBER_WORDS: Record<string, number> = { bir: 1, iki: 2, uc: 3, dort: 4, bes: 5, alti: 6, yedi: 7, sekiz: 8, dokuz: 9, on: 10 };
 
 /** What was asked for: "videoları" videos, "resim/fotoğraf" photos, otherwise either. */
@@ -47,7 +52,7 @@ export function termsOf(q: string, thisYear: number): SearchTerms {
   const terms: string[] = [];
   for (const w of words(q)) {
     if (/^(?:19|20)\d\d$/.test(w)) year = Number(w);
-    else if (/^\d+$/.test(w) || NUMBER_WORDS[w] !== undefined || ASKING.has(w) || w.length < 2) continue;
+    else if (/^\d+$/.test(w) || NUMBER_WORDS[w] !== undefined || ASKING.has(w) || ASKING_VERB.test(w) || w.length < 2) continue;
     else terms.push(w);
   }
   return { terms: [...new Set(terms)], year };

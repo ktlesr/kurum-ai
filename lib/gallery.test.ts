@@ -7,7 +7,7 @@ import { exifYear } from "./exif-date.ts";
 import { parseRange, videoFrame } from "./video-frame.ts";
 import { canSee, parseRules, ruleFindsFolder, ruleFrom, withRule, withoutRule } from "./folder-access.ts";
 import { FORGET_AFTER_MS, ScanFailed, goneLongEnough, readWithin, safeToForget, scanFolder } from "./folder-scan.ts";
-import { asksMorePhotos, asksPhotos, clarifies } from "./gallery-intent.ts";
+import { asksMorePhotos, asksPhotos, clarifies, namesPhotos } from "./gallery-intent.ts";
 import { countOf, foldTr, kindAsked, nearFolders, searchGallery, termsOf, type GalleryEntry } from "./gallery-search.ts";
 import { cleanGallery } from "./local-store.ts";
 import { deleteMyTemplate, listMyTemplates, readMyTemplate, saveMyTemplate, cleanFolder } from "./template-store.ts";
@@ -300,4 +300,31 @@ test("intent: asking whether there are any, or naming the archive; the asking wo
   // The folder needn't name the province: of four words one may miss.
   const list = [photo("Projeler/Domaniç Kadın Kooperatifi/1.jpg"), photo("Projeler/Simav Sera/2.jpg")];
   assert.deepEqual(searchGallery(list, asked, { count: 5, thisYear: 2026 }).items.map((i) => i.name), ["1.jpg"]);
+});
+
+test("namesPhotos: photos named without a verb are a gallery request (live: they went to the model)", () => {
+  for (const q of [
+    "domaniç kadın kooperatifi fotoğrafları", "domaniç kadın kooperatifi fotoları", "domaniç kadın kooperatifiyle ilgili fotolar",
+    "domaniç kadın kooperatifinin resimleri", "domaniç kadın kooperatifi görselleri", "uşak fuarı videoları.", "kilim fotoğrafı",
+  ]) assert.ok(namesPhotos(q), q);
+  for (const q of [
+    "fotoğraflar", "raporun görselleri ne anlatıyor", "bu fotoğrafta ne var", "kooperatif için afiş görseli tasarla",
+    "belgedeki resimler", "domaniç fotoğrafları nerede?", "fotoğrafları domaniç kooperatifinin", "kooperatif fotoğraflarını kim çekti",
+  ]) assert.ok(!namesPhotos(q), q);
+});
+
+test("asksPhotos: every polite form of the verb (live: 'bulur musun' went to the model)", () => {
+  for (const q of [
+    "domaniç kadın kooperatifi ile ilgili fotoğrafları bulur musun", "kilim fotoğraflarını gösterir misiniz", "fuar resimlerini getirir misin",
+    "uşak görsellerini listeler misin", "kooperatif fotoğraflarını bulabilir misin", "fuar videolarını gösterebilir misin",
+  ]) assert.ok(asksPhotos(q), q);
+  for (const q of ["bu fotoğraftaki bulguları anlat", "fotoğraf makinesi nasıl bulunur"]) assert.ok(!asksPhotos(q), q);
+});
+
+test("a request the intent accepts finds what it names: its verb, in any polite form, isn't a search term", async () => {
+  const { searchGallery } = await import("./gallery-search.ts");
+  const all = [{ id: "1", path: "Projeler/Uşak/1.jpg", name: "1.jpg", kind: "photo", size: 1, mtime: 1 }] as never[];
+  for (const q of ["uşak görsellerini listeler misin", "uşak fotoğraflarını bulur musun", "uşak resimlerini gösterebilir misiniz", "uşak fotoğrafları"]) {
+    assert.equal(searchGallery(all, q, { count: 6, thisYear: 2026 }).items.length, 1, q);
+  }
 });

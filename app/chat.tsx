@@ -16,7 +16,7 @@ import { logout } from "./login/actions";
 import { useChats } from "./use-chats";
 import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, plainNumbering, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
 import { keepMessages, searchChats, titleFrom, type GalleryPhoto, type Message, type StoredChat } from "@/lib/local-store";
-import { asksMorePhotos, asksPhotos, clarifies } from "@/lib/gallery-intent";
+import { asksMorePhotos, asksPhotos, clarifies, namesPhotos } from "@/lib/gallery-intent";
 import { countOf } from "@/lib/gallery-search";
 import { GalleryGrid } from "./gallery-view";
 import { FILE_FORMATS, exportDoc, turnOf, type ExportDoc } from "@/lib/export-doc";
@@ -331,7 +331,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     // Photos from the archive: found by the server from names and what it saw, so no model is needed and nothing can be made up.
     const lastPhotos = earlier.findLast((m) => m.gallery)?.gallery;
     const morePhotos = !!lastPhotos && asksMorePhotos(q);
-    if (editOf === undefined && (morePhotos || asksPhotos(q))) {
+    // Photos only named ("… fotoğrafları") count too while no document is in the chat to be asked about instead.
+    if (editOf === undefined && (morePhotos || asksPhotos(q) || (!ready.length && namesPhotos(q)))) {
       // "Galeride demek istedim": this says where to look; what to look for is the question before it.
       const before = earlier.findLast((m) => m.role === "user")?.content;
       const query = morePhotos ? lastPhotos.query : clarifies(q) && before ? before : q;
