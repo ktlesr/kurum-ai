@@ -110,13 +110,24 @@ const ZERO = new RegExp(String.raw`^(?:[-–—]\s*${MONEY}?|${MONEY}\s*[-–—
  * something else ("—" alone is text here: a missing value, not a zero someone wrote).
  */
 function numberIn(t: Table, raw: string): Exact | null {
+  return amountIn(t, raw)?.value ?? null;
+}
+
+/** "TL", "TRY", "₺" are one unit; "$" and "USD" another; "%" its own. "" for a plain number. */
+const unitOf = (s: string) => {
+  const u = s.toUpperCase();
+  return /TL|TRY|₺/u.test(u) ? "₺" : /USD|\$/u.test(u) ? "$" : /EUR|€/u.test(u) ? "€" : /%/u.test(u) ? "%" : "";
+};
+
+/** numberIn with the cell's unit, so a sum never adds liras to dollars or a share to an amount. */
+function amountIn(t: Table, raw: string): { value: Exact; unit: string } | null {
   const c = (t.english ? trDigits(raw) : raw).replace(/\s+/gu, " ").trim();
-  if (ZERO.test(c) && c !== "—") return cellNumber("0");
+  if (ZERO.test(c) && c !== "—") return { value: cellNumber("0")!, unit: unitOf(c) };
   const m = AMOUNT.exec(c);
   if (!m || !!m[1] !== !!m[5] || (m[2] && m[3])) return null;
   const v = cellNumber(m[4]);
   if (!v) return null;
-  return m[1] || m[2] || m[3] ? { n: -v.n, d: v.d } : v;
+  return { value: m[1] || m[2] || m[3] ? { n: -v.n, d: v.d } : v, unit: unitOf(c.replace(m[4], "")) };
 }
 
 const MAX_VALUES = 12;
@@ -175,6 +186,9 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
   const withTable = tables.filter((x) => x.columns.length);
   const t = withTable.find((x) => low(x.sheet) === low(q.sayfa ?? ""));
   if (!t) return { error: `"${q.sayfa ?? ""}" adında tablolu sayfa yok. Sayfalar: ${withTable.map((x) => x.sheet).join(", ")}` };
+  // Read before its numbers were written one way (an upload from before SHEET_TR): "1.234" may be a thousand or one and
+  // a bit, as the file had it. No sum is made from such a guess; the document is read as text instead.
+  if (t.english) return { error: `"${t.sheet}" sayfası eski biçimde okunmuş; sayıların yazımı belli değil, tablo sorgusu yapılamaz. Dosya yeniden yüklenirse sorgulanabilir.` };
   const col = (name: string) => t.columns.findIndex((c) => low(c) === low(name));
   const named = [...(q.filtreler ?? []).map((f) => f.sutun), ...(q.topla ?? []), ...(q.grupla ?? []), ...(q.sutunlar ?? [])];
   const unknown = named.filter((n) => col(n) < 0);
@@ -231,14 +245,21 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
   // A sum with a cell that isn't a number is no sum: said so in its place, and never a figure the check may accept.
   const total = (rows: string[][], k: number) => {
     const vals: Exact[] = [];
+    const units = new Set<string>();
     let bad = 0;
     for (const r of rows) {
       if (r[k] === "") continue;
-      const v = numberIn(t, r[k]);
-      if (v) vals.push(v);
-      else bad++;
+      const a = amountIn(t, r[k]);
+      if (a) {
+        vals.push(a.value);
+        units.add(a.unit);
+      } else bad++;
     }
     if (bad) return `— (${bad} hücre sayı değil)`;
+    // One currency, maybe beside plain numbers (an accounting zero, a cell without the sign); never two currencies,
+    // never a share (%) with anything else.
+    const money = [...units].filter((u) => u && u !== "%");
+    if (money.length > 1 || (units.has("%") && units.size > 1)) return `— (farklı birimler: ${[...units].map((u) => u || "birimsiz").join(", ")})`;
     const s = sumText(vals);
     numbers.push(s);
     return s;

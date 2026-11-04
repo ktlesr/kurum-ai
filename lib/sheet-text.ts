@@ -22,8 +22,23 @@ function turkishNumbers(ws: XLSX.WorkSheet) {
     if (XLSX.SSF.is_date(fmt)) continue;
     // A cell SheetJS didn't format (no text of its own) is formatted here first, so none stays English.
     const w = typeof cell.w === "string" ? cell.w : XLSX.utils.format_cell(cell);
-    cell.w = trDigits(w);
+    cell.w = trDigits(fullValue(w, Number(cell.v), fmt));
   }
+}
+
+/**
+ * A display that rounds ("#,##0" shows 100,4 as "100") gets the cell's whole value back, its currency or % kept: the
+ * table index sums what the cell holds, as Excel does, not what was shown. A display of one plain number only; a
+ * fraction, a time or a scientific form is left as shown (and isn't read as a number later).
+ */
+function fullValue(w: string, v: number, fmt: string): string {
+  if (!Number.isFinite(v) || !/^[^\d]*\d[\d.,]*[^\d]*$/u.test(w) || /[eE][+-]?\d|\/|:/u.test(w)) return w;
+  const scale = /%/u.test(fmt.replace(/"[^"]*"/gu, "")) ? 100 : 1;
+  const value = Math.abs(v * scale);
+  const shown = Number(w.match(/\d[\d.,]*/u)![0].replace(/,/gu, ""));
+  if (Math.abs(shown - value) <= Number.EPSILON * Math.max(1, value) * 4) return w;
+  const whole = value.toLocaleString("en-US", { maximumFractionDigits: 15, useGrouping: true });
+  return w.replace(/\d[\d.,]*/u, whole);
 }
 
 export function sheetText(wb: XLSX.WorkBook, o: { csv: boolean }): { text: string; rows: number; sheets: number } {

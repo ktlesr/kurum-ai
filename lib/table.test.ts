@@ -82,13 +82,13 @@ test("tablesFor: made once per version of the document; a newer text replaces th
   assert.ok(isWorkbook(doc) && !isWorkbook({ text: "düz metin" }));
 });
 
-test("review: a sheet in SheetJS's English form sums its thousands right; older sheets are read that way", () => {
-  const old = "## Sheet: S\nSatır: 3, Sütun: 2\n\n| Kalem | Tutar |\n| --- | --- |\n| a | 1,234 |\n| b | 2,500 |\n| c | 7 |";
+test("review: a sheet read before SHEET_TR (its numbers' writing unknown) is never summed", () => {
+  // An old upload: "1.234" may be a thousand (a Turkish CSV) or one and a bit (SheetJS's English form). No guess.
+  const old = "## Sheet: S\nSatır: 3, Sütun: 2\n\n| Kalem | Tutar |\n| --- | --- |\n| a | 1.234 |\n| b | 2.000 |\n| c | 7 |";
   const [t] = tablesOf(old);
   assert.equal(t.english, true);
   const r = runQuery([t], { sayfa: "S", topla: ["Tutar"] });
-  assert.ok("text" in r);
-  assert.deepEqual(r.numbers, ["3.741"]);
+  assert.ok("error" in r && /eski biçimde/.test(r.error));
   // lib/parse now writes number cells the Turkish way and says so.
   assert.equal(trDigits("1,234.5"), "1.234,5");
   assert.equal(trDigits("$2,500.50"), "$2.500,50");
@@ -122,4 +122,14 @@ test("review 2: a code column compares as text (leading zeros count); a number c
   assert.ok("text" in r && r.numbers[0] === "2", "only the 1, not the 01");
   const n = runQuery([t], { sayfa: "K", filtreler: [{ sutun: "Ton", esit: ["2,0"] }], topla: ["Ton"] });
   assert.ok("text" in n && n.numbers[0] === "2");
+});
+
+test("review 3: different units in one column are never added; one currency beside plain numbers is", () => {
+  const sheet = (cells: string[]) => tablesOf(["## Sheet: U", SHEET_TR, "| Kalem | Tutar |", "| --- | --- |", ...cells.map((c, i) => `| k${i} | ${c} |`)].join("\n"));
+  const mixed = runQuery(sheet(["10 ₺", "10 $", "%50"]), { sayfa: "U", topla: ["Tutar"] });
+  assert.ok("text" in mixed && /farklı birimler/.test(mixed.text) && mixed.numbers.length === 0);
+  const lira = runQuery(sheet(["10 ₺", "5 TL", "-", "2"]), { sayfa: "U", topla: ["Tutar"] });
+  assert.ok("text" in lira && lira.numbers[0] === "17", JSON.stringify(lira));
+  const share = runQuery(sheet(["%10", "5"]), { sayfa: "U", topla: ["Tutar"] });
+  assert.ok("text" in share && share.numbers.length === 0);
 });

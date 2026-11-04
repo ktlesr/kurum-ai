@@ -51,3 +51,14 @@ test("csv: the file's own numbers are never converted; Turkish CSVs read right",
   const r = runQuery(tablesOf(tr), { sayfa: "Sheet1", topla: ["tutar"] });
   assert.ok("text" in r && r.numbers[0] === "3.234", JSON.stringify(r));
 });
+
+test("xlsx: a display that rounds gets the cell's whole value; the sum is Excel's, not the shown digits'", () => {
+  const rows: (string | { v: number; z: string })[][] = [["Kalem", "Tutar"]];
+  for (let i = 0; i < 10; i++) rows.push([`k${i}`, { v: 100.4, z: "#,##0" }]);
+  rows.push(["pay", { v: 0.12345, z: "0%" }]);
+  const text = sheetText(book(rows), { csv: false }).text;
+  assert.match(text, /\| k0 \| 100,4 \|/);
+  assert.match(text, /\| pay \| 12,345% \|/);
+  const r = runQuery(tablesOf(text), { sayfa: "S", filtreler: [{ sutun: "Kalem", icerir: ["k"] }], topla: ["Tutar"] });
+  assert.ok("text" in r && r.numbers[0] === "1.004", JSON.stringify(r));
+});

@@ -241,7 +241,8 @@ export function cellNumber(cell: string): Q | null {
 /** The exact sum of numbers from cellNumber, written as the answer would ("1.550.500", "12,75"). */
 export function sumText(values: Q[]): string {
   const total = values.reduce((s, v) => add(s, v), { n: B0, d: B1 } as Q);
-  return trExact(total, "0,0000");
+  // Cell values have a few decimals; up to 20 are written, so the sum is never rounded short of what they hold.
+  return trExact(total, `0,${"0".repeat(19)}`);
 }
 
 export type { Q as Exact };

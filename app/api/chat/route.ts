@@ -540,7 +540,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           const text = selected.map(shape).join("\n\n");
           return text.length / cptOf([text], cptFor(model)) <= (NUM_CTX - reservedFor(NUM_CTX)) * MAX_SHAPE_SHARE;
         };
-        const sheets = toolsOn(chat) && !!read.length && read.every((d) => isWorkbook(d)) && readTokens > TABLE_TOKENS && shapeFits();
+        const sheets = toolsOn(chat) && !!read.length && read.every((d) => isWorkbook(d) && tablesFor(d).every((t) => !t.english)) && readTokens > TABLE_TOKENS && shapeFits();
         if (sheets) {
           fits = false;
           meta.mode = "rag";

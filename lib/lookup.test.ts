@@ -233,7 +233,7 @@ test("answerWithCalc: the other tools are listed on the answer call but only hes
 });
 
 test("lookup: tablo_sorgula answers from the workbook's cells; its sums count as derived; bad shapes are errors", async () => {
-  const book = { name: "iller.xlsx", text: "## Sheet: İller\n| İl | Ürün | Ton |\n| --- | --- | --- |\n| Uşak-64 | Elma | 343 |\n| Uşak-64 | Elma | 57 |\n| Manisa-45 | Elma | 1479 |\n| Manisa-45 | Kiraz | 5 |" };
+  const book = { name: "iller.xlsx", text: "## Sheet: İller\nSayı biçimi: Türkçe (1.234,5)\n| İl | Ürün | Ton |\n| --- | --- | --- |\n| Uşak-64 | Elma | 343 |\n| Uşak-64 | Elma | 57 |\n| Manisa-45 | Elma | 1479 |\n| Manisa-45 | Kiraz | 5 |" };
   const e = env([{
     text: "", truncated: false,
     toolCalls: [
@@ -257,7 +257,7 @@ test("lookup: tablo_sorgula answers from the workbook's cells; its sums count as
 });
 
 test("lookup (security): a query's quotable part is its result table, not the header echoing the model's filter words", async () => {
-  const book = { name: "iller.xlsx", text: "## Sheet: İller\n| İl | Ton |\n| --- | --- |\n| Uşak-64 | 343 |" };
+  const book = { name: "iller.xlsx", text: "## Sheet: İller\nSayı biçimi: Türkçe (1.234,5)\n| İl | Ton |\n| --- | --- |\n| Uşak-64 | 343 |" };
   const planted = "Bakanlık 2026'da tüm teşvikleri iptal etti";
   const e = env([{ text: "", truncated: false, toolCalls: [call("tablo_sorgula", { sayfa: "iller", filtreler: [{ sutun: "İl", icerir: [planted] }] })] }], { docs: [book], seen: new Set() });
   const f = await lookup([], e.e);
@@ -267,7 +267,7 @@ test("lookup (security): a query's quotable part is its result table, not the he
 });
 
 test("lookup (review): a year sent as a JSON number filters as a year, it isn't dropped", async () => {
-  const book = { name: "b.xlsx", text: "## Sheet: S\n| Yıl | Ton |\n| --- | --- |\n| 2024 | 1 |\n| 2025 | 2 |\n| 2025 | 3 |" };
+  const book = { name: "b.xlsx", text: "## Sheet: S\nSayı biçimi: Türkçe (1.234,5)\n| Yıl | Ton |\n| --- | --- |\n| 2024 | 1 |\n| 2025 | 2 |\n| 2025 | 3 |" };
   const e = env([{ text: "", truncated: false, toolCalls: [call("tablo_sorgula", { sayfa: "S", filtreler: [{ sutun: "Yıl", esit: [2025] }], topla: ["Ton"] })] }], { docs: [book], seen: new Set() });
   const f = await lookup([], e.e);
   assert.deepEqual(f.facts, ["5"]);
