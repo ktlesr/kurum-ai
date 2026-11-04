@@ -662,6 +662,11 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             meta.note = [meta.note, "Ek belge araması sınırına ulaştı; cevap o ana kadar okunan bölümlere dayanıyor."].filter(Boolean).join(" ");
           }
         }
+        // A workbook given as its shape, and no query came back (no room, the look failed, the model didn't ask): the
+        // answer can rest on the shape alone, and the user is told.
+        if (sheets && !looked.length) {
+          meta.note = [meta.note, "Tablo sorgusu yapılamadı; cevap tablonun satırlarına değil yalnızca yapısına (sayfa ve sütun adları) dayanıyor."].filter(Boolean).join(" ");
+        }
         // One specific fact, and no sentence in the documents states it: no answer is written, so none can fill the gap
         // by inference; the web part below takes over. Needs the web part to exist. A whole-document request, a named page,
         // or no verdict from the model goes on as usual.

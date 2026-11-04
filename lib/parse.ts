@@ -4,6 +4,7 @@ import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import type { DocKind } from "./server";
 import { extractWithDocling, MAX_PAGES, readImage, tooManyPages, type Extracted, type Progress } from "./extract";
+import { SHEET_TR, trDigits } from "./table";
 
 export interface Parsed {
   kind: DocKind;
@@ -133,6 +134,14 @@ function parseSheet(wb: XLSX.WorkBook): Parsed {
     const ws = wb.Sheets[sheetName];
     // A formula with no stored result (file written by a program, never opened in Excel) reads as an empty cell.
     const noValue = Object.entries(ws).filter(([k, c]) => !k.startsWith("!") && (c as XLSX.CellObject).f && (c as XLSX.CellObject).v === undefined).length;
+    // SheetJS writes a number cell's formatted text in English ("1,234" is a thousand and more, "2,500.50"); everything
+    // after this reads numbers the Turkish way, where "1,234" is one and a bit. A number cell's text is written in
+    // Turkish here ("1.234", "2.500,50"), dates excepted. The sheet says so (SHEET_TR) for lib/table.
+    for (const [k, c] of Object.entries(ws)) {
+      const cell = c as XLSX.CellObject;
+      if (k.startsWith("!") || cell.t !== "n" || typeof cell.w !== "string" || XLSX.SSF.is_date(String(cell.z ?? "General"))) continue;
+      cell.w = trDigits(cell.w);
+    }
     const rows = XLSX.utils
       .sheet_to_json<unknown[]>(ws, { header: 1, defval: "", blankrows: false, raw: false })
       .map((r) => r.map((c) => String(c).replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim()));
@@ -146,6 +155,7 @@ function parseSheet(wb: XLSX.WorkBook): Parsed {
       : "(boş sayfa)";
     return [
       `## Sheet: ${sheetName}`,
+      SHEET_TR,
       `Satır: ${data.length}, Sütun: ${cols}`,
       `Sütun başlıkları: ${header.filter(Boolean).join(", ") || "(yok)"}`,
       ...(noValue ? [`> [Kod kontrolü] ${noValue} formül hücresinin dosyada hesaplanmış değeri yok; bu hücreler boş okundu. Dosyayı Excel'de açıp kaydederek yeniden yükleyin.`] : []),

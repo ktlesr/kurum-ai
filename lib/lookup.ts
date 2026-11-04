@@ -222,7 +222,9 @@ export async function lookup(start: Msg[], env: LookupEnv): Promise<Found> {
       const doc = books.find((d) => d.name === name) ?? (books.length === 1 ? books[0] : undefined);
       if (!doc) return books.length ? `HATA: doküman adı şunlardan biri olmalı: ${books.map((d) => d.name).join(", ")}` : "HATA: seçili belgelerde tablo yok.";
       // The model's JSON, held to the shape runQuery reads: lists of strings, filters with a column.
-      const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+      // A year or a code may come as a JSON number ({"esit": [2025]}): taken as written, not dropped (a dropped value
+      // would leave a filter that runQuery refuses rather than one that quietly matches every row).
+      const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" || (typeof x === "number" && Number.isFinite(x))).map(String) : []);
       const filtreler: Filter[] = (Array.isArray(args.filtreler) ? args.filtreler : [])
         .filter((f): f is Record<string, unknown> => !!f && typeof f === "object" && typeof (f as Record<string, unknown>).sutun === "string")
         .map((f) => ({ sutun: f.sutun as string, esit: strs(f.esit), icerir: strs(f.icerir) }));

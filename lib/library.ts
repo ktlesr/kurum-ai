@@ -19,6 +19,8 @@ import { withJobDir } from "./workspace";
 
 const ROOT = () => process.env.SOURCES_DIR || path.join(process.cwd(), "kaynaklar");
 const CACHE = path.join(process.cwd(), ".cache", "shared");
+/** What lib/parse reads as a workbook (parseSheet). */
+const SHEET_EXTS = new Set(["xlsx", "xls", "csv"]);
 const CACHE_INDEX = path.join(CACHE, "index.json");
 const CACHE_GONE = path.join(CACHE, "gone.json"); // cache file → since when no file has pointed to it
 const EXT = new Set(["pdf", "docx", "xlsx", "xls", "csv", "txt", "md", "html", "htm"]);
@@ -203,7 +205,9 @@ export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => v
     const hash = createHash("sha256").update(buf).digest("hex");
     // Same bytes under another extension are parsed differently (a table, not plain text).
     const ext = e.name.toLowerCase().split(".").pop() ?? "";
-    const file = path.join(CACHE, `${hash}.${ext}.json`);
+    // Spreadsheets are read again once: their number cells are now written the Turkish way (lib/parse, SHEET_TR); the
+    // old text read "1,234" as one and a bit. The old cache file then has no live file and is cleaned up as usual.
+    const file = path.join(CACHE, `${hash}.${ext}${SHEET_EXTS.has(ext) ? ".tr" : ""}.json`);
     // The name goes into prompts inside an attribute: no quote or bracket can close it.
     const name = e.path.replace(/["<>]/g, "");
     let doc: Doc | undefined;

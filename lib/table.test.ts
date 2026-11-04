@@ -1,10 +1,11 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isWorkbook, runQuery, schemaOf, tablesFor, tablesOf } from "./table.ts";
+import { isWorkbook, runQuery, schemaOf, SHEET_TR, tablesFor, tablesOf, trDigits } from "./table.ts";
 
 const book = [
   "## Sheet: İller",
+  SHEET_TR,
   "| İl Adı | Ürün | Yıl | Üretim (Ton) |",
   "| --- | --- | --- | --- |",
   "| Afyonkarahisar-3 | Elma (Golden) | 2025 | 4725 |",
@@ -20,14 +21,16 @@ const book = [
   "metin, tablo yok",
 ].join("\n");
 
-test("tablesOf: each sheet's table, cells trimmed, short rows padded; sheets without a table left out", () => {
-  const [t, ...rest] = tablesOf(book);
-  assert.equal(rest.length, 0);
+test("tablesOf: each sheet's table, cells trimmed, short rows padded; a sheet of text kept as notes", () => {
+  const [t, notes] = tablesOf(book);
+  assert.deepEqual([notes.columns, notes.notes], [[], ["metin, tablo yok"]]);
+  assert.equal(t.english, false);
   assert.equal(t.sheet, "İller");
   assert.deepEqual(t.columns, ["İl Adı", "Ürün", "Yıl", "Üretim (Ton)"]);
   assert.equal(t.rows.length, 8);
   assert.deepEqual(tablesOf("| a | b |\n| - | - |"), []);
   assert.deepEqual(tablesOf("## Sheet: X\n| a \\| b | c |\n| --- | --- |\n| 1 |")[0].rows, [["1", ""]]);
+  assert.match(schemaOf(tablesOf(book)), /Sayfa: Notlar \(tablo yok\)\nTablo dışındaki metin:\nmetin, tablo yok/);
 });
 
 test("schemaOf: the shape, not the rows", () => {
@@ -76,4 +79,38 @@ test("tablesFor: made once per version of the document; a newer text replaces th
   assert.notEqual(next, first);
   assert.ok(next[0].rows.some((r) => r[3] === "400"));
   assert.ok(isWorkbook(doc) && !isWorkbook({ text: "düz metin" }));
+});
+
+test("review: a sheet in SheetJS's English form sums its thousands right; older sheets are read that way", () => {
+  const old = "## Sheet: S\nSatır: 3, Sütun: 2\n\n| Kalem | Tutar |\n| --- | --- |\n| a | 1,234 |\n| b | 2,500 |\n| c | 7 |";
+  const [t] = tablesOf(old);
+  assert.equal(t.english, true);
+  const r = runQuery([t], { sayfa: "S", topla: ["Tutar"] });
+  assert.ok("text" in r);
+  assert.deepEqual(r.numbers, ["3.741"]);
+  // lib/parse now writes number cells the Turkish way and says so.
+  assert.equal(trDigits("1,234.5"), "1.234,5");
+  assert.equal(trDigits("$2,500.50"), "$2.500,50");
+  assert.equal(trDigits("25%"), "25%");
+  assert.equal(trDigits("1234"), "1234");
+});
+
+test("review: a filter with no usable value is an error, not every row; numbers compare as numbers", () => {
+  const t = tablesOf(book);
+  const empty = runQuery(t, { sayfa: "İller", filtreler: [{ sutun: "Yıl", esit: [], icerir: [""] }], topla: ["Üretim (Ton)"] });
+  assert.ok("error" in empty && /Yıl/.test(empty.error));
+  const y = runQuery(t, { sayfa: "İller", filtreler: [{ sutun: "Yıl", esit: ["2025"] }, { sutun: "İl Adı", esit: ["uşak-64"] }], topla: ["Üretim (Ton)"] });
+  assert.ok("text" in y && /Eşleşen satır: 3\./.test(y.text));
+});
+
+test("review: a title row above the header and repeated or empty names; every column can be named", () => {
+  const text = ["## Sheet: Rapor", SHEET_TR, "| 2024 Yılı Raporu | | |", "| --- | --- | --- |", "| İl | Değer | Değer |", "| Uşak | 5 | 7 |", "| Manisa | 1.000 | 3 |", "", "> [Kod kontrolü] toplam tutuyor"].join("\n");
+  const [t] = tablesOf(text);
+  assert.deepEqual(t.columns, ["İl", "Değer", "Değer (2)"]);
+  assert.deepEqual(t.notes, ["2024 Yılı Raporu", "> [Kod kontrolü] toplam tutuyor"]);
+  const r = runQuery([t], { sayfa: "rapor", topla: ["Değer", "Değer (2)"] });
+  assert.ok("text" in r);
+  assert.deepEqual(r.numbers, ["1.005", "10"], "the title's 2024 isn't summed");
+  const [u] = tablesOf(["## Sheet: U", SHEET_TR, "| a | | c |", "| --- | --- | --- |", "| 1 | 2 | 3 |"].join("\n"));
+  assert.deepEqual(u.columns, ["a", "Sütun B", "c"]);
 });

@@ -239,7 +239,7 @@ test("lookup: tablo_sorgula answers from the workbook's cells; its sums count as
     toolCalls: [
       call("tablo_sorgula", { sayfa: "İller", filtreler: [{ sutun: "Ürün", esit: ["elma"] }], topla: ["Ton"], grupla: ["İl"] }),
       call("tablo_sorgula", { sayfa: "Yok" }, "b"),
-      call("tablo_sorgula", { sayfa: "İller", filtreler: "bozuk", topla: [1, "Ton"] }, "c"),
+      call("tablo_sorgula", { sayfa: "İller", filtreler: "bozuk", topla: ["Ton"] }, "c"),
     ],
   }], { docs: [book], seen: new Set() });
   const f = await lookup([], e.e);
@@ -248,8 +248,8 @@ test("lookup: tablo_sorgula answers from the workbook's cells; its sums count as
   assert.match(f.blocks[0], /\| Toplam \| 3 \| 1\.879 \|/);
   assert.deepEqual(f.facts.slice(0, 3), ["400", "1.479", "1.879"]);
   const out = e.sent[1].slice(-3).map((m) => m.content);
-  assert.match(out[1], /^HATA: "Yok" adında sayfa yok\. Sayfalar: İller/);
-  assert.match(out[2], /\| 4 \| 1\.884 \|/, "a filter that isn't a list is ignored, non-string columns dropped");
+  assert.match(out[1], /^HATA: "Yok" adında tablolu sayfa yok\. Sayfalar: İller/);
+  assert.match(out[2], /\| 4 \| 1\.884 \|/, "a filter that isn't a list is ignored");
   // No workbook among the documents.
   const none = env([{ text: "", truncated: false, toolCalls: [call("tablo_sorgula", { sayfa: "x" })] }]);
   await lookup([], none.e);
@@ -264,4 +264,11 @@ test("lookup (security): a query's quotable part is its result table, not the he
   assert.ok(f.blocks[0].includes(planted), "the model still sees what it asked");
   assert.ok(!f.quotable.some((q) => q.includes(planted)), "but it can't be quoted as the document");
   assert.match(f.blocks[0], /konum="Sorgu: İller"/, "the sheet as the workbook names it");
+});
+
+test("lookup (review): a year sent as a JSON number filters as a year, it isn't dropped", async () => {
+  const book = { name: "b.xlsx", text: "## Sheet: S\n| Yıl | Ton |\n| --- | --- |\n| 2024 | 1 |\n| 2025 | 2 |\n| 2025 | 3 |" };
+  const e = env([{ text: "", truncated: false, toolCalls: [call("tablo_sorgula", { sayfa: "S", filtreler: [{ sutun: "Yıl", esit: [2025] }], topla: ["Ton"] })] }], { docs: [book], seen: new Set() });
+  const f = await lookup([], e.e);
+  assert.deepEqual(f.facts, ["5"]);
 });
