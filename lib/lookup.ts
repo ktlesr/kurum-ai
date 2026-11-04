@@ -250,6 +250,9 @@ export async function lookup(start: Msg[], env: LookupEnv): Promise<Found> {
   return found;
 }
 
+/** In the answer call's system turn while hesapla is offered. */
+export const CALC_RULE = `\n\nHesap gerekiyorsa (toplam, fark, oran, yüzde, ortalama) sonucu kendin hesaplama: önce hesapla aracını belgedeki sayılarla çağır; birden çok toplam varsa her biri için ayrı çağrı yap, bir toplamın bütün sayılarını tek ifadede ver. Cevapta aracın döndürdüğü işlemi ve sonucu aynen yaz, sayıların arasına etiket koyma; neyin toplandığını işlemden önce bir cümleyle söyle.`;
+
 export interface AnswerEnv {
   /** The answer call's messages with the tool exchange so far and a note for the system turn; null when they don't fit. */
   build: (exchange: Msg[], note: string) => Msg[] | null;
@@ -277,9 +280,11 @@ export async function answerWithCalc(env: AnswerEnv): Promise<{ text: string; ca
   let text = "";
   let folded = false;
   for (let step = 0; ; step++) {
-    const note = folded && calcs.length
+    const offer = !folded && env.toolsOn() && step < MAX_STEPS ? [CALC_TOOL] : undefined;
+    // Offered is not enough: seen live, the model summed twenty figures in its head and got it wrong. Told plainly.
+    const note = (folded && calcs.length
       ? `\n\nBelgedeki sayılarla araçla yapılmış kesin hesaplar:\n${calcs.join("\n")}\nBu sonuçları kullan; cevapta işlemi bu haliyle yaz ve "hesaplanan" de.`
-      : "";
+      : "") + (offer ? CALC_RULE : "");
     const msgs = env.build(exchange, note);
     if (!msgs) {
       if (folded || !exchange.length) env.tooLong();
@@ -287,7 +292,6 @@ export async function answerWithCalc(env: AnswerEnv): Promise<{ text: string; ca
       folded = true;
       continue;
     }
-    const offer = !folded && env.toolsOn() && step < MAX_STEPS ? [CALC_TOOL] : undefined;
     let r: { text: string; calls: ToolCall[] };
     try {
       r = await env.call(msgs, offer);

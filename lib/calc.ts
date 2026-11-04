@@ -214,6 +214,17 @@ export function calculate(expr: string, stated: Set<string>): { result: string }
   return { result: trExact(v, "0,0000") };
 }
 
+/**
+ * A bracket's text is a label, word by word: each a plain figure ("2021") or letters joined only by a hyphen, slash or
+ * apostrophe between letters ("Afyon-Golden", "TL/yıl"), a lone "x" excepted; at least one word. Anything else may
+ * be arithmetic ("oran-1", "2x3", "oran/2", "1 + oran").
+ */
+function isLabel(inside: string): boolean {
+  const words = inside.trim().split(/\s+/u).filter(Boolean);
+  return words.some((w) => /\p{L}/u.test(w)) && words.every((w) =>
+    /^\d+(?:[.,]\d+)*[.,]?$/u.test(w) || (/^\p{L}+(?:[-/'’]\p{L}+)*[.,]?$/u.test(w) && !/^[xX]$/u.test(w)));
+}
+
 /** Every written-out calculation in the answer, worked again. */
 export function findCalcs(answer: string): Calc[] {
   const out: Calc[] = [];
@@ -222,7 +233,14 @@ export function findCalcs(answer: string): Calc[] {
     // Typeset signs as the plain ones: "−" (minus sign), "‒" (figure dash), "·" and "⋅" (dot operators); an en dash with
     // spaces around it is a minus too ("500 – 100"), one between digits stays a range ("10–12").
     // Markdown emphasis ("**100 + 200 = 300**") is no multiplication.
-    const line = raw.replace(/\*\*|__/gu, " ").replace(/[−‒]/gu, "-").replace(/\s–\s/gu, " - ").replace(/[·⋅]/gu, "×");
+    // A bracket of words right after a number labels it ("5027 (Golden 2021) + 4750 (Golden 2022) = …", seen live):
+    // dropped, so the sum is checked. Only words, figures and a hyphen inside a word ("Afyon-Golden") make a label: a
+    // bracket with any sign of arithmetic ("(1 + oran)", "(oran - 1)", "(x 2)") or no letter ("(2021)") stays, and an
+    // expression with it gets no verdict.
+    const line = raw.replace(/\*\*|__/gu, " ").replace(/[−‒]/gu, "-").replace(/\s–\s/gu, " - ").replace(/[·⋅]/gu, "×")
+      // A slash only between letters ("TL/yıl"; "oran/2" is a division). The label leaves a space: "100 (TL)200" mustn't
+      // become one number 100200.
+      .replace(/(\d)\s*\(([^()]*)\)/gu, (all, d: string, inside: string) => (isLabel(inside) ? `${d} ` : all));
     for (let eq = line.indexOf("="); eq >= 0; eq = line.indexOf("=", eq + 1)) {
       const r = RESULT.exec(line.slice(eq + 1));
       if (!r) continue;

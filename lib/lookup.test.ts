@@ -204,3 +204,17 @@ test("outline goes into the data block: a sheet name can't close it or pose as a
   assert.equal(block.match(/<\/?bölüm/g)?.length, 2, "only the block's own tags");
   assert.ok(!block.includes("</belgeler>"));
 });
+
+test("answerWithCalc: the system turn tells the model to use hesapla while it's offered, not after", async () => {
+  const { answerWithCalc, CALC_RULE } = await import("./lookup.ts");
+  const systems: string[] = [];
+  const steps = [{ text: "", calls: [call("hesapla", { ifade: "1.200.000 + 350.500" })] }];
+  await answerWithCalc({
+    build: (ex, note) => (ex.length ? null : [{ role: "system", content: `S${note}` }, ...ex]),
+    call: async (m) => (systems.push(m[0].content), steps.shift() ?? { text: "Cevap.", calls: [] }),
+    toolsOn: () => true, refused: () => false, stated: () => new Set(["1200000", "350500"]),
+    tooLong: (): never => { throw new Error("too long"); },
+  });
+  assert.ok(systems[0].endsWith(CALC_RULE));
+  assert.ok(!systems.at(-1)!.includes(CALC_RULE), "folded, tools off: no rule to call them");
+});

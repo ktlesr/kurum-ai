@@ -242,3 +242,28 @@ test("calculate (P6 tool): exact, operands from the document only, the percentag
   assert.ok("error" in calculate("rm -rf /", stated));
   assert.ok("error" in calculate("1.500 +", stated));
 });
+
+test("live case: labelled operands are checked; a wrong long sum is caught with its right total", () => {
+  const line = "Afyonkarahisar-3 Toplamı: 5027 (Golden 2021) + 4750 (Golden 2022) + 4669 (Golden 2023) + 4696 (Golden 2024) + 4725 (Golden 2025) + 8096 (Starking 2021) + 8505 (Starking 2022) + 7317 (Starking 2023) + 7147 (Starking 2024) + 6698 (Starking 2025) + 192 (Amasya 2021) + 115 (Amasya 2022) + 101 (Amasya 2023) + 66 (Amasya 2024) + 29 (Amasya 2025) + 1643 (Granny Smith 2021) + 1665 (Granny Smith 2022) + 1410 (Granny Smith 2023) + 1355 (Granny Smith 2024) + 686 (Granny Smith 2025) = 53.111 (hesaplanan)";
+  const [c] = findCalcs(line);
+  assert.equal(c.ok, false);
+  assert.equal(c.shown, "68.892");
+  assert.ok(findCalcs("Toplam: 100 (bin TL) + 200 (bin TL) = 300 (hesaplanan)")[0].ok);
+  assert.deepEqual(findCalcs("5027 (2021) + 4750 (2022) = 9777"), [], "a bracket of figures isn't a label");
+  assert.deepEqual(findCalcs("log (100 + 200) = 300"), []);
+  // A bracket with arithmetic in it is no label: no verdict, never "right".
+  for (const t of ["100 (1 + oran) + 200 = 300", "100 (oran - 1) + 200 = 300", "100 (x 2) + 200 = 300", "100 (oran × 2) + 200 = 300", "100 (%5 pay) + 200 = 300"]) {
+    assert.ok(!findCalcs(t).some((c) => c.ok), t);
+  }
+  assert.ok(findCalcs("5027 (Afyon-Golden) + 2645 (Kütahya-Golden) = 7672")[0].ok);
+  // A label keeps the figures apart; a slash between letters is a unit, one by a figure a division.
+  assert.ok(!findCalcs("100 (TL)200 + 300 = 100500").some((c) => c.ok));
+  assert.equal(findCalcs("100 (TL/yıl) + 200 (TL/yıl) = 400")[0]?.ok, false);
+  assert.ok(findCalcs("100 (TL/yıl) + 200 (TL/yıl) = 300")[0]?.ok);
+  assert.ok(!findCalcs("100 (oran/2) + 200 = 300").some((c) => c.ok));
+  assert.ok(!findCalcs("100 (2/oran) + 200 = 300").some((c) => c.ok));
+  // Arithmetic without spaces is no label either.
+  for (const t of ["100 (oran-1) + 200 = 300", "100 (2x3) + 200 = 300", "100 (x) + 200 = 300", "100 (a-1) + 200 = 300", "100 (1-a) + 200 = 300", "100 (yıl2) + 200 = 300"]) {
+    assert.ok(!findCalcs(t).some((c) => c.ok), t);
+  }
+});
