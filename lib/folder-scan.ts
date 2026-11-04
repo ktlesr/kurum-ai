@@ -9,9 +9,14 @@ export interface ScanResult { files: ScanFile[]; skipped: Skipped; dirs: string[
 
 export interface ScanOptions {
   accept: (ext: string, rel: string) => boolean;
-  maxBytes: number | ((ext: string) => number);
+  maxBytes: number | ((ext: string, rel: string) => number);
   maxDepth: number;
   maxFiles: number;
+  /**
+   * Files in different groups count against maxFiles separately ("read" and "listed" in lib/library): thousands of
+   * presentations listed by name can't push readable documents out of the scan.
+   */
+  groupOf?: (ext: string, size: number, rel: string) => string;
   deadlineMs: number;
 }
 
@@ -61,6 +66,7 @@ export async function scanFolder(root: string, o: ScanOptions): Promise<ScanResu
     return ms;
   };
   const out: ScanResult = { files: [], dirs: [], skipped: { type: {}, tooBig: 0, tooDeep: 0, overLimit: 0, unreadable: 0 } };
+  const counts = new Map<string, number>();
   try {
     if (!(await within(stat(root), left())).isDirectory()) throw new ScanFailed("not_a_folder");
   } catch (e) {
@@ -101,9 +107,13 @@ export async function scanFolder(root: string, o: ScanOptions): Promise<ScanResu
       } else if (st.isFile() && st.size > 0) {
         const ext = n.includes(".") ? n.toLowerCase().split(".").pop()! : "";
         if (!o.accept(ext, r)) out.skipped.type[ext || "uzantısız"] = (out.skipped.type[ext || "uzantısız"] ?? 0) + 1;
-        else if (st.size > (typeof o.maxBytes === "function" ? o.maxBytes(ext) : o.maxBytes)) out.skipped.tooBig++;
-        else if (out.files.length >= o.maxFiles) out.skipped.overLimit++;
-        else out.files.push({ path: r, name: n, ext, size: st.size, mtime: st.mtimeMs });
+        else if (st.size > (typeof o.maxBytes === "function" ? o.maxBytes(ext, r) : o.maxBytes)) out.skipped.tooBig++;
+        else if ((counts.get(o.groupOf?.(ext, st.size, r) ?? "") ?? 0) >= o.maxFiles) out.skipped.overLimit++;
+        else {
+          out.files.push({ path: r, name: n, ext, size: st.size, mtime: st.mtimeMs });
+          const g = o.groupOf?.(ext, st.size, r) ?? "";
+          counts.set(g, (counts.get(g) ?? 0) + 1);
+        }
       }
     }
   };

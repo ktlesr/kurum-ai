@@ -27,6 +27,13 @@ const EXT = new Set(["pdf", "docx", "xlsx", "xls", "csv", "txt", "md", "html", "
 const TEMPLATE_EXT = new Set(["xlsx", "docx", "pdf", "json"]);
 const MAX_DEPTH = 8;
 const MAX_FILES = Number(process.env.SOURCES_MAX_FILES) || 20_000;
+/**
+ * Listed, never read: presentations, old Word and other office files (lib/file-search finds them by name, folder and
+ * date: "the latest presentation in Sunum/2025" is most often a .pptx). A readable type over MAX_BYTES is listed too.
+ */
+const LIST_ONLY = new Set(["pptx", "ppt", "pps", "ppsx", "potx", "doc", "rtf", "odt", "odp", "ods", "key", "pages", "numbers", "vsd", "vsdx", "mpp"]);
+/** A file the finder names but no chat reads. */
+export interface ListedFile { path: string; size: number; mtime: number }
 const SCAN_MS = 15_000; // new files appear within this long
 const SCAN_DEADLINE_MS = Number(process.env.SOURCES_SCAN_MS) || 60_000;
 const SWEEP_MS = 60 * 60_000;
@@ -47,6 +54,8 @@ interface State {
   at: number;
   list: SharedEntry[];
   templates: SharedEntry[];
+  /** Files only listed (LIST_ONLY, or readable but too big): for the file finder. */
+  listed?: ListedFile[];
   loaded: Map<string, Doc>;
   running: Map<string, Promise<Doc>>;
   scan?: Promise<void>;
@@ -69,15 +78,22 @@ function refresh(): Promise<void> {
   return (state.scan ??= (async () => {
     try {
       const r = await scanFolder(ROOT(), {
-        accept: (ext, rel) => (isTemplatePath(rel) ? TEMPLATE_EXT.has(ext) : EXT.has(ext)),
-        maxBytes: MAX_BYTES,
+        accept: (ext, rel) => (isTemplatePath(rel) ? TEMPLATE_EXT.has(ext) : EXT.has(ext) || LIST_ONLY.has(ext)),
+        // Only read files need to fit; a listed one is never opened. Readable files over the limit come in to be listed
+        // (a template over it is dropped below, as the scan used to: a form is read whole).
+        maxBytes: (ext, rel) => (isTemplatePath(rel) ? MAX_BYTES : Number.MAX_SAFE_INTEGER),
+        // Three budgets: forms, documents a chat can read, and files only listed (other types, or too big to read).
+        groupOf: (ext, size, rel) => (isTemplatePath(rel) ? "templates" : LIST_ONLY.has(ext) || size > MAX_BYTES ? "listed" : "read"),
         maxDepth: MAX_DEPTH,
         maxFiles: MAX_FILES,
         deadlineMs: SCAN_DEADLINE_MS,
       });
       const before = state.list.length;
       state.templates = r.files.filter((f) => isTemplatePath(f.path)).map(entryOf);
-      state.list = r.files.filter((f) => !isTemplatePath(f.path)).map(entryOf);
+      const own = r.files.filter((f) => !isTemplatePath(f.path));
+      const readable = (f: (typeof own)[number]) => EXT.has(f.ext) && f.size <= MAX_BYTES;
+      state.list = own.filter(readable).map(entryOf);
+      state.listed = own.filter((f) => !readable(f)).map(({ path: p, size, mtime }) => ({ path: p, size, mtime }));
       state.skipped = r.skipped;
       state.dirs = r.dirs;
       state.ok = true;
@@ -133,6 +149,18 @@ export async function sharedTemplatesFor(who: Viewer): Promise<SharedEntry[]> {
   return rs ? state.templates.filter((e) => canSee(e.path, who, rs)) : [];
 }
 export const sharedEntryFor = async (who: Viewer, id: string) => (await sharedFor(who)).find((e) => e.id === id);
+
+/** Every shared file this person may see, readable or only listed, for the file finder (names and dates only). */
+export async function sharedFilesFor(who: Viewer): Promise<{ path: string; size: number; mtime: number; readable: boolean }[]> {
+  const all = [
+    ...(await sharedFor(who)).map((e) => ({ path: e.path, size: e.size, mtime: e.mtime, readable: true })),
+    ...(state.listed ?? []).map((f) => ({ ...f, readable: false })),
+  ];
+  if (who.role === "admin") return all;
+  const rs = await rules().catch(() => null);
+  // The listed files go through the same folder rules (the readable ones already did, in sharedFor).
+  return rs ? all.filter((f) => f.readable || canSee(f.path, who, rs)) : all.filter((f) => f.readable);
+}
 export const libraryDown = () => !state.ok;
 export const filePathOf = (e: SharedEntry) => path.join(ROOT(), ...e.path.split("/"));
 

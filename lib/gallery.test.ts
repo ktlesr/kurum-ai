@@ -328,3 +328,36 @@ test("a request the intent accepts finds what it names: its verb, in any polite 
     assert.equal(searchGallery(all, q, { count: 6, thisYear: 2026 }).items.length, 1, q);
   }
 });
+
+test("scanFolder groupOf: each group has its own file budget; one can't push the other out", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const { scanFolder } = await import("./folder-scan.ts");
+  const root = mkdtempSync(path.join(tmpdir(), "scan-"));
+  mkdirSync(path.join(root, "A"));
+  mkdirSync(path.join(root, "B"));
+  for (let i = 0; i < 5; i++) writeFileSync(path.join(root, "A", `s${i}.pptx`), "x");
+  writeFileSync(path.join(root, "B", "rapor.pdf"), "x");
+  const r = await scanFolder(root, { accept: () => true, maxBytes: 100, maxDepth: 3, maxFiles: 2, deadlineMs: 5000, groupOf: (e) => (e === "pptx" ? "listed" : "read") });
+  assert.ok(r.files.some((f) => f.name === "rapor.pdf"), "the pdf after many presentations is still in");
+  assert.equal(r.files.filter((f) => f.ext === "pptx").length, 2);
+  assert.equal(r.skipped.overLimit, 3);
+});
+
+test("scanFolder groupOf by size and place: big documents and forms don't use the readable budget", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const { scanFolder } = await import("./folder-scan.ts");
+  const root = mkdtempSync(path.join(tmpdir(), "scan-"));
+  mkdirSync(path.join(root, "A"));
+  mkdirSync(path.join(root, "B"));
+  for (let i = 0; i < 3; i++) writeFileSync(path.join(root, "A", `big${i}.pdf`), "x".repeat(50));
+  writeFileSync(path.join(root, "B", "small.pdf"), "x");
+  const r = await scanFolder(root, {
+    accept: () => true, maxBytes: (_e, rel) => (rel.startsWith("Şablon") ? 10 : 1e9), maxDepth: 3, maxFiles: 1, deadlineMs: 5000,
+    groupOf: (_e, size) => (size > 10 ? "listed" : "read"),
+  });
+  assert.ok(r.files.some((f) => f.name === "small.pdf"), "the small pdf after big ones is still read");
+});
