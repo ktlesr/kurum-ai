@@ -2,7 +2,7 @@
 
 import { ProfilePicker, type Profile } from "./profile-picker";
 import { TopLinks } from "./top-links";
-import { Fragment, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, isValidElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -429,20 +429,33 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       }
       // Answer text, then META_SEP + ChatMeta JSON once the answer is complete.
       let raw = "";
-      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        raw += value;
+      // The screen follows the stream once per frame, not once per network piece: each update re-reads the whole answer
+      // and re-renders its Markdown, and done per piece it made long answers crawl and the page stutter (seen live).
+      let frame = 0;
+      const show = () => {
+        frame = 0;
         // Progress lines (STATUS_SEP…STATUS_SEP) are shown while waiting and never become part of the answer.
         const body = raw.split(META_SEP)[0].split(ERROR_SEP)[0];
         const statuses = body.match(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"));
         // The split: a status line cut in two by the network, its other half not here yet.
         const content = body.replace(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"), "").split(STATUS_SEP)[0];
         const status = statuses ? statuses[statuses.length - 1].slice(1, -1) : undefined;
-        if (first === undefined && content.trim()) first = secs();
         // After text has begun, a status counts only while nothing has followed it: work between two parts of the answer.
         setLast((m) => ({ ...m, content, status, waiting: body.endsWith(STATUS_SEP) }));
+      };
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          raw += value;
+          if (first === undefined && /[^\s]/u.test(raw.split(META_SEP)[0].split(ERROR_SEP)[0].replace(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"), "").split(STATUS_SEP)[0])) first = secs();
+          frame ||= requestAnimationFrame(show);
+        }
+      } finally {
+        // The last pieces are on screen before the answer is closed (and a stopped one shows what had come).
+        if (frame) cancelAnimationFrame(frame);
+        show();
       }
       // A failure mid-answer: show it as an error turn, which also keeps it out of the next request's history.
       const failure = raw.split(ERROR_SEP)[1];
@@ -499,6 +512,23 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     const doc = hit && ready.find((f) => f.name === hit.doc);
     if (hit && doc?.serverId) setSource({ serverId: doc.serverId, label: hit.label });
   };
+
+  // Typing re-renders this component on every key. The answers (Markdown, tables) and the document panel are memo()ed
+  // so they don't re-render with it (seen live: the box lagged as answers piled up); for that their handlers must keep
+  // their identity across renders. They call the latest closures through this ref, set before paint (a click right after
+  // an update sees it), and only ever from events: what a bubble shows comes from its props, never from here.
+  const latest = useRef({ send, openSource, toggleDocs, deleteDoc, moveDoc });
+  useLayoutEffect(() => {
+    latest.current = { send, openSource, toggleDocs, deleteDoc, moveDoc };
+  });
+  const editAt = useCallback((i: number, text: string) => void latest.current.send(text, undefined, i), []);
+  const sourceOf = useCallback((chip: string, docName?: string) => latest.current.openSource(chip, docName), []);
+  const toggleStable = useCallback((items: LibItem[], on: boolean) => latest.current.toggleDocs(items, on), []);
+  const deleteStable = useCallback((id: string) => latest.current.deleteDoc(id), []);
+  const moveStable = useCallback((id: string, folder: string) => latest.current.moveDoc(id, folder), []);
+  const openDoc = useCallback((id: string) => setSource({ serverId: id }), []);
+  const closeSource = useCallback(() => setSource(null), []);
+  const pickFiles = useCallback(() => fileInput.current?.click(), []);
 
   // Column headers are the file names as they are: lib/checks checkColumns matches figures to documents by them.
   const compare = (names: string[]) =>
@@ -664,7 +694,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         </ul>
       </nav>
 
-      <LibraryPanel shared={shared} sharedDown={sharedDown} personal={personal} attached={attachedIds} onToggle={toggleDocs} onOpen={(id) => setSource({ serverId: id })} onDelete={deleteDoc} onMove={moveDoc} onUpload={() => fileInput.current?.click()} />
+      <LibraryPanel shared={shared} sharedDown={sharedDown} personal={personal} attached={attachedIds} onToggle={toggleStable} onOpen={openDoc} onDelete={deleteStable} onMove={moveStable} onUpload={pickFiles} />
 
       <details className="group border-t border-line px-3 py-2 text-xs text-muted">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md py-1 hover:text-fg">
@@ -806,7 +836,9 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             <div className="flex-1 overflow-y-auto">
               <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-8">
                 {messages.map((m, i) => (
-                  <Bubble key={i} m={m} fileReady={m.fileOf === undefined || messages[m.fileOf]?.role === "assistant"} live={streaming && i === messages.length - 1} busy={streaming || docsWait} onEdit={(t) => send(t, undefined, i)} onSource={openSource} doc={() => answerDoc(messages, m.fileOf ?? i, current?.title)} />
+                  <Bubble key={i} index={i} m={m} fileReady={m.fileOf === undefined || messages[m.fileOf]?.role === "assistant"} live={streaming && i === messages.length - 1} busy={streaming || docsWait} onEditAt={editAt} onSource={sourceOf}
+                    // What its file is made of, as props (the messages keep their identity, so memo still holds).
+                    answer={messages[m.fileOf ?? i]} asked={askedBefore(messages, m.fileOf ?? i)} title={current?.title} />
                 ))}
                 <div ref={bottomRef} />
               </div>
@@ -831,7 +863,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         )}
       </main>
 
-      {source && <SourcePanel key={`${source.serverId}:${source.label ?? ""}`} serverId={source.serverId} label={source.label} onClose={() => setSource(null)} />}
+      {source && <SourcePanel key={`${source.serverId}:${source.label ?? ""}`} serverId={source.serverId} label={source.label} onClose={closeSource} />}
     </div>
   );
 }
@@ -916,7 +948,45 @@ function SafeLink({ href, children }: { href?: string; children?: ReactNode }) {
 }
 
 /** Right panel (plan §3.1): the extracted text of one document, by page/sheet, scrolled to the cited section. */
-function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: string; onClose: () => void }) {
+/** Beyond this many characters a section shows its start and a button for the rest (a workbook sheet can be thousands of rows). */
+const SECTION_PREVIEW = 12_000;
+const GFM = [remarkGfm];
+
+/**
+ * One section of the source panel, its Markdown rendered once (memo) and, when long, only its start until asked: a whole
+ * workbook drawn as tables at once froze the page, and drawn again on every key typed in the chat box (seen live).
+ */
+const SourceSection = memo(function SourceSection({ s, hit, target }: { s: DocSection; hit: boolean; target?: React.Ref<HTMLElement> }) {
+  const [all, setAll] = useState(hit);
+  const content = useRef<HTMLDivElement>(null);
+  const text = useMemo(() => plainNumbering(s.text), [s.text]);
+  let cut = !all && text.length > SECTION_PREVIEW ? text.lastIndexOf("\n", SECTION_PREVIEW) : -1;
+  // Not between a table's header row and its |---| row: the preview's table keeps its header.
+  if (cut > 0 && /^\s*\|?\s*:?-{3,}/u.test(text.slice(cut + 1, text.indexOf("\n", cut + 1) >>> 0))) cut = text.lastIndexOf("\n", cut - 1);
+  const shown = cut > 0 ? text.slice(0, cut) : text;
+  const more = () => {
+    setAll(true);
+    // The button goes away: keyboard focus stays in this section rather than falling to the page's start.
+    requestAnimationFrame(() => content.current?.focus({ preventScroll: true }));
+  };
+  return (
+    <section ref={target} className={`scroll-mt-4 rounded-lg ${hit ? "bg-accent-soft p-3 ring-1 ring-accent" : ""}`}>
+      {s.label && <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">{s.label}</h3>}
+      {/* pre-line: plain-text documents keep their line breaks */}
+      <div ref={content} tabIndex={-1} className="md whitespace-pre-line text-sm outline-none">
+        <ReactMarkdown remarkPlugins={GFM} components={mdComponents}>{shown}</ReactMarkdown>
+      </div>
+      {cut > 0 && (
+        <button type="button" onClick={more} className="mt-2 text-xs text-accent underline underline-offset-2">
+          Devamını göster ({text.slice(cut + 1).split("\n").length} satır daha)
+        </button>
+      )}
+    </section>
+  );
+});
+
+/** memo: the panel isn't drawn again on every key typed in the chat box. */
+const SourcePanel = memo(function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: string; onClose: () => void }) {
   const [doc, setDoc] = useState<{ name: string; sections: DocSection[] } | "error" | null>(null);
   const target = useRef<HTMLElement>(null);
   const close = useRef<HTMLButtonElement>(null);
@@ -960,22 +1030,14 @@ function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: s
             <p className="text-xs text-muted">Belgeden çıkarılan metin. Tablolar ve taranmış sayfalar orijinalinden farklı görünebilir; kesin değer için asıl belgeye bakın.</p>
             {doc.sections.map((s, i) => {
               const hit = !!label && s.label === label;
-              return (
-                <section key={i} ref={hit ? target : undefined} className={`scroll-mt-4 rounded-lg ${hit ? "bg-accent-soft p-3 ring-1 ring-accent" : ""}`}>
-                  {s.label && <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">{s.label}</h3>}
-                  {/* pre-line: plain-text documents keep their line breaks */}
-                  <div className="md whitespace-pre-line text-sm">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{plainNumbering(s.text)}</ReactMarkdown>
-                  </div>
-                </section>
-              );
+              return <SourceSection key={i} s={s} hit={hit} target={hit ? target : undefined} />;
             })}
           </div>
         )}
       </div>
     </aside>
   );
-}
+});
 
 /** Seconds since `since`, ticking while shown (the wait before the first word). */
 function Elapsed({ since }: { since: number }) {
@@ -1088,14 +1150,12 @@ function Question({ m, busy, onEdit }: { m: Message; busy: boolean; onEdit: (tex
 
 /** What a stored message keeps. */
 const stored = ({ role, content, at, error, meta, timing, files, fileOf, local, gallery }: Message): Message => ({ role, content, ...(gallery ? { gallery } : {}), ...(at ? { at } : {}), ...(error ? { error } : {}), ...(meta ? { meta } : {}), ...(timing ? { timing } : {}), ...(files ? { files } : {}), ...(fileOf !== undefined ? { fileOf } : {}), ...(local ? { local } : {}) });
-const turnFrom = (messages: Message[], i: number) => {
-  const m = messages[i];
-  const question = messages.slice(0, i).findLast((x) => x.role === "user" && !x.local);
+/** The question an answer at `i` replies to: the last one asked before it (not a local note). */
+const askedBefore = (messages: Message[], i: number) => messages.slice(0, i).findLast((x) => x.role === "user" && !x.local);
+const turnForAnswer = (m: Message | undefined, question: Message | undefined) =>
   // What was asked, without the words about the file.
-  return turnOf({ question: question && (exportRequest(question.content)?.rest || question.content), answer: m?.content ?? "", sources: m?.meta?.sources, web: m?.meta?.web, at: question?.at });
-};
-/** One answer as a document. */
-const answerDoc = (messages: Message[], i: number, title?: string): ExportDoc => exportDoc([turnFrom(messages, i)], title);
+  turnOf({ question: question && (exportRequest(question.content)?.rest || question.content), answer: m?.content ?? "", sources: m?.meta?.sources, web: m?.meta?.web, at: question?.at });
+const turnFrom = (messages: Message[], i: number) => turnForAnswer(messages[i], askedBefore(messages, i));
 /** The whole chat as a document: only what was asked and answered. */
 const chatDoc = (messages: Message[], title?: string): ExportDoc =>
   exportDoc(
@@ -1104,7 +1164,11 @@ const chatDoc = (messages: Message[], title?: string): ExportDoc =>
     messages.find((m) => m.role === "user")?.local ? titleFrom(messages.find((m) => m.role === "user" && !m.local)?.content ?? "Sohbet") : (title ?? "Sohbet"),
   );
 
-function Bubble({ m, fileReady, live, busy, onEdit, onSource, doc }: { m: Message; fileReady: boolean; live: boolean; busy: boolean; onEdit: (text: string) => void; onSource: (chip: string, doc?: string) => void; doc: () => ExportDoc }) {
+/** memo: re-rendered only when its own message or state changes, not on every key typed in the box. */
+const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt, onSource, answer, asked, title }: { m: Message; index: number; fileReady: boolean; live: boolean; busy: boolean; onEditAt: (i: number, text: string) => void; onSource: (chip: string, doc?: string) => void; answer?: Message; asked?: Message; title?: string }) {
+  const onEdit = useCallback((text: string) => onEditAt(index, text), [onEditAt, index]);
+  // One answer as a document, from this render's props (the file card's name is made from it while rendering).
+  const doc = useCallback((): ExportDoc => exportDoc([turnForAnswer(answer, asked)], title), [answer, asked, title]);
   // Only links made by linkPages (they carry this nonce) open the source panel.
   const [nonce] = useState(() => crypto.randomUUID().slice(0, 8));
   const pagePlugins = useMemo(() => [remarkGfm, linkPages(m.meta, nonce)], [m.meta, nonce]);
@@ -1168,7 +1232,7 @@ function Bubble({ m, fileReady, live, busy, onEdit, onSource, doc }: { m: Messag
       )}
     </div>
   );
-}
+});
 
 function MetaNotes({ meta, onSource }: { meta: ChatMeta; onSource: (chip: string, doc?: string) => void }) {
   return (

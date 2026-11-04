@@ -3,7 +3,7 @@
 // Side menu's document library: "Ortak belgeler" (the server's shared folder) and "Belgelerim" (the user's own), as
 // folder trees, closed until opened. Nothing here reaches a chat by itself: a tick adds a document (or a folder) to the
 // open chat only.
-import { useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import type { DocMeta } from "@/lib/server";
 import { Check, ChevronRight, File as FileIcon, Folder, FolderInput, Library as LibraryIcon, Plus, Trash2, Upload, Users } from "lucide-react";
 
@@ -125,7 +125,8 @@ function Section({ title, icon, count, children, action }: { title: string; icon
   );
 }
 
-export function LibraryPanel({ shared, sharedDown, personal, attached, onToggle, onOpen, onDelete, onMove, onUpload }: {
+/** memo: the side menu doesn't re-render on every key typed in the chat box. */
+export const LibraryPanel = memo(function LibraryPanel({ shared, sharedDown, personal, attached, onToggle, onOpen, onDelete, onMove, onUpload }: {
   shared: LibItem[]; sharedDown?: boolean; personal: LibItem[]; attached: ReadonlySet<string>;
   onToggle: (items: LibItem[], on: boolean) => void; onOpen: (id: string) => void; onDelete: (id: string) => void; onMove: (id: string, folder: string) => void; onUpload: () => void;
 }) {
@@ -149,4 +150,4 @@ export function LibraryPanel({ shared, sharedDown, personal, attached, onToggle,
       </Section>
     </section>
   );
-}
+});
