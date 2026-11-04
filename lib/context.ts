@@ -206,3 +206,25 @@ export const plainNumbering = (text: string) =>
             .replace(/^("?\d{1,3})\)(?=[ \t])/gm, "$1\\)"),
     )
     .join("");
+
+// ---- documents as data (plan P2) -----------------------------------------------------------------------------------
+type Turn = { role: string; content: string };
+const DOC_TAGS = /<\/?(doküman|bölüm|notlar|belgeler)/giu;
+
+/** One document part as a data block: its text can't open or close a block, its name can't leave the attribute. */
+export const docBlock = (tag: "doküman" | "bölüm" | "notlar", attrs: Record<string, string>, text: string) =>
+  `<${tag} ${Object.entries(attrs).map(([k, v]) => `${k}="${v.replace(/["<>]/g, "")}"`).join(" ")}>\n${text.replace(DOC_TAGS, "< $1")}\n</${tag}>`;
+
+/**
+ * The documents ride with the conversation's first user message, not in the system message: what a document says is
+ * data, the system message holds the only instructions. First, not last: the same documents asked about again keep
+ * the same prefix (the server's prefix cache), as they did in the system message.
+ */
+export function withDocs<T extends Turn>(history: T[], docs: string): T[] {
+  if (!docs) return history;
+  const block = `<belgeler>\n${docs}\n</belgeler>`;
+  const i = history.findIndex((m) => m.role === "user");
+  // No user turn left (a history of answers only): the documents get one of their own rather than being dropped.
+  if (i < 0) return [{ role: "user", content: block } as T, ...history];
+  return history.map((m, j) => (j === i ? { ...m, content: `${block}\n\n${m.content}` } : m));
+}
