@@ -195,6 +195,25 @@ function trExact(v: Q, said: string): string {
   return `${neg ? "-" : ""}${int}${frac ? `,${frac}` : ""}`;
 }
 
+/**
+ * The calculation tool (plan P6, lib/lookup): an expression the model builds from the document's figures, worked exactly.
+ * Every operand must be one the document states (`stated`: sourceNumbers keys): a tool result is a derived figure, and
+ * one made from an invented operand would launder it. Returns the result as the answer would write it, or why not.
+ */
+export function calculate(expr: string, stated: Set<string>): { result: string } | { error: string } {
+  const plain = expr.replace(/[−‒]/gu, "-").replace(/[·⋅]/gu, "×").trim();
+  if (plain.length > MAX_LINE) return { error: "İfade çok uzun." };
+  const t = tokens(plain);
+  const v = t && evaluate(t.toks);
+  if (!t || !v) return { error: "İfade okunamadı. Yalnızca sayılar, + - × / ve parantez kullanın (ör. 1.200.000 + 350.500)." };
+  if (!v.d) return { error: "Sıfıra bölme: sonuç yok." };
+  // A percentage's 100 is a scale, not a figure of the document ("(a - b) / b × 100").
+  const scale = percentFactor(t.toks) ?? [];
+  const missing = t.operands.filter((o, k) => !scale.includes(k) && !stated.has(key(o)));
+  if (missing.length) return { error: `Belgede olmayan sayılar: ${[...new Set(missing)].join(", ")}. Yalnızca belgede yazan sayılarla hesap yapılır.` };
+  return { result: trExact(v, "0,0000") };
+}
+
 /** Every written-out calculation in the answer, worked again. */
 export function findCalcs(answer: string): Calc[] {
   const out: Calc[] = [];

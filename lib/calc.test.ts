@@ -230,3 +230,15 @@ test("findCalcs: a long line of figures doesn't hang", () => {
   findCalcs(`${line} = `);
   assert.ok(Date.now() - t0 < 500, `${Date.now() - t0} ms`);
 });
+
+test("calculate (P6 tool): exact, operands from the document only, the percentage's 100 a scale", async () => {
+  const { calculate } = await import("./calc.ts");
+  const stated = sourceNumbers("Personel 1.200.000, yatırım 350.500, önceki yıl 1.200 ve bu yıl 1.500");
+  assert.deepEqual(calculate("1.200.000 + 350.500", stated), { result: "1.550.500" });
+  assert.deepEqual(calculate("(1.500 - 1.200) / 1.200 × 100", stated), { result: "25" });
+  assert.deepEqual(calculate("1.500 / 1.200", stated), { result: "1,25" });
+  assert.match((calculate("1.500 × 3", stated) as { error: string }).error, /Belgede olmayan sayılar: 3/);
+  assert.match((calculate("1.500 / (1.200 - 1.200)", stated) as { error: string }).error, /Sıfıra bölme/);
+  assert.ok("error" in calculate("rm -rf /", stated));
+  assert.ok("error" in calculate("1.500 +", stated));
+});

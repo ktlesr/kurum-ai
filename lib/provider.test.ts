@@ -104,6 +104,34 @@ test("json: the server is told the answer is a JSON object (vLLM response_format
   assert.equal(seen.at(-1)!.body.format, undefined);
 });
 
+test("openai (vLLM): tools offered, streamed calls reassembled, calls and results sent back", async () => {
+  routes["/v1/chat/completions"] = send([
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"belgede_ara","arguments":"{\\"sor"}}]}}]}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"gu\\":\\"x\\"}"}}]}}]}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"c2","function":{"name":"hesapla","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n',
+  ]);
+  const p = makeProvider("openai", base + "/v1", { numCtx: 1 });
+  const tools = [{ name: "belgede_ara", description: "d", parameters: { type: "object" } }];
+  const r = await p.chat({
+    model: "gemma4-26b", maxTokens: 9, signal, tools,
+    messages: [
+      { role: "assistant", content: "", toolCalls: [{ id: "c0", name: "bolum_oku", arguments: "{}" }] },
+      { role: "tool", toolCallId: "c0", content: "metin" },
+    ],
+  });
+  assert.deepEqual(r.toolCalls, [{ id: "c1", name: "belgede_ara", arguments: '{"sorgu":"x"}' }, { id: "c2", name: "hesapla", arguments: "{}" }]);
+  const body = seen.at(-1)!.body as Record<string, unknown> & { messages: unknown[] };
+  assert.deepEqual(body.tools, [{ type: "function", function: tools[0] }]);
+  assert.equal(body.tool_choice, "auto");
+  assert.deepEqual(body.messages, [
+    { role: "assistant", content: null, tool_calls: [{ id: "c0", type: "function", function: { name: "bolum_oku", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "c0", content: "metin" },
+  ]);
+  routes["/v1/chat/completions"] = send(["data: [DONE]\n\n"]);
+  await p.chat({ model: "m", messages: [], maxTokens: 1, signal });
+  assert.equal(seen.at(-1)!.body.tools, undefined, "only when offered");
+});
+
 test("openai (vLLM): embeddings keep input order, models, http errors", async () => {
   routes["/v1/embeddings"] = send([JSON.stringify({ data: [{ index: 1, embedding: [2] }, { index: 0, embedding: [1] }] })]);
   routes["/v1/models"] = send([JSON.stringify({ data: [{ id: "m1" }, { id: "m2" }] })]);

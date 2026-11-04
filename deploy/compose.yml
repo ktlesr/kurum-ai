@@ -42,6 +42,8 @@ services:
       # gemma4's sliding-window attention keeps 128k cheap (README); 16k made every 30-page document a section scan.
       # Same value as vLLM's --max-model-len below.
       NUM_CTX: ${NUM_CTX:-131072}
+      # "off": no tool calls (plan P6). On by default; a server that refuses tools turns them off by itself.
+      TOOL_CALLING: ${TOOL_CALLING:-on}
       # Linked pages (admin page → Bağlantıdan okuma) open in the "browser" container; its only way out is the
       # app's guard proxy at WEB_PROXY_URL. WEB_BROWSER=off: pages are read without running their scripts.
       WEB_BROWSER: ${WEB_BROWSER:-ws://browser:3100/kai}
@@ -122,6 +124,12 @@ services:
       # (no flag given twice), so the server runs as without them; an empty argument would be a second model path.
       - ${VLLM_EXTRA_ARG_1:---dtype=auto}
       - ${VLLM_EXTRA_ARG_2:---load-format=auto}
+      # Tool calling (plan P6: the chat's second look into the documents, lib/lookup). The template ships in NVIDIA's
+      # image at this path (26.09); it also keeps enable_thinking. To turn it off, set all three to
+      # --enable-prefix-caching (a flag already given) and TOOL_CALLING=off on the app.
+      - ${VLLM_TOOL_ARG_1:---enable-auto-tool-choice}
+      - ${VLLM_TOOL_ARG_2:---tool-call-parser=gemma4}
+      - ${VLLM_TOOL_ARG_3:---chat-template=/opt/vllm/vllm-src/examples/tool_chat_template_gemma4.jinja}
     environment:
       # Not ":?": compose interpolates every service, profile or not, so a required key would break the GPU-less
       # deploy. Unset = no key on vLLM; it's still reachable only inside this stack. Set it (README).

@@ -7,16 +7,16 @@ import { isSharedId, sharedDoc, sharedFor, type SharedEntry } from "@/lib/librar
 import { PICK_PROMPT, matchByName, parsePicked, wantsSources, type SourceEntry } from "@/lib/sources";
 import { parseFile, parsePdf, UserError } from "@/lib/parse";
 import { withJobDir } from "@/lib/workspace";
-import type { Msg, Provider } from "@/lib/provider";
+import type { Msg, Provider, ToolCall, ToolDef } from "@/lib/provider";
 import { modelConfig, NUM_CTX, providerOf } from "@/lib/model-config";
 import { parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
-import { answerFor, askedWith, questionFits, contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, fitHistory, META_SEP, STATUS_SEP, withDocs, type ChatMeta } from "@/lib/context";
+import { answerFor, askedWith, questionFits, reservedFor, contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, historyWithin, META_SEP, STATUS_SEP, withDocs, type ChatMeta } from "@/lib/context";
 import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
-import { findCalcs, stillUnverified } from "@/lib/calc";
+import { findCalcs, sourceNumbers, stillUnverified } from "@/lib/calc";
 import { parseReading, rowsNamed } from "@/lib/sheet-focus";
 import { isProvince, knownTerms } from "@/lib/regions";
 import { retrieve, TOP_K, windows } from "@/lib/rag";
@@ -24,6 +24,7 @@ import { getSetting } from "@/lib/db";
 import { findUrls, MAX_CHARS_TOTAL, onSite, parsePick, siteOf, WebError, webReason, type Page } from "@/lib/web";
 import { readWeb } from "@/lib/browser";
 import { gatePolicy, parseGate, quoteInDocs } from "@/lib/evidence";
+import { answerWithCalc, lookup, LOOKUP, LOOKUP_TOKENS, outline, seenKey, TOOLS } from "@/lib/lookup";
 import { isClearNo, parseRelevant, parseSearchQuery, passage, aboutTheDocument, safeQuery, saysNotWritten, searchWeb } from "@/lib/websearch";
 
 export const runtime = "nodejs";
@@ -180,6 +181,15 @@ class Looping extends Error {}
 /** The latest message alone doesn't fit beside the answer, the instructions and the documents of this call. */
 class TooLong extends Error {}
 
+/**
+ * Tool calling (plan P6) on an OpenAI-compatible server (vLLM with --enable-auto-tool-choice --tool-call-parser gemma4);
+ * TOOL_CALLING=off turns it off. A server that refuses tools turns it off until the app restarts.
+ */
+let toolsRefused = false;
+const toolsOn = (chat: Provider) => chat.kind === "openai" && process.env.TOOL_CALLING !== "off" && !toolsRefused;
+/** Found text the second look may add, at most (a long look delays the answer). */
+const MAX_LOOKUP_CHARS = 40_000;
+
 /** One model call (lib/provider). onText gets answer pieces, onThinking the running count of reasoning chunks. */
 async function streamChatUnqueued(
   chat: Provider,
@@ -190,12 +200,14 @@ async function streamChatUnqueued(
   onText: (piece: string) => void = () => {},
   onThinking: (n: number) => void = () => {},
   numPredict?: number,
+  /** Tools offered on this call (plan P6); the calls the model made go to onCalls. */
+  extra: { tools?: ToolDef[]; onCalls?: (calls: ToolCall[]) => void } = {},
 ): Promise<string> {
   // A looping model is stopped here: it would otherwise hold the GPU up to the length cap.
   const stop = new AbortController();
   let sofar = "";
   const r = await chat.chat({
-    model, messages, think, maxTokens: numPredict ?? MAX_ANSWER, signal: AbortSignal.any([signal, stop.signal]), onThinking,
+    model, messages, think, maxTokens: numPredict ?? MAX_ANSWER, signal: AbortSignal.any([signal, stop.signal]), onThinking, tools: extra.tools,
     onText: (piece) => {
       sofar += piece;
       if (isLooping(sofar)) {
@@ -205,6 +217,7 @@ async function streamChatUnqueued(
       onText(piece);
     },
   });
+  if (r.toolCalls?.length) extra.onCalls?.(r.toolCalls);
   if (r.truncated && r.text && !numPredict) onText("\n\n…(cevap uzunluk sınırında kesildi)");
   if (r.promptTokens) recordTokens(model, messages.reduce((n, m) => n + m.content.length, 0), r.promptTokens);
   return r.text;
@@ -244,15 +257,11 @@ export async function POST(req: Request) {
   const signal = req.signal; // Esc in the UI aborts generation on the model server too
   // The conversation as far back as fits beside the instructions, documents and pages of this call, and the answer
   // (plan P5): newest first, the latest question always. Was the last 8 messages whatever their length.
-  const historyFor = (fixed: string[]) => {
-    const cpt = cptFor(model);
-    // Tokens, digits counted as such (cptOf): a history of figures takes about twice what its length suggests.
-    const tokensOf = (s: string) => s.length / cptOf([s], cpt);
-    const used = fixed.reduce((n, s) => n + tokensOf(s), 0);
-    const room = Math.max(0, NUM_CTX - MAX_ANSWER - 512 - used);
-    // fitHistory always keeps the question; one that can't fit on its own would overflow the model: said plainly instead.
-    if (tokensOf(messages.at(-1)?.content ?? "") > room) throw new TooLong();
-    return fitHistory(messages, room, 40, tokensOf);
+  const historyFor = (fixed: string[], o: { answer?: number; extraTokens?: number } = {}) => {
+    const h = historyWithin(messages, { numCtx: NUM_CTX, answer: o.answer ?? MAX_ANSWER, fixed, extraTokens: o.extraTokens, charsPerToken: cptFor(model) });
+    // The question can't fit on its own: said plainly instead of overflowing the model.
+    if (!h) throw new TooLong();
+    return h;
   };
   const question = askedWith(messages);
   // Only the latest question's links: earlier ones were read when they were asked.
@@ -481,6 +490,8 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         if (meaning) console.info(`question reading: ${names.length} names`);
         const sizeOf = (docs: Doc[]) => contextRatio(docs.reduce((n, d) => n + d.text.length, 0) + web.length, NUM_CTX, cptOf([...docs.map((d) => d.text), web], cptFor(model)));
         let fits = sizeOf(selected) >= 1;
+        /** The search chunks in front of the model (lib/lookup seenKey): the second look (P6) doesn't fetch them again. */
+        const seen = new Set<string>();
         // Too big to read whole, and the question is about named things: of a workbook, every row naming them (code, not
         // a keyword pick of a few chunks). Used when that fits; otherwise the search below, with the names in its query.
         let read = selected;
@@ -534,6 +545,60 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             }
             hint = `\n\nBelgeler bloğunda dokümanın soruyla en ilgili ${TOP_K} bölümü var; dokümanın tamamı değil.`;
             context = chunks.map((c) => docBlock("bölüm", { doküman: c.doc, konum: c.label }, c.text)).join("\n\n");
+            for (const c of chunks) seen.add(seenKey(c.doc, c.text));
+          }
+        }
+        // Plan P6: the first search's sections or a long document's notes may miss what the question needs. A second look
+        // through read-only tools (lib/lookup) adds what it finds to the documents block; everything after works on it
+        // as before. Only where the documents weren't read whole, only on a model server that takes tools.
+        let toolCalcs: string[] = [];
+        if (!fits && toolsOn(chat) && selected.some((d) => d.text.trim())) {
+          // In tokens, digits one each (cptOf): what the documents' share of the context still holds beside what is
+          // already in it. Found text, the tools' answers and the model's calls all come out of it (lib/lookup size).
+          const cpt = cptFor(model);
+          const tok = (s: string) => s.length / cptOf([s], cpt);
+          const room = Math.min(MAX_LOOKUP_CHARS / cpt, NUM_CTX - reservedFor(NUM_CTX) - tok(context) - tok(web));
+          if (room >= 700) {
+            status("Belgede eksik bilgi aranıyor…");
+            const sys = `${LOOKUP}${hint}${meaning}\n\n${DOCS}`;
+            // File and sheet names are the documents' own text: with them, in the data block, never in the instructions.
+            const docs = `${docBlock("bölüm", { konum: "Belgelerin bölümleri (bolum_oku için)" }, outline(selected))}\n\n${context}`;
+            // Its answer is a few tool calls, not MAX_ANSWER; what the tools add is counted at the documents' own rate.
+            let history: Msg[] | null = null;
+            try {
+              // + one step's calls and notes that may land after the last check of the room.
+              history = historyFor([sys, docs, web], { answer: LOOKUP_TOKENS, extraTokens: room + LOOKUP_TOKENS + 512 });
+            } catch (e) {
+              if (!(e instanceof TooLong)) throw e; // the question fits the answer call, just not beside a second look
+            }
+            const found = !history ? null : await lookup([{ role: "system", content: sys }, ...withDocs(history, docs)], {
+              docs: selected, seen, room, size: tok, status, aborted: () => signal.aborted,
+              search: async (q) => (await retrieve(selected, q, signal)).chunks,
+              ask: (m) => admission.model.run(async () => {
+                try {
+                  return await chat.chat({ model, messages: m, maxTokens: LOOKUP_TOKENS, signal, tools: TOOLS });
+                } catch (e) {
+                  // Served without --enable-auto-tool-choice: vLLM refuses the request. Tools off until a restart.
+                  if (!signal.aborted && e instanceof Error && e.message === "model_http_400") toolsRefused = true;
+                  if (!signal.aborted) logError("lookup", e);
+                  throw e;
+                }
+              }, signal),
+            });
+            if (found) console.info(`lookup: ${found.stop}, ${found.blocks.length} sections, ${found.calcs.length} calcs`);
+            if (found?.blocks.length) {
+              context += `\n\n${found.blocks.join("\n\n")}`;
+              meta.sources = [...new Set([...meta.sources, ...found.sources.map((s) => (selected.length > 1 ? `${s.doc} · ${s.label}` : s.label))])];
+              hint += "\n\nİlk aramadan sonra eksik bilgi için ek bölümler okundu; onlar da belgeler bloğunda.";
+            }
+            if (found?.calcs.length) {
+              toolCalcs = found.calcs;
+              hint += `\n\nBelgedeki sayılarla araçla yapılmış kesin hesaplar:\n${found.calcs.join("\n")}\nBu sonuçları kullan; cevapta işlemi bu haliyle yaz ve "hesaplanan" de.`;
+            }
+            // Stopped by a bound, not because the model had what it needed: the answer may rest on less than it looked for.
+            if (found?.stop === "limit" || found?.stop === "room") {
+              meta.note = [meta.note, "Ek belge araması sınırına ulaştı; cevap o ana kadar okunan bölümlere dayanıyor."].filter(Boolean).join(" ");
+            }
           }
         }
         // One specific fact, and no sentence in the documents states it: no answer is written, so none can fill the gap
@@ -569,15 +634,49 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           if (think) status("Düşünüyor…");
           // Said softly: a misread request still has the documents in front of the model and may use them.
           const plain = general ? "\n\nSon istek dokümanlarla ilgili görünmüyor: normal bir asistan gibi cevap ver; gerekmedikçe dokümanlardan söz etme, \"Belgede yok\" deme." : "";
-          const final: Msg[] = [{ role: "system", content: `${SYSTEM}${hint}${meaning}${plain}${rule}\n\n${DOCS}` }, ...withWeb(withDocs(historyFor([SYSTEM, hint, meaning, plain, rule, DOCS, context, web]), context))];
-          answer = await streamChat(chat, model, final, think, signal, send, (n) => {
-            // Keeps the connection busy and shows the wait isn't stuck.
-            if (n % 50 === 0) status("Düşünüyor…"); // also keeps the connection busy
+          // The calculation tool on the answer call itself (plan P6, lib/lookup answerWithCalc): sums, differences and
+          // ratios of the documents' figures worked exactly in code, whether the documents were read whole or not. Each
+          // round is budgeted again: the exchange so far goes beside the documents, the conversation gives way to it.
+          let stated: Set<string> | undefined;
+          const r = await answerWithCalc({
+            build: (exchange, note) => {
+              const spent = exchange.map((m) => m.content + (m.toolCalls ?? []).map((c) => c.name + c.arguments).join(""));
+              try {
+                return [{ role: "system", content: `${SYSTEM}${hint}${meaning}${plain}${rule}${note}\n\n${DOCS}` }, ...withWeb(withDocs(historyFor([SYSTEM, hint, meaning, plain, rule, note, DOCS, context, web, ...spent]), context)), ...exchange];
+              } catch (e) {
+                if (e instanceof TooLong) return null;
+                throw e;
+              }
+            },
+            call: async (m, tools) => {
+              let calls: ToolCall[] = [];
+              const text = await streamChat(chat, model, m, think, signal, send, (n) => {
+                // Keeps the connection busy and shows the wait isn't stuck.
+                if (n % 50 === 0) status("Düşünüyor…");
+              }, undefined, { tools, onCalls: (c) => (calls = c) });
+              return { text, calls };
+            },
+            toolsOn: () => toolsOn(chat),
+            // Served without --enable-auto-tool-choice: vLLM refuses the request. Tools off until a restart.
+            refused: (e) => {
+              if (signal.aborted || !(e instanceof Error) || e.message !== "model_http_400") return false;
+              toolsRefused = true;
+              logError("tools", e);
+              return true;
+            },
+            stated: () => (stated ??= sourceNumbers(selected.map((d) => d.text).join("\n"))),
+            tooLong: () => {
+              throw new TooLong();
+            },
+            status,
           });
+          answer = r.text;
+          toolCalcs.push(...r.calcs);
         }
 
         // Numbers the user typed count as known too (not earlier answers — they may be the hallucination).
-        const source = [...selected.map((d) => d.text), ...pages.map((p) => p.text), ...messages.filter((m) => m.role === "user").map((m) => m.content)].join("\n");
+        // The tool's calculations too: worked exactly from figures the documents state (lib/calc calculate).
+        const source = [...selected.map((d) => d.text), ...pages.map((p) => p.text), ...messages.filter((m) => m.role === "user").map((m) => m.content), ...toolCalcs].join("\n");
         // A request that isn't about the documents (a translation, an e-mail) has nothing to check against them: its
         // figures and sentences would all read "not in the source".
         if (!general) {

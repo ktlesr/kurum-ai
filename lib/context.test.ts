@@ -140,3 +140,29 @@ test("documents as data: blocks can't be broken out of; they ride with the first
   assert.equal(lone[0].role, "user");
   assert.match(lone[0].content, /^<belgeler>\n<doküman[\s\S]*<\/belgeler>$/);
 });
+
+test("historyWithin: tokens of the call's own answer; tool room at the documents' rate; null only when the question can't fit", async () => {
+  const { historyWithin, contextBudget } = await import("./context.ts");
+  // Review case: 16k context, ~9.000 characters of prose documents, the rest of the document budget kept for tools.
+  const context = "belge metni ".repeat(750);
+  const room = contextBudget(16384, 2.9) - context.length;
+  const q = [{ role: "user", content: "Toplam ne kadar?" }];
+  const lookupCall = historyWithin(q, { numCtx: 16384, answer: 512, fixed: [context], extraTokens: room / 2.9, charsPerToken: 2.9 });
+  assert.deepEqual(lookupCall, q, "a short question fits beside a second look");
+  // The same found text counted as digits (one token each) would have refused it.
+  assert.equal(historyWithin(q, { numCtx: 16384, answer: 4096, fixed: [context], extraTokens: room, charsPerToken: 2.9 }), null);
+  const long = [{ role: "user", content: "1".repeat(20_000) }];
+  assert.equal(historyWithin(long, { numCtx: 16384, answer: 4096, fixed: [], charsPerToken: 2.9 }), null);
+});
+
+test("historyWithin: each tool round counts what it added; older turns give way, then the round can't go on", async () => {
+  const { historyWithin } = await import("./context.ts");
+  const turn = (role: string, n: number) => ({ role, content: "söz ".repeat(n) });
+  const conv = [turn("user", 1000), turn("assistant", 1000), turn("user", 10)];
+  const o = { numCtx: 8192, answer: 4096, charsPerToken: 4 };
+  assert.equal(historyWithin(conv, { ...o, fixed: ["x".repeat(4000)] })?.length, 3);
+  // A round's calls and results (as the route passes them in `fixed`) push the earlier turns out, the question stays.
+  assert.equal(historyWithin(conv, { ...o, fixed: ["x".repeat(4000), "1".repeat(1600)] })?.length, 1);
+  // Past the room: null, and the route ends the rounds with the answer so far.
+  assert.equal(historyWithin(conv, { ...o, fixed: ["x".repeat(4000), "1".repeat(3500)] }), null);
+});

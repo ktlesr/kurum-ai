@@ -4,7 +4,15 @@
 import { DEFAULT_CHARS_PER_TOKEN } from "./context.ts";
 import type { ProviderKind } from "./models";
 export type { ProviderKind };
-export type Msg = { role: "system" | "user" | "assistant"; content: string; images?: string[] };
+/** A call the model asked for (OpenAI tool_calls); `arguments` is the model's JSON text, parsed by the caller. */
+export type ToolCall = { id: string; name: string; arguments: string };
+/** A tool offered to the model: JSON Schema parameters. */
+export type ToolDef = { name: string; description: string; parameters: object };
+export type Msg = {
+  role: "system" | "user" | "assistant" | "tool"; content: string; images?: string[];
+  /** assistant: the calls it made; tool: which call this answers. */
+  toolCalls?: ToolCall[]; toolCallId?: string;
+};
 
 export interface ChatOpts {
   model: string;
@@ -17,6 +25,8 @@ export interface ChatOpts {
   onThinking?: (n: number) => void;
   /** The answer is a JSON object: the server constrains the output to valid JSON (vLLM response_format, Ollama format). */
   json?: boolean;
+  /** Tools the model may call (vLLM with --enable-auto-tool-choice); the calls come back in ChatResult.toolCalls. */
+  tools?: ToolDef[];
 }
 
 export interface ChatResult {
@@ -26,6 +36,7 @@ export interface ChatResult {
   promptTokens?: number;
   /** Generated tokens, reasoning included. */
   outputTokens?: number;
+  toolCalls?: ToolCall[];
 }
 
 export interface Provider {
@@ -123,12 +134,16 @@ const mimeOf = (b64: string) => (b64.startsWith("/9j/") ? "image/jpeg" : b64.sta
 function openai(base: string, apiKey: string | undefined): Provider {
   const headers = { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) };
   const toWire = (m: Msg) =>
-    m.images?.length
+    m.role === "tool"
+      ? { role: "tool", tool_call_id: m.toolCallId, content: m.content }
+      : m.toolCalls?.length
+      ? { role: "assistant", content: m.content || null, tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: c.arguments } })) }
+      : m.images?.length
       ? { role: m.role, content: [{ type: "text", text: m.content }, ...m.images.map((b64) => ({ type: "image_url", image_url: { url: `data:${mimeOf(b64)};base64,${b64}` } }))] }
       : { role: m.role, content: m.content };
   return {
     kind: "openai",
-    async chat({ model, messages, think = false, maxTokens, signal, onText, onThinking, json }) {
+    async chat({ model, messages, think = false, maxTokens, signal, onText, onThinking, json, tools }) {
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
         signal,
@@ -144,6 +159,7 @@ function openai(base: string, apiKey: string | undefined): Provider {
           chat_template_kwargs: { enable_thinking: think },
           ...(isGptOss(model) ? { reasoning_effort: effort(think) } : {}),
           ...(json ? { response_format: { type: "json_object" } } : {}),
+          ...(tools?.length ? { tools: tools.map((t) => ({ type: "function", function: t })), tool_choice: "auto" } : {}),
         }),
       });
       if (!res.ok || !res.body) throw new Error(`model_http_${res.status}`);
@@ -154,7 +170,13 @@ function openai(base: string, apiKey: string | undefined): Provider {
         if (!data || data === "[DONE]" || line.trim().startsWith(":")) return;
         const j = JSON.parse(data) as {
           error?: unknown;
-          choices?: { delta?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null }; finish_reason?: string | null }[];
+          choices?: {
+            delta?: {
+              content?: string | null; reasoning_content?: string | null; reasoning?: string | null;
+              tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
+            };
+            finish_reason?: string | null;
+          }[];
           usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
         };
         if (j.error) throw new Error("model_stream_error");
@@ -164,10 +186,20 @@ function openai(base: string, apiKey: string | undefined): Provider {
           out.text += c.delta.content;
           onText?.(c.delta.content);
         }
+        // A call streams in pieces under its index: the id and name first, the arguments' JSON text in parts.
+        for (const t of c?.delta?.tool_calls ?? []) {
+          const k = t.index ?? 0;
+          const call = ((out.toolCalls ??= [])[k] ??= { id: "", name: "", arguments: "" });
+          if (t.id) call.id = t.id;
+          if (t.function?.name) call.name += t.function.name;
+          if (t.function?.arguments) call.arguments += t.function.arguments;
+        }
         if (c?.finish_reason === "length") out.truncated = true;
         if (j.usage?.prompt_tokens) out.promptTokens = j.usage.prompt_tokens;
         if (j.usage?.completion_tokens) out.outputTokens = j.usage.completion_tokens;
       });
+      // An index the server skipped leaves a hole; a call without a name can't be run.
+      if (out.toolCalls) out.toolCalls = out.toolCalls.filter((c) => c?.name);
       return out;
     },
     async embed(model, input, signal) {

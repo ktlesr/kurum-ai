@@ -186,6 +186,8 @@ Sohbet ve tablo okuma aynı stack'teki `vllm` servisinden gelir (NGC `nvcr.io/nv
 | `VLLM_DRAFT_MODEL` | — | Hızlandırma (speculative decoding) için küçük taslak model; `models` servisi bunu da indirir |
 | `VLLM_SPECULATIVE_CONFIG` | — (kapalı) | vLLM `--speculative-config` JSON'u. Boş: hızlandırma yok |
 | `VLLM_EXTRA_ARG_1`, `VLLM_EXTRA_ARG_2` | — | Model karşılaştırması için birer ek vLLM parametresi, `--ad=değer` biçiminde. Boş: davranış değişmez |
+| `TOOL_CALLING` | `on` | `off`: sohbet belgeye araçla ikinci bakış yapmaz (ek arama, bölüm okuma, kesin hesap). Araç kabul etmeyen sunucuda kendiliğinden kapanır |
+| `VLLM_TOOL_ARG_1`..`3` | araç çağırma bayrakları | vLLM'in `gemma4` araç ayrıştırıcısı ve şablonu. Kapatmak için üçünü de `--enable-prefix-caching` yapın ve `TOOL_CALLING=off` |
 
 **Model karşılaştırması (plan P1).** Aynı altın sette sırayla ölçün. Her satır bir deploy; ölçümden sonra bir sonrakine geçin. Kalite, yerel modelin gerçek sınırı mı yoksa sıkıştırma mı, buradan anlaşılır:
 

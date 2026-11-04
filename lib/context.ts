@@ -52,6 +52,22 @@ export function fitHistory<T extends { content: string }>(messages: T[], room: n
 }
 
 /**
+ * fitHistory in tokens for one model call: what's left of numCtx after its answer (`answer` tokens), a margin, the
+ * `fixed` texts (instructions, documents) and `extraTokens` (what tools may add to the call). Digits count as tokens
+ * (cptOf). null when the latest message can't fit on its own.
+ */
+export function historyWithin<T extends { content: string }>(
+  messages: T[],
+  o: { numCtx: number; answer: number; fixed: string[]; extraTokens?: number; charsPerToken: number },
+): T[] | null {
+  const tokensOf = (s: string) => s.length / cptOf([s], o.charsPerToken);
+  const used = o.fixed.reduce((n, s) => n + tokensOf(s), 0);
+  const room = Math.max(0, o.numCtx - o.answer - 512 - used - (o.extraTokens ?? 0));
+  if (tokensOf(messages.at(-1)?.content ?? "") > room) return null;
+  return fitHistory(messages, room, 40, tokensOf);
+}
+
+/**
  * Chars per token for these texts. The measured rate is for prose; the served models (gemma, gpt-oss) split numbers
  * into single digits (gpt-oss up to 3), so each digit counts as a token: a spreadsheet of figures takes about twice the
  * tokens its length suggests, and a window sized for prose overflows the model.
