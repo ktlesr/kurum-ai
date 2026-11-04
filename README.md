@@ -185,6 +185,25 @@ Sohbet ve tablo okuma aynı stack'teki `vllm` servisinden gelir (NGC `nvcr.io/nv
 | `NUM_CTX` | `131072` | Bağlam uzunluğu; vLLM `--max-model-len` ile aynı |
 | `VLLM_DRAFT_MODEL` | — | Hızlandırma (speculative decoding) için küçük taslak model; `models` servisi bunu da indirir |
 | `VLLM_SPECULATIVE_CONFIG` | — (kapalı) | vLLM `--speculative-config` JSON'u. Boş: hızlandırma yok |
+| `VLLM_EXTRA_ARG_1`, `VLLM_EXTRA_ARG_2` | — | Model karşılaştırması için birer ek vLLM parametresi, `--ad=değer` biçiminde. Boş: davranış değişmez |
+
+**Model karşılaştırması (plan P1).** Aynı altın sette sırayla ölçün. Her satır bir deploy; ölçümden sonra bir sonrakine geçin. Kalite, yerel modelin gerçek sınırı mı yoksa sıkıştırma mı, buradan anlaşılır:
+
+| Deneme | Environment | Not |
+|---|---|---|
+| A (şimdiki) | — | NVFP4, ~17 GB |
+| B | `VLLM_MODEL=google/gemma-4-26B-A4B-it`<br>`VLLM_EXTRA_ARG_1=--quantization=int8_per_channel_weight_only` | vLLM tarifinin bu model için önerdiği; ~52 GB indirilir, yükleme belleği `VLLM_GPU_MEMORY_UTILIZATION`'ı aşarsa 0.6'ya çıkarın |
+| C | `VLLM_MODEL=google/gemma-4-31B-it`<br>`VLLM_EXTRA_ARG_1=--quantization=fp8`<br>`VLLM_MODEL_NAME=gemma4-31b` | Dense; uzun bağlam ve akıl yürütmede daha güçlü, belirgin yavaş. `ALLOWED_MODELS` ve `DEFAULT_MODEL` de bu ada |
+
+Her denemede, uygulama adresi ve bir değerlendirme kullanıcısıyla:
+
+```
+node scripts/eval-golden.mjs D:/altin-set
+node scripts/eval-golden.mjs D:/altin-set --profile deep
+node scripts/eval-golden.mjs D:/altin-set --think
+```
+
+Rapor `_golden/report-<tarih>.md` dosyasına yazılır: doğruluk, ret doğruluğu ve soru başına süre. Geri dönmek için eklenen satırları silip yeniden deploy edin.
 
 **Hızlandırma (MTP, deneysel).** Küçük bir taslak model birkaç sonraki kelimeyi tahmin eder, ana model hepsini tek adımda doğrular; kalite kaybı hedeflenmez. Bir kullanıcının DGX Spark'ta (NVIDIA forumu, nvidia NVFP4 + bu taslak model, 4 token) ölçtüğü hız artışı ~1,9–2,3 kat; bu kurulumda ölçülmedi ve Google'a göre 26B-A4B'de bazı koşullarda kazanç olmayabilir. Açmak için Environment'a:
 

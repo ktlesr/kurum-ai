@@ -117,6 +117,11 @@ services:
       # Speculative decoding (README → vLLM): a small drafter proposes tokens the model checks in one step. Empty
       # (default) means off: vLLM reads "" as no config.
       - --speculative-config=${VLLM_SPECULATIVE_CONFIG:-}
+      # Two free slots for model comparisons (docs/audits/LOCAL_ASSISTANT_PLAN.md P1), one "--flag=value" each, e.g.
+      # VLLM_EXTRA_ARG_1=--quantization=int8_per_channel_weight_only. Unset, each states one of vLLM's own defaults
+      # (no flag given twice), so the server runs as without them; an empty argument would be a second model path.
+      - ${VLLM_EXTRA_ARG_1:---dtype=auto}
+      - ${VLLM_EXTRA_ARG_2:---load-format=auto}
     environment:
       # Not ":?": compose interpolates every service, profile or not, so a required key would break the GPU-less
       # deploy. Unset = no key on vLLM; it's still reachable only inside this stack. Set it (README).
