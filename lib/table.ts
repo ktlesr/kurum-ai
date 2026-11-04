@@ -78,7 +78,17 @@ const MAX_ROWS = 200;
  * Without: the rows themselves (`sutunlar` of them), at most MAX_ROWS. The answer says what was asked and how many rows
  * matched; `numbers` are the sums (figures derived from the document, for the number check).
  */
-export function runQuery(tables: Table[], q: Query): { text: string; numbers: string[] } | { error: string } {
+export interface QueryResult {
+  /** What the model reads: the request echoed, then the result. */
+  text: string;
+  /** The result table alone (the document's cells and column names, the code's sums): no echo of the model's words. */
+  table: string;
+  /** The sheet as the workbook names it. */
+  sheet: string;
+  numbers: string[];
+}
+
+export function runQuery(tables: Table[], q: Query): QueryResult | { error: string } {
   const t = tables.find((x) => low(x.sheet) === low(q.sayfa ?? ""));
   if (!t) return { error: `"${q.sayfa ?? ""}" adında sayfa yok. Sayfalar: ${tables.map((x) => x.sheet).join(", ")}` };
   const col = (name: string) => t.columns.findIndex((c) => low(c) === low(name));
@@ -103,7 +113,8 @@ export function runQuery(tables: Table[], q: Query): { text: string; numbers: st
     const show = q.sutunlar?.length ? q.sutunlar.map(col) : t.columns.map((_, k) => k);
     const rows = hits.slice(0, MAX_ROWS).map((r) => show.map((k) => r[k]));
     const cut = hits.length > MAX_ROWS ? `\n…(ilk ${MAX_ROWS} satır; daha dar bir filtre ya da topla kullanın)` : "";
-    return { text: `${head}\n\n${md(show.map((k) => t.columns[k]), rows)}${cut}`, numbers: [] };
+    const table = md(show.map((k) => t.columns[k]), rows);
+    return { text: `${head}\n\n${table}${cut}`, table, sheet: t.sheet, numbers: [] };
   }
   const sums = q.topla.map(col);
   const keys = (q.grupla ?? []).map(col);
@@ -137,5 +148,6 @@ export function runQuery(tables: Table[], q: Query): { text: string; numbers: st
     groups.size > MAX_ROWS ? `…(ilk ${MAX_ROWS} grup)` : "",
     skipped ? `Sayı olmayan ${skipped} hücre toplama katılmadı.` : "",
   ].filter(Boolean).join(" ");
-  return { text: `${head}\n\n${md(cols, body)}${notes ? `\n${notes}` : ""}`, numbers };
+  const table = md(cols, body);
+  return { text: `${head}\n\n${table}${notes ? `\n${notes}` : ""}`, table, sheet: t.sheet, numbers };
 }

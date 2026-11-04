@@ -85,6 +85,11 @@ export interface Found {
   calcs: string[];
   /** Sums tablo_sorgula worked from the documents' cells: figures derived from them, for the number check. */
   facts: string[];
+  /**
+   * The part of what was found that only the documents and the code wrote: chunks and sections as they are, a query's
+   * result table. The evidence gate may take a quote from these; never from text that echoes the model's own words.
+   */
+  quotable: string[];
   /** done: the model said it had enough; limit/room: stopped by a bound; failed: a model call failed. */
   stop: "done" | "limit" | "room" | "failed";
 }
@@ -151,7 +156,7 @@ export function calcCall(call: ToolCall, stated: Set<string>): { out: string; li
 export const seenKey = (doc: string, text: string) => `${doc}\n${text}`;
 
 export async function lookup(start: Msg[], env: LookupEnv): Promise<Found> {
-  const found: Found = { blocks: [], sources: [], calcs: [], facts: [], stop: "limit" };
+  const found: Found = { blocks: [], sources: [], calcs: [], facts: [], quotable: [], stop: "limit" };
   const msgs = [...start];
   const done = new Set<string>();
   let left = env.room;
@@ -224,10 +229,14 @@ export async function lookup(start: Msg[], env: LookupEnv): Promise<Found> {
       const r = runQuery(tablesFor(doc), { sayfa: str("sayfa"), filtreler, topla: strs(args.topla), grupla: strs(args.grupla), sutunlar: strs(args.sutunlar) });
       if ("error" in r) return `HATA: ${r.error}`;
       env.status?.(`Tablo sorgulanıyor: ${str("sayfa").slice(0, 60)}`);
-      const block = add(doc.name, `Sorgu: ${str("sayfa")}`, r.text);
+      const block = add(doc.name, `Sorgu: ${r.sheet}`, r.text);
       if (!block) return "Bağlam sınırı doldu; eldeki sonuçlarla yetin.";
-      // Only a result that reached the model whole vouches for its sums; a cut one's figures may not have been shown.
-      if (!lastCut) found.facts.push(...r.numbers);
+      // Only a result that reached the model whole vouches for its sums and may be quoted; a cut one's may not have been
+      // shown. Quotable: the result table, not the header that repeats the model's filter words.
+      if (!lastCut) {
+        found.facts.push(...r.numbers);
+        found.quotable.push(r.table);
+      }
       return block;
     }
     if (call.name === "bolum_oku") {

@@ -585,8 +585,8 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         // through read-only tools (lib/lookup) adds what it finds to the documents block; everything after works on it
         // as before. Only where the documents weren't read whole, only on a model server that takes tools.
         const toolCalcs: string[] = [];
-        // What the second look brought, all of it made by code from the documents (their sections, query results): a
-        // quote from it is a quote from them.
+        // Query result tables the second look made from the documents' cells (lib/lookup quotable): a quote from them is
+        // a quote from the documents. Never the text around them that repeats the model's own filter words.
         const looked: string[] = [];
         // One prefix for every call on the documents (second look, evidence gate, answer): the same system turn, the
         // same conversation, the documents block first; what each call is for goes last, at the end of the latest user
@@ -647,7 +647,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           console.info(`lookup: ${found.stop}, ${found.blocks.length} sections, ${found.calcs.length} calcs`);
           if (found.blocks.length) {
             context += `\n\n${found.blocks.join("\n\n")}`;
-            looked.push(...found.blocks);
+            looked.push(...found.quotable);
             meta.sources = [...new Set([...meta.sources, ...found.sources.map((x) => (selected.length > 1 ? `${x.doc} · ${x.label}` : x.label))])];
             later += "\n\nİlk aramadan sonra eksik bilgi için ek bölümler okundu; onlar da belgeler bloğunda.";
           }

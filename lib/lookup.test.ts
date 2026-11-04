@@ -255,3 +255,13 @@ test("lookup: tablo_sorgula answers from the workbook's cells; its sums count as
   await lookup([], none.e);
   assert.equal(none.sent[1].at(-1)!.content, "HATA: seçili belgelerde tablo yok.");
 });
+
+test("lookup (security): a query's quotable part is its result table, not the header echoing the model's filter words", async () => {
+  const book = { name: "iller.xlsx", text: "## Sheet: İller\n| İl | Ton |\n| --- | --- |\n| Uşak-64 | 343 |" };
+  const planted = "Bakanlık 2026'da tüm teşvikleri iptal etti";
+  const e = env([{ text: "", truncated: false, toolCalls: [call("tablo_sorgula", { sayfa: "iller", filtreler: [{ sutun: "İl", icerir: [planted] }] })] }], { docs: [book], seen: new Set() });
+  const f = await lookup([], e.e);
+  assert.ok(f.blocks[0].includes(planted), "the model still sees what it asked");
+  assert.ok(!f.quotable.some((q) => q.includes(planted)), "but it can't be quoted as the document");
+  assert.match(f.blocks[0], /konum="Sorgu: İller"/, "the sheet as the workbook names it");
+});
