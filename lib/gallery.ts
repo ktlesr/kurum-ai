@@ -33,6 +33,8 @@ const MAX_FILES = Number(process.env.GALLERY_MAX_FILES) || 200_000;
 const SCAN_MS = 5 * 60_000; // a large archive isn't walked every few seconds
 const DEADLINE_MS = Number(process.env.GALLERY_SCAN_MS) || 10 * 60_000;
 const CAPTION_TICK_MS = 30_000;
+/** How long the model must have been free before a photo is captioned. */
+const CAPTION_IDLE_MS = 60_000;
 const CAPTION_TOKENS = 160;
 export const THUMB = { thumb: 360, view: 1600 } as const;
 export type ImageSize = keyof typeof THUMB;
@@ -177,8 +179,9 @@ async function captionOne(e: GalleryEntry) {
   // A video is seen by one still: enough to find it, and the file itself is never read whole.
   const buf = e.kind === "video" ? await videoFrame(fileOf(e), 1024) : await galleryBytes(e);
   const small = await shrink(buf, 1024, 80);
-  // Reading and shrinking took a while: someone may be waiting now, and they come first.
-  if (admission.model.full) return;
+  // Reading and shrinking took a while: a chat may have started meanwhile, and it comes first. Checked again with the
+  // same rule as captionTick, and nothing awaited between this check and taking the model slot below.
+  if (!admission.model.idleFor(CAPTION_IDLE_MS)) return;
   const year = e.kind === "video" ? undefined : exifYear(buf.subarray(0, 256 * 1024));
   const signal = AbortSignal.timeout(5 * 60_000);
   const r = await admission.model.run(() => providerOf(vision).chat({ model: vision.model, messages: [{ role: "user", content: CAPTION_PROMPT, images: [small.toString("base64")] }], maxTokens: CAPTION_TOKENS, signal }), signal);
@@ -194,7 +197,8 @@ async function captionOne(e: GalleryEntry) {
  * A photo that can't be read is tried three times, then left, so one bad file can't hold up the rest.
  */
 async function captionTick() {
-  if (state.working || admission.model.full || Date.now() - state.lastFail < 10 * 60_000) return;
+  // Only with the model idle for a while: a chat answer is several calls in a row, and a photo between them slows it.
+  if (state.working || !admission.model.idleFor(CAPTION_IDLE_MS) || Date.now() - state.lastFail < 10 * 60_000) return;
   state.working = true;
   try {
     if (!(await captionsOn())) return;

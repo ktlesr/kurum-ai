@@ -47,3 +47,14 @@ test("rate limiter: limit per window, resets after it", () => {
   assert.ok(r.allow("v", 20), "other key unaffected");
   assert.ok(r.allow("u", 1001), "new window");
 });
+
+test("Semaphore.idleFor: free and unused for the given time; busy, queued or just used isn't idle", async () => {
+  const s = new Semaphore(1, 2);
+  assert.ok(s.idleFor(60_000), "never used");
+  const release = await s.acquire();
+  assert.ok(!s.idleFor(0), "held");
+  const t = Date.now();
+  release();
+  assert.ok(!s.idleFor(60_000, t + 1_000), "used a second ago");
+  assert.ok(s.idleFor(60_000, t + 61_000));
+});

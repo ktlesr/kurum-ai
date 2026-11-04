@@ -72,7 +72,17 @@ export class Semaphore {
       const next = this.waiting.shift();
       if (next) next.go(); // hand the slot over directly: no window where a newcomer could jump the queue
       else this.used--;
+      this.lastUsed = Date.now();
     };
+  }
+
+  private lastUsed = 0;
+  /**
+   * Nobody holding or waiting, and nobody for `ms`: background work (gallery captions) goes only then, so it doesn't
+   * slip in between the calls of one answer and slow its writing (seen live with 31B).
+   */
+  idleFor(ms: number, now = Date.now()) {
+    return this.used === 0 && this.waiting.length === 0 && now - this.lastUsed >= ms;
   }
 }
 
