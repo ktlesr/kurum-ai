@@ -247,6 +247,7 @@ test("lookup: tablo_sorgula answers from the workbook's cells; its sums count as
   assert.match(f.blocks[0], /\| Uşak-64 \| 2 \| 400 \|/);
   assert.match(f.blocks[0], /\| Toplam \| 3 \| 1\.879 \|/);
   assert.deepEqual(f.facts.slice(0, 3), ["400", "1.479", "1.879"]);
+  assert.ok(f.facts.includes("3"), "the row count is the code's figure too");
   const out = e.sent[1].slice(-3).map((m) => m.content);
   assert.match(out[1], /^HATA: "Yok" adında tablolu sayfa yok\. Sayfalar: İller/);
   assert.match(out[2], /\| 4 \| 1\.884 \|/, "a filter that isn't a list is ignored");
@@ -270,12 +271,12 @@ test("lookup (review): a year sent as a JSON number filters as a year, it isn't 
   const book = { name: "b.xlsx", text: "## Sheet: S\nSayı biçimi: Türkçe (1.234,5)\n| Yıl | Ton |\n| --- | --- |\n| 2024 | 1 |\n| 2025 | 2 |\n| 2025 | 3 |" };
   const e = env([{ text: "", truncated: false, toolCalls: [call("tablo_sorgula", { sayfa: "S", filtreler: [{ sutun: "Yıl", esit: [2025] }], topla: ["Ton"] })] }], { docs: [book], seen: new Set() });
   const f = await lookup([], e.e);
-  assert.deepEqual(f.facts, ["5"]);
+  assert.deepEqual(f.facts, ["5", "2"]);
 });
 
 test("lookup (review 2): a JSON decimal filter value is written the Turkish way (1.5 is 1,5, not fifteen)", async () => {
   const book = { name: "b.xlsx", text: "## Sheet: S\nSayı biçimi: Türkçe (1.234,5)\n| Oran | Ton |\n| --- | --- |\n| 1,5 | 1 |\n| 15 | 2 |" };
   const e = env([{ text: "", truncated: false, toolCalls: [call("tablo_sorgula", { sayfa: "S", filtreler: [{ sutun: "Oran", esit: [1.5] }], topla: ["Ton"] })] }], { docs: [book], seen: new Set() });
   const f = await lookup([], e.e);
-  assert.deepEqual(f.facts, ["1"]);
+  assert.deepEqual(f.facts, ["1", "1"]);
 });

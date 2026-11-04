@@ -62,3 +62,13 @@ test("xlsx: a display that rounds gets the cell's whole value; the sum is Excel'
   const r = runQuery(tablesOf(text), { sayfa: "S", filtreler: [{ sutun: "Kalem", icerir: ["k"] }], topla: ["Tutar"] });
   assert.ok("text" in r && r.numbers[0] === "1.004", JSON.stringify(r));
 });
+
+test("xlsx: a format that scales (thousands, millions) keeps its shown figure; only rounding is undone", () => {
+  const text = sheetText(book([
+    ["Kalem", "Tutar (Bin TL)", "M"],
+    ["a", { v: 1234567, z: "#,##0," }, { v: 1234567, z: '#,##0.0,,"M"' }],
+    ["b", { v: 100.4, z: "#,##0" }, { v: 2, z: "0" }],
+  ]), { csv: false }).text;
+  assert.match(text, /\| a \| 1\.235 \| 1,2M \|/);
+  assert.match(text, /\| b \| 100,4 \| 2 \|/);
+});

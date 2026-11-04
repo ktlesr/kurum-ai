@@ -30,11 +30,12 @@ export class Semaphore {
     return this.used >= this.slots;
   }
 
-  async acquire(signal?: AbortSignal): Promise<() => void> {
+  /** `background`: work that mustn't count as use for idleFor (a caption's own call would hold back the next one). */
+  async acquire(signal?: AbortSignal, background = false): Promise<() => void> {
     signal?.throwIfAborted();
     if (this.used < this.slots) {
       this.used++;
-      return this.releaser();
+      return this.releaser(background);
     }
     if (this.waiting.length >= this.maxQueue) throw new Busy();
     await new Promise<void>((go, fail) => {
@@ -52,11 +53,11 @@ export class Semaphore {
       signal?.addEventListener("abort", onAbort, { once: true });
       this.waiting.push(entry);
     });
-    return this.releaser(); // the slot was handed over by release(), `used` already counts us
+    return this.releaser(background); // the slot was handed over by release(), `used` already counts us
   }
 
-  async run<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    const release = await this.acquire(signal);
+  async run<T>(fn: () => Promise<T>, signal?: AbortSignal, background = false): Promise<T> {
+    const release = await this.acquire(signal, background);
     try {
       return await fn();
     } finally {
@@ -64,7 +65,7 @@ export class Semaphore {
     }
   }
 
-  private releaser() {
+  private releaser(background: boolean) {
     let done = false;
     return () => {
       if (done) return;
@@ -72,7 +73,7 @@ export class Semaphore {
       const next = this.waiting.shift();
       if (next) next.go(); // hand the slot over directly: no window where a newcomer could jump the queue
       else this.used--;
-      this.lastUsed = Date.now();
+      if (!background) this.lastUsed = Date.now();
     };
   }
 

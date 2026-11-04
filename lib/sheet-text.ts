@@ -35,8 +35,13 @@ function fullValue(w: string, v: number, fmt: string): string {
   if (!Number.isFinite(v) || !/^[^\d]*\d[\d.,]*[^\d]*$/u.test(w) || /[eE][+-]?\d|\/|:/u.test(w)) return w;
   const scale = /%/u.test(fmt.replace(/"[^"]*"/gu, "")) ? 100 : 1;
   const value = Math.abs(v * scale);
-  const shown = Number(w.match(/\d[\d.,]*/u)![0].replace(/,/gu, ""));
+  const run = w.match(/\d[\d.,]*/u)![0].replace(/,/gu, "");
+  const shown = Number(run);
   if (Math.abs(shown - value) <= Number.EPSILON * Math.max(1, value) * 4) return w;
+  // Only rounding at the shown precision: a format that scales ("#,##0," shows thousands, '0.0,,"M"' millions, under a
+  // "Bin TL" header) shows another figure on purpose, and keeps it.
+  const decimals = run.includes(".") ? run.length - run.indexOf(".") - 1 : 0;
+  if (Math.abs(shown - value) > 0.5 * 10 ** -decimals * (1 + 1e-9)) return w;
   const whole = value.toLocaleString("en-US", { maximumFractionDigits: 15, useGrouping: true });
   return w.replace(/\d[\d.,]*/u, whole);
 }

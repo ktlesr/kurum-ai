@@ -238,7 +238,7 @@ export async function lookup(start: Msg[], env: LookupEnv): Promise<Found> {
       // Only a result that reached the model whole vouches for its sums and may be quoted; a cut one's may not have been
       // shown. Quotable: the result table, not the header that repeats the model's filter words.
       if (!lastCut) {
-        found.facts.push(...r.numbers);
+        found.facts.push(...r.numbers, ...r.counts);
         found.quotable.push(r.table);
       }
       return block;

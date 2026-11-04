@@ -173,6 +173,8 @@ export interface QueryResult {
   /** The sheet as the workbook names it. */
   sheet: string;
   numbers: string[];
+  /** The rows each line counted ("37 proje"): the code's figures too, for the number check. */
+  counts: string[];
 }
 
 /**
@@ -203,7 +205,8 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
   }));
   const same = (k: number, cell: string, v: string) => {
     if (low(cell) === low(v)) return true;
-    if (!numeric.has(k)) return false;
+    // A leading zero is a code's ("01"), whatever the column: compared as written.
+    if (!numeric.has(k) || /^0\d/u.test(cell.trim()) || /^0\d/u.test(v.trim())) return false;
     const a = numberIn(t, cell);
     const b = numberIn({ ...t, english: false }, v.trim());
     return !!a && !!b && a.n * b.d === b.n * a.d;
@@ -227,7 +230,7 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
     const rows = hits.slice(0, MAX_ROWS).map((r) => show.map((k) => r[k]));
     const cut = hits.length > MAX_ROWS ? `\n…(ilk ${MAX_ROWS} satır; daha dar bir filtre ya da topla kullanın)` : "";
     const table = md(show.map((k) => t.columns[k]), rows);
-    return { text: `${head}\n\n${table}${cut}`, table, sheet: t.sheet, numbers: [] };
+    return { text: `${head}\n\n${table}${cut}`, table, sheet: t.sheet, numbers: [], counts: [String(hits.length)] };
   }
   const sums = q.topla.map(col);
   const keys = (q.grupla ?? []).map(col);
@@ -273,5 +276,6 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
     skipped ? `Sayı olmayan ${skipped} hücre var; o hücrelerin bulunduğu toplamlar yazılmadı (—).` : "",
   ].filter(Boolean).join(" ");
   const table = md(cols, body);
-  return { text: `${head}\n\n${table}${notes ? `\n${notes}` : ""}`, table, sheet: t.sheet, numbers };
+  const counts = [String(hits.length), ...(keys.length ? list.map((g) => String(g.rows.length)) : [])];
+  return { text: `${head}\n\n${table}${notes ? `\n${notes}` : ""}`, table, sheet: t.sheet, numbers, counts };
 }

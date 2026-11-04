@@ -133,3 +133,9 @@ test("review 3: different units in one column are never added; one currency besi
   const share = runQuery(sheet(["%10", "5"]), { sayfa: "U", topla: ["Tutar"] });
   assert.ok("text" in share && share.numbers.length === 0);
 });
+
+test("review 4: digit codes with a leading zero stay distinct even in a numeric column", () => {
+  const [t] = tablesOf(["## Sheet: K", SHEET_TR, "| Kod | Ton |", "| --- | --- |", "| 01 | 1 |", "| 1 | 2 |"].join("\n"));
+  const r = runQuery([t], { sayfa: "K", filtreler: [{ sutun: "Kod", esit: ["1"] }], topla: ["Ton"] });
+  assert.ok("text" in r && r.numbers[0] === "2" && r.counts[0] === "1");
+});

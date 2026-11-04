@@ -184,7 +184,7 @@ async function captionOne(e: GalleryEntry) {
   if (!admission.model.idleFor(CAPTION_IDLE_MS)) return;
   const year = e.kind === "video" ? undefined : exifYear(buf.subarray(0, 256 * 1024));
   const signal = AbortSignal.timeout(5 * 60_000);
-  const r = await admission.model.run(() => providerOf(vision).chat({ model: vision.model, messages: [{ role: "user", content: CAPTION_PROMPT, images: [small.toString("base64")] }], maxTokens: CAPTION_TOKENS, signal }), signal);
+  const r = await admission.model.run(() => providerOf(vision).chat({ model: vision.model, messages: [{ role: "user", content: CAPTION_PROMPT, images: [small.toString("base64")] }], maxTokens: CAPTION_TOKENS, signal }), signal, true);
   const text = r.text.replace(/\s+/g, " ").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 400);
   captions().set(e.id, { v: versionOf(e), c: text, ...(year ? { y: year } : {}) });
   const live = state.list.find((x) => x.id === e.id);

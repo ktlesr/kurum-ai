@@ -58,3 +58,11 @@ test("Semaphore.idleFor: free and unused for the given time; busy, queued or jus
   assert.ok(!s.idleFor(60_000, t + 1_000), "used a second ago");
   assert.ok(s.idleFor(60_000, t + 61_000));
 });
+
+test("Semaphore: background work doesn't count as use for idleFor", async () => {
+  const s = new Semaphore(1, 1);
+  await s.run(async () => {}, undefined, true);
+  assert.ok(s.idleFor(60_000), "a caption's own call leaves the model idle for the next one");
+  await s.run(async () => {});
+  assert.ok(!s.idleFor(60_000), "a chat's call does count");
+});
