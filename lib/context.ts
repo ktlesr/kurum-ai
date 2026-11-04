@@ -4,12 +4,30 @@ import type { Claim } from "./trace";
 // Until a model has been measured (see recordTokens in server.ts): conservative for Turkish.
 // Measured: gemma4 ≈ 2.9, gpt-oss ≈ 2.2 chars/token.
 export const DEFAULT_CHARS_PER_TOKEN = 2.2;
-// Tokens kept free for system prompt, chat history, reasoning and the answer.
-export const RESERVED_TOKENS = 8192;
+// Tokens kept free beside the documents: the answer (up to 8192, the chat's MAX_ANSWER), the instructions (~2k) and the
+// latest question with some of the conversation (~2k). It was 8192, the answer alone: instructions and history then
+// overflowed a context the documents had filled (plan P5). At most half of a small context (a development model).
+export const RESERVED_TOKENS = 12288;
+export const reservedFor = (numCtx: number) => Math.min(RESERVED_TOKENS, Math.floor(numCtx / 2));
 
 /** How many document characters fit into num_ctx. */
 export const contextBudget = (numCtx: number, charsPerToken: number) =>
-  Math.max(0, numCtx - RESERVED_TOKENS) * charsPerToken;
+  Math.max(0, numCtx - reservedFor(numCtx)) * charsPerToken;
+
+/**
+ * The conversation that fits beside what else goes to the model: newest first, as many turns as `room` characters hold
+ * (at most `max`). The latest message always goes, whatever its length: it is the question.
+ */
+export function fitHistory<T extends { content: string }>(messages: T[], room: number, max = 40): T[] {
+  const out: T[] = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0 && out.length < max; i--) {
+    used += messages[i].content.length;
+    if (out.length && used > room) break;
+    out.unshift(messages[i]);
+  }
+  return out;
+}
 
 /**
  * Chars per token for these texts. The measured rate is for prose; the served models (gemma, gpt-oss) split numbers

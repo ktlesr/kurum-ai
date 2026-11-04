@@ -61,8 +61,9 @@ const kindOf = (name: string): DocKind => {
   return "text";
 };
 const fmtSize = (b: number) => (b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`);
-// The server answers from the last 8 turns; sending more only risks the 200-message request limit.
-const HISTORY = 8;
+// The server keeps as much of these as fits beside the documents (lib/context fitHistory, at most 40); the request
+// takes up to 200 messages.
+const HISTORY = 40;
 const fmtNum = (n: number) => n.toLocaleString("tr-TR");
 /** fetch for our API: an expired session (401) goes back to the login page. */
 const api = (url: string, init?: RequestInit) =>

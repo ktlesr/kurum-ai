@@ -13,7 +13,7 @@ import { parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
-import { contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, META_SEP, STATUS_SEP, withDocs, type ChatMeta } from "@/lib/context";
+import { contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, fitHistory, META_SEP, STATUS_SEP, withDocs, type ChatMeta } from "@/lib/context";
 import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
 import { findCalcs, stillUnverified } from "@/lib/calc";
@@ -240,7 +240,13 @@ export async function POST(req: Request) {
   countUsage("query");
 
   const signal = req.signal; // Esc in the UI aborts generation on the model server too
-  const history = messages.slice(-8); // ponytail: last 8 turns only; long chats could still overflow num_ctx
+  // The conversation as far back as fits beside the instructions, documents and pages of this call, and the answer
+  // (plan P5): newest first, the latest question always. Was the last 8 messages whatever their length.
+  const historyFor = (fixed: string[]) => {
+    const cpt = cptFor(model);
+    const used = fixed.reduce((n, s) => n + s.length / cptOf([s], cpt), 0);
+    return fitHistory(messages, Math.max(0, (NUM_CTX - MAX_ANSWER - 512 - used) * cpt));
+  };
   const question = messages.filter((m) => m.role === "user").slice(-2).map((m) => m.content).join("\n");
   // Only the latest question's links: earlier ones were read when they were asked.
   const urls = findUrls(messages.findLast((m) => m.role === "user")?.content ?? "");
@@ -430,7 +436,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           // Plain chat: no document context, no number check (no source to check against), no source chips.
           if (admission.model.full) status("Sırada bekleniyor…");
           if (think) status("Düşünüyor…");
-          answer = await streamChat(chat, model, [{ role: "system", content: GENERAL + (web ? "" : NO_WEB) + rule }, ...withWeb(history)], think, signal, send, (n) => {
+          answer = await streamChat(chat, model, [{ role: "system", content: GENERAL + (web ? "" : NO_WEB) + rule }, ...withWeb(historyFor([GENERAL, rule, web]))], think, signal, send, (n) => {
             if (n % 50 === 0) status("Düşünüyor…");
           });
           // Only what a page, a refused link or an unread document has to say; a plain answer gets no notes.
@@ -535,7 +541,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         const factGate = !!SEARCH_URL && !pages.length && !urls.length && scope !== "all" && meta.mode !== "scan";
         if (selected.some((d) => d.text.trim())) {
           status("Belgede kanıt aranıyor…");
-          const said = await chatOnce(chat, model, [{ role: "system", content: `${EVIDENCE}${hint}${meaning}\n\n${DOCS}` }, ...withDocs(history, context)], signal, EVIDENCE_TOKENS).catch((e) => {
+          const said = await chatOnce(chat, model, [{ role: "system", content: `${EVIDENCE}${hint}${meaning}\n\n${DOCS}` }, ...withDocs(historyFor([EVIDENCE, hint, meaning, DOCS, context]), context)], signal, EVIDENCE_TOKENS).catch((e) => {
             if (signal.aborted) throw e;
             logError("evidence", e);
             return "";
@@ -554,7 +560,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           if (think) status("Düşünüyor…");
           // Said softly: a misread request still has the documents in front of the model and may use them.
           const plain = general ? "\n\nSon istek dokümanlarla ilgili görünmüyor: normal bir asistan gibi cevap ver; gerekmedikçe dokümanlardan söz etme, \"Belgede yok\" deme." : "";
-          const final: Msg[] = [{ role: "system", content: `${SYSTEM}${hint}${meaning}${plain}${rule}\n\n${DOCS}` }, ...withWeb(withDocs(history, context))];
+          const final: Msg[] = [{ role: "system", content: `${SYSTEM}${hint}${meaning}${plain}${rule}\n\n${DOCS}` }, ...withWeb(withDocs(historyFor([SYSTEM, hint, meaning, plain, rule, DOCS, context, web]), context))];
           answer = await streamChat(chat, model, final, think, signal, send, (n) => {
             // Keeps the connection busy and shows the wait isn't stuck.
             if (n % 50 === 0) status("Düşünüyor…"); // also keeps the connection busy
