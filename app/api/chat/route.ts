@@ -13,7 +13,7 @@ import { parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
-import { answerFor, askedWith, promptFor, questionFits, reservedFor, contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, historyWithin, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
+import { answerFor, askedWith, promptFor, TASK_RULE, questionFits, reservedFor, contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, historyWithin, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
 import { findCalcs, sourceNumbers, stillUnverified } from "@/lib/calc";
@@ -565,7 +565,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         // 3.6 % cache hits, the first word after 80-100 s). The conversation is chosen once (`common`), with room for the
         // second look's text and the longest task, so every call starts with the same tokens.
         // ponytail: a thinking answer still differs from the first token (the template marks thinking in the system turn).
-        const head = `${SYSTEM}${hint}${meaning}${rule}\n\n${DOCS}`;
+        const head = `${SYSTEM}${hint}${meaning}${rule}\n\n${DOCS}\n${TASK_RULE}`;
         let later = ""; // what the second look found out, for the calls after it
         const cpt = cptFor(model);
         const tok = (s: string) => s.length / cptOf([s], cpt);
@@ -587,19 +587,21 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         }
         if (!common) room = 0;
         const listed = () => toolList(chat);
-        const docCall = (task: string, o: { answer?: number; extraTokens?: number; spent?: string[] } = {}): Msg[] => {
-          const own = !common || !!o.spent?.length || tok(task) > TASK_TOKENS;
-          const h = own ? historyFor([head, context, web, task, ...(o.spent ?? [])], o) : common!;
-          return promptFor(head, h, context, [web, task]);
+        /** `task`: the app's own instruction (the "<görev>" block); `data`: untrusted text this call alone adds. */
+        const docCall = (task: string, o: { answer?: number; extraTokens?: number; spent?: string[]; data?: string } = {}): Msg[] => {
+          const data = [web, o.data ?? ""].filter(Boolean).join("\n\n");
+          const own = !common || !!o.spent?.length || tok(task) + tok(o.data ?? "") > TASK_TOKENS;
+          const h = own ? historyFor([head, context, data, task, ...(o.spent ?? [])], o) : common!;
+          return promptFor(head, h, context, data, task);
         };
         // Plan P6: the first search's sections or a long document's notes may miss what the question needs. A second look
         // through read-only tools (lib/lookup) adds what it finds to the documents block; everything after works on it
         // as before. Only where the documents weren't read whole, only on a model server that takes tools.
         if (room) {
           status("Belgede eksik bilgi aranıyor…");
-          // File and sheet names are the documents' own text: in a data block, never in the instructions.
-          const task = `${LOOKUP}\n\n${docBlock("bölüm", { konum: "Belgelerin bölümleri (bolum_oku için)" }, outline(selected))}`;
-          const found = await lookup(docCall(task, { answer: LOOKUP_TOKENS, extraTokens: room + LOOKUP_TOKENS + 512 }), {
+          // File and sheet names are the documents' own text: with the data, never in the task.
+          const data = docBlock("bölüm", { konum: "Belgelerin bölümleri (bolum_oku için)" }, outline(selected));
+          const found = await lookup(docCall(LOOKUP, { answer: LOOKUP_TOKENS, extraTokens: room + LOOKUP_TOKENS + 512, data }), {
             docs: selected, seen, room, size: tok, status, aborted: () => signal.aborted,
             search: async (q) => (await retrieve(selected, q, signal)).chunks,
             ask: (m) => admission.model.run(async () => {
