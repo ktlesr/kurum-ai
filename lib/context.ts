@@ -49,6 +49,9 @@ export interface ChatMeta {
   sources: string[];
   unverified: string[];
   uncertain: string[];
+  /** Calculations in the answer worked again in code (lib/calc): how many came out right, and the wrong ones. */
+  calcOk?: number;
+  calcWrong?: string[];
   /** Pages read from links in the question (lib/web). */
   web?: { url: string; title: string }[];
   /** Comparison-table figures under the wrong document's column (lib/checks checkColumns). */

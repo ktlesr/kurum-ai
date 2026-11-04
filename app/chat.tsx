@@ -1198,6 +1198,13 @@ function MetaNotes({ meta, onSource }: { meta: ChatMeta; onSource: (chip: string
           <span>Belgelerde geçmeyen sayılar: {meta.unverified.join(", ")}. Genel bilgiden ya da hesaplamadan gelmiş olabilir; belgeye dayandırılıyorsa kontrol edin.</span>
         </p>
       )}
+      {meta.calcWrong && meta.calcWrong.length > 0 && (
+        <p className="flex items-start gap-1.5 text-danger">
+          <AlertTriangle size={13} className="mt-px shrink-0" />
+          <span>Tutmayan hesap: {meta.calcWrong.join("; ")}. Yazılım işlemi yeniden yaptı.</span>
+        </p>
+      )}
+      {!!meta.calcOk && !meta.calcWrong?.length && <p className="text-muted">Cevaptaki {meta.calcOk} hesap yazılımla yeniden yapıldı ve tuttu; girdi sayıları ayrıca belgede arandı.</p>}
       {meta.misplaced && meta.misplaced.length > 0 && (
         <p className="flex items-start gap-1.5 text-danger">
           <AlertTriangle size={13} className="mt-px shrink-0" />

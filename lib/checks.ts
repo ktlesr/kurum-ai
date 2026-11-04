@@ -297,8 +297,15 @@ export function findDates(text: string): { key: string; index: number; length: n
   return out;
 }
 
-/** Numbers in an answer that don't appear in the sources. Single digits are skipped (list markers, "DD-2"). */
-export function verifyNumbers(answer: string, source: string): { unverified: string[]; uncertain: string[] } {
+/**
+ * The numbers a source states, as verifyNumbers reads it: plain numbers (normNum form) and the parts of its dates, not
+ * those marked unsure. lib/calc asks the same question of a calculation's operands, so both answer it alike.
+ */
+export function knownNumbers(source: string): Set<string> {
+  return sourceFacts(source).known;
+}
+
+function sourceFacts(source: string) {
   const known = new Set<string>();
   const shaky = new Set<string>();
   // Dates match by day, month and year whatever the format; their parts count as known numbers ("2026 yılında").
@@ -322,6 +329,12 @@ export function verifyNumbers(answer: string, source: string): { unverified: str
     const n = normNum(m[0].replace("(?)", ""));
     (m[1] ? shaky : known).add(n);
   }
+  return { known, shaky, dates, shakyDates };
+}
+
+/** Numbers in an answer that don't appear in the sources. Single digits are skipped (list markers, "DD-2"). */
+export function verifyNumbers(answer: string, source: string): { unverified: string[]; uncertain: string[] } {
+  const { known, shaky, dates, shakyDates } = sourceFacts(source);
   const unverified = new Set<string>();
   const uncertain = new Set<string>();
   let rest = "";

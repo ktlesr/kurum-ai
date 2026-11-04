@@ -16,6 +16,7 @@ import { Busy } from "@/lib/limits";
 import { contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, META_SEP, STATUS_SEP, withDocs, type ChatMeta } from "@/lib/context";
 import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
+import { findCalcs, stillUnverified } from "@/lib/calc";
 import { parseReading, rowsNamed } from "@/lib/sheet-focus";
 import { isProvince, knownTerms } from "@/lib/regions";
 import { retrieve, TOP_K, windows } from "@/lib/rag";
@@ -35,7 +36,7 @@ Dokümanlara ait olgusal bilgiyi (rakam, tarih, ad, şart) uydurma: dokümanda y
 İstek dokümanlarla ilgili değilse (dokümanla ilgisiz bir çeviri, yazı, kod, genel soru) normal bir asistan gibi cevap ver; "Belgede yok" deme.
 Dokümanlara ait belirli bir bilgi soruluyorsa ve dokümanda yoksa cevabına "Belgede yok." diye başla. Konuyu biliyorsan ardından ayrı bir paragrafta "Genel bilgime göre:" diye başlayarak cevap ver ve bunun doğrulanması gerektiğini belirt. Madde numarası, kurum adı, tarih, tutar gibi kesin bilgilerden emin değilsen tahmin etme, bilmediğini söyle. Belirli bir bilgi soruluyorsa ve belgede açıkça yazmıyorsa, belgenin başka bölümlerinden çıkarım yaparak o bilgiyi tamamlama. Belge başka bir metnin (kanun, kararname) bir maddesine atıf yapıyorsa o maddenin konusunu ve ait olduğu kurumu belgenin genel konusundan çıkarma: atıf yapılan metin belgede yoksa "Belgede yok." de.
 Mümkünse sayfa numarasını ("Sayfa 4") ya da sayfa adını ("Sheet: Bütçe") belirt.
-Dokümandaki sayıları yazdığı gibi aktar, yuvarlama. Hesap (toplam, fark, oran, yüzde) istenirse ya da cevap için gerekiyorsa yap: kullandığın doküman değerlerini ve işlemi göster, sonucu "hesaplanan" diye belirt; hesapladığın bir sayıyı dokümanda yazıyormuş gibi sunma.
+Dokümandaki sayıları yazdığı gibi aktar, yuvarlama. Hesap (toplam, fark, oran, yüzde) istenirse ya da cevap için gerekiyorsa yap: kullandığın doküman değerlerini ve işlemi göster; işlemi yazılımın yeniden yapabileceği biçimde, rakamlarla tek satırda yaz (ör. "1.200.000 + 350.500 = 1.550.500", "(1.500 - 1.200) / 1.200 × 100 = %25"); sonucu "hesaplanan" diye belirt; hesapladığın bir sayıyı dokümanda yazıyormuş gibi sunma.
 "(?)" ile işaretli sayılar iki bağımsız okumanın uyuşmadığı belirsiz değerlerdir; kullanırsan "belirsiz okuma" diye belirt.
 "[Kod kontrolü]" satırları yazılımın okunan değerlerden hesapladığı kontrollerdir; bir kriterin sağlanıp sağlanmadığını söylerken bunları esas al.
 "[İkinci okuma …]" bölümleri aynı tablonun görsel modelle yapılmış ikinci okumasıdır.
@@ -565,7 +566,16 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         // A request that isn't about the documents (a translation, an e-mail) has nothing to check against them: its
         // figures and sentences would all read "not in the source".
         if (!general) {
-          Object.assign(meta, verifyNumbers(answer, source));
+          // Written-out calculations worked again (lib/calc): a right result is derived, not "missing from the documents";
+          // its operands still have to be found there. A wrong one is named with what it comes to.
+          const calcs = findCalcs(answer);
+          // Operands are judged against the source alone: a result vouches for nothing it was made from.
+          const checked = verifyNumbers(answer, source);
+          Object.assign(meta, { ...checked, unverified: stillUnverified(checked.unverified, calcs, source) });
+          const right = calcs.filter((c) => c.ok);
+          if (right.length) meta.calcOk = right.length;
+          const wrong = calcs.filter((c) => !c.ok).slice(0, 10).map((c) => `${c.expr} (doğrusu ${c.shown})`);
+          if (wrong.length) meta.calcWrong = wrong;
           const badPages = checkPages(answer, selected.map((d) => d.text));
           if (badPages.length) meta.badPages = badPages;
           const misplaced = checkColumns(answer, selected);
