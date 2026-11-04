@@ -287,3 +287,19 @@ export function withDocs<T extends Turn>(history: T[], docs: string): T[] {
   if (i < 0) return [{ role: "user", content: block } as T, ...history];
   return history.map((m, j) => (j === i ? { ...m, content: `${block}\n\n${m.content}` } : m));
 }
+
+/**
+ * A call on the documents: `head` as the system turn, the documents with the conversation (withDocs), and `extras`
+ * (linked pages, then the call's own task) at the end of the latest user turn. Calls that differ only in their task
+ * start with the same tokens, so the model server's prefix cache reads the documents once for all of them.
+ */
+export function promptFor<T extends Turn>(head: string, history: T[], docs: string, extras: string[]): ({ role: "system"; content: string } | T)[] {
+  const msgs = withDocs(history, docs);
+  const tail = extras.filter(Boolean).join("\n\n");
+  // The latest user turn, wherever it is: a history may end with an answer, and the task must still reach the model.
+  const last = msgs.findLastIndex((m) => m.role === "user");
+  return [
+    { role: "system", content: head },
+    ...msgs.map((m, k) => (k === last && tail ? { ...m, content: `${m.content}\n\n${tail}` } : m)),
+  ];
+}

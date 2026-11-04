@@ -142,7 +142,7 @@ test("lookup (review 3): room in tokens; dense figures cost a token a digit; eve
 });
 
 test("answerWithCalc: rounds of hesapla, then the answer; folded when full; refused tools; bounds", async () => {
-  const { answerWithCalc, CALC_TOOL, MAX_STEPS } = await import("./lookup.ts");
+  const { answerWithCalc, MAX_STEPS } = await import("./lookup.ts");
   const { sourceNumbers } = await import("./calc.ts");
   const stated = sourceNumbers(doc.text);
   const base = { toolsOn: () => true, refused: () => false, stated: () => stated, tooLong: (): never => { throw new Error("too long"); } };
@@ -165,13 +165,13 @@ test("answerWithCalc: rounds of hesapla, then the answer; folded when full; refu
   // A calculation, then the answer with its result in front of the model.
   const a = run([{ text: "", calls: [call("hesapla", { ifade: "1.200.000 + 350.500" })] }]);
   assert.deepEqual(await a.result, { text: "Cevap.", calcs: ["1.200.000 + 350.500 = 1.550.500"] });
-  assert.deepEqual(a.seen[0].tools, [CALC_TOOL]);
+  assert.equal(a.seen[0].tools, true);
   assert.match(a.seen[1].msgs.at(-1)!.content, /^1\.200\.000 \+ 350\.500 = 1\.550\.500/);
   // The exchange no longer fits: folded into a note, answered without tools; the result isn't lost.
   const b = run([{ text: "", calls: [call("hesapla", { ifade: "1.200.000 + 350.500" })] }], (ex) => ex.length === 0);
   const rb = await b.result;
   assert.equal(rb.text, "Cevap.");
-  assert.equal(b.seen[1].tools, undefined);
+  assert.equal(b.seen[1].tools, false);
   assert.match(b.seen[1].msgs[0].content, /araçla yapılmış kesin hesaplar:\n1\.200\.000 \+ 350\.500 = 1\.550\.500/);
   // Nothing fits even at the start: the route's TooLong.
   await assert.rejects(run([], () => false).result, /too long/);
@@ -184,7 +184,7 @@ test("answerWithCalc: rounds of hesapla, then the answer; folded when full; refu
       let first = true;
       return async (msgs: Msg[], tools: unknown) => {
         if (first) { first = false; throw new Error("model_http_400"); }
-        assert.equal(tools, undefined);
+        assert.equal(tools, false);
         return { text: "Araçsız.", calls: [] };
       };
     })(),
@@ -217,4 +217,17 @@ test("answerWithCalc: the system turn tells the model to use hesapla while it's 
   });
   assert.ok(systems[0].endsWith(CALC_RULE));
   assert.ok(!systems.at(-1)!.includes(CALC_RULE), "folded, tools off: no rule to call them");
+});
+
+test("answerWithCalc: the other tools are listed on the answer call but only hesapla runs there", async () => {
+  const { answerWithCalc } = await import("./lookup.ts");
+  const sent: Msg[][] = [];
+  const steps = [{ text: "", calls: [call("belgede_ara", { sorgu: "x" })] }];
+  const r = await answerWithCalc({
+    build: (ex) => [{ role: "system", content: "S" }, ...ex],
+    call: async (m) => (sent.push(m), steps.shift() ?? { text: "Cevap.", calls: [] }),
+    toolsOn: () => true, refused: () => false, stated: () => new Set(), tooLong: (): never => { throw new Error("x"); },
+  });
+  assert.equal(r.text, "Cevap.");
+  assert.match(sent[1].at(-1)!.content, /^HATA: bu aşamada yalnızca hesapla/);
 });

@@ -256,8 +256,11 @@ export const CALC_RULE = `\n\nHesap gerekiyorsa (toplam, fark, oran, yüzde, ort
 export interface AnswerEnv {
   /** The answer call's messages with the tool exchange so far and a note for the system turn; null when they don't fit. */
   build: (exchange: Msg[], note: string) => Msg[] | null;
-  /** One streamed answer call, the calculation tool offered or not. */
-  call: (messages: Msg[], tools: ToolDef[] | undefined) => Promise<{ text: string; calls: ToolCall[] }>;
+  /**
+   * One streamed answer call, tools callable (`offered`) or only listed: the route lists TOOLS on every call on the
+   * documents, so they share the template's prefix. Here only hesapla is run; the documents are already in front.
+   */
+  call: (messages: Msg[], offered: boolean) => Promise<{ text: string; calls: ToolCall[] }>;
   toolsOn: () => boolean;
   /** The first call failed: was it the server refusing tools? (Then it is made again without.) */
   refused: (e: unknown) => boolean;
@@ -280,7 +283,7 @@ export async function answerWithCalc(env: AnswerEnv): Promise<{ text: string; ca
   let text = "";
   let folded = false;
   for (let step = 0; ; step++) {
-    const offer = !folded && env.toolsOn() && step < MAX_STEPS ? [CALC_TOOL] : undefined;
+    const offer = !folded && env.toolsOn() && step < MAX_STEPS;
     // Offered is not enough: seen live, the model summed twenty figures in its head and got it wrong. Told plainly.
     const note = (folded && calcs.length
       ? `\n\nBelgedeki sayılarla araçla yapılmış kesin hesaplar:\n${calcs.join("\n")}\nBu sonuçları kullan; cevapta işlemi bu haliyle yaz ve "hesaplanan" de.`
@@ -306,7 +309,8 @@ export async function answerWithCalc(env: AnswerEnv): Promise<{ text: string; ca
     const made = r.calls.slice(0, MAX_CALLS);
     exchange.push({ role: "assistant", content: r.text, toolCalls: made });
     for (const c of made) {
-      const out = c.name === "hesapla" ? calcCall(c, env.stated()) : { out: `HATA: bilinmeyen araç "${c.name}".`, line: undefined };
+      // The answer has the documents in front of it: only the calculation runs here.
+      const out = c.name === "hesapla" ? calcCall(c, env.stated()) : { out: `HATA: bu aşamada yalnızca hesapla kullanılabilir; belge zaten verildi.`, line: undefined };
       if (out.line) calcs.push(out.line);
       exchange.push({ role: "tool", toolCallId: c.id, content: out.out });
     }

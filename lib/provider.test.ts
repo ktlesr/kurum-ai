@@ -166,3 +166,11 @@ test("an embedding model counts as installed though it can't chat", async () => 
   }
 });
 
+
+test("openai (vLLM): toolChoice none lists the tools (same template prefix) but no call is allowed", async () => {
+  routes["/v1/chat/completions"] = send(["data: [DONE]\n\n"]);
+  const tools = [{ name: "hesapla", description: "d", parameters: { type: "object" } }];
+  await makeProvider("openai", base + "/v1", { numCtx: 1 }).chat({ model: "m", messages: [], maxTokens: 1, signal, tools, toolChoice: "none" });
+  assert.deepEqual(seen.at(-1)!.body.tools, [{ type: "function", function: tools[0] }]);
+  assert.equal(seen.at(-1)!.body.tool_choice, "none");
+});

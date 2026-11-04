@@ -13,7 +13,7 @@ import { parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
-import { answerFor, askedWith, questionFits, reservedFor, contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, historyWithin, META_SEP, STATUS_SEP, withDocs, type ChatMeta } from "@/lib/context";
+import { answerFor, askedWith, promptFor, questionFits, reservedFor, contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, historyWithin, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
 import { findCalcs, sourceNumbers, stillUnverified } from "@/lib/calc";
@@ -189,6 +189,13 @@ let toolsRefused = false;
 const toolsOn = (chat: Provider) => chat.kind === "openai" && process.env.TOOL_CALLING !== "off" && !toolsRefused;
 /** Found text the second look may add, at most (a long look delays the answer). */
 const MAX_LOOKUP_CHARS = 40_000;
+/**
+ * The tools listed on every call on the documents while tools are on: the same list each time, whether a call may use
+ * them or not (toolChoice), because the template writes them into the system turn ahead of the documents.
+ */
+const toolList = (chat: Provider) => (toolsOn(chat) ? TOOLS : undefined);
+/** Kept beside the shared prefix for what each call adds at its end (the evidence gate's task, the second look's). */
+const TASK_TOKENS = 2048;
 
 /** One model call (lib/provider). onText gets answer pieces, onThinking the running count of reasoning chunks. */
 async function streamChatUnqueued(
@@ -201,13 +208,13 @@ async function streamChatUnqueued(
   onThinking: (n: number) => void = () => {},
   numPredict?: number,
   /** Tools offered on this call (plan P6); the calls the model made go to onCalls. */
-  extra: { tools?: ToolDef[]; onCalls?: (calls: ToolCall[]) => void } = {},
+  extra: { tools?: ToolDef[]; toolChoice?: "auto" | "none"; onCalls?: (calls: ToolCall[]) => void } = {},
 ): Promise<string> {
   // A looping model is stopped here: it would otherwise hold the GPU up to the length cap.
   const stop = new AbortController();
   let sofar = "";
   const r = await chat.chat({
-    model, messages, think, maxTokens: numPredict ?? MAX_ANSWER, signal: AbortSignal.any([signal, stop.signal]), onThinking, tools: extra.tools,
+    model, messages, think, maxTokens: numPredict ?? MAX_ANSWER, signal: AbortSignal.any([signal, stop.signal]), onThinking, tools: extra.tools, toolChoice: extra.toolChoice,
     onText: (piece) => {
       sofar += piece;
       if (isLooping(sofar)) {
@@ -226,8 +233,8 @@ async function streamChatUnqueued(
 /** Every model call waits for a slot on the shared GPU (lib/admission); a full queue throws Busy. */
 const streamChat = (...args: Parameters<typeof streamChatUnqueued>) => admission.model.run(() => streamChatUnqueued(...args), args[4]);
 
-const chatOnce = async (chat: Provider, model: string, messages: Msg[], signal: AbortSignal, numPredict?: number) =>
-  (await streamChat(chat, model, messages, false, signal, undefined, undefined, numPredict)).trim();
+const chatOnce = async (chat: Provider, model: string, messages: Msg[], signal: AbortSignal, numPredict?: number, extra?: Parameters<typeof streamChatUnqueued>[8]) =>
+  (await streamChat(chat, model, messages, false, signal, undefined, undefined, numPredict, extra)).trim();
 
 export async function POST(req: Request) {
   const user = await requireApiUser(req);
@@ -552,53 +559,73 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         // through read-only tools (lib/lookup) adds what it finds to the documents block; everything after works on it
         // as before. Only where the documents weren't read whole, only on a model server that takes tools.
         let toolCalcs: string[] = [];
-        if (!fits && toolsOn(chat) && selected.some((d) => d.text.trim())) {
-          // In tokens, digits one each (cptOf): what the documents' share of the context still holds beside what is
-          // already in it. Found text, the tools' answers and the model's calls all come out of it (lib/lookup size).
-          const cpt = cptFor(model);
-          const tok = (s: string) => s.length / cptOf([s], cpt);
-          const room = Math.min(MAX_LOOKUP_CHARS / cpt, NUM_CTX - reservedFor(NUM_CTX) - tok(context) - tok(web));
-          if (room >= 700) {
-            status("Belgede eksik bilgi aranıyor…");
-            const sys = `${LOOKUP}${hint}${meaning}\n\n${DOCS}`;
-            // File and sheet names are the documents' own text: with them, in the data block, never in the instructions.
-            const docs = `${docBlock("bölüm", { konum: "Belgelerin bölümleri (bolum_oku için)" }, outline(selected))}\n\n${context}`;
-            // Its answer is a few tool calls, not MAX_ANSWER; what the tools add is counted at the documents' own rate.
-            let history: Msg[] | null = null;
-            try {
-              // + one step's calls and notes that may land after the last check of the room.
-              history = historyFor([sys, docs, web], { answer: LOOKUP_TOKENS, extraTokens: room + LOOKUP_TOKENS + 512 });
-            } catch (e) {
-              if (!(e instanceof TooLong)) throw e; // the question fits the answer call, just not beside a second look
-            }
-            const found = !history ? null : await lookup([{ role: "system", content: sys }, ...withDocs(history, docs)], {
-              docs: selected, seen, room, size: tok, status, aborted: () => signal.aborted,
-              search: async (q) => (await retrieve(selected, q, signal)).chunks,
-              ask: (m) => admission.model.run(async () => {
-                try {
-                  return await chat.chat({ model, messages: m, maxTokens: LOOKUP_TOKENS, signal, tools: TOOLS });
-                } catch (e) {
-                  // Served without --enable-auto-tool-choice: vLLM refuses the request. Tools off until a restart.
-                  if (!signal.aborted && e instanceof Error && e.message === "model_http_400") toolsRefused = true;
-                  if (!signal.aborted) logError("lookup", e);
-                  throw e;
-                }
-              }, signal),
-            });
-            if (found) console.info(`lookup: ${found.stop}, ${found.blocks.length} sections, ${found.calcs.length} calcs`);
-            if (found?.blocks.length) {
-              context += `\n\n${found.blocks.join("\n\n")}`;
-              meta.sources = [...new Set([...meta.sources, ...found.sources.map((s) => (selected.length > 1 ? `${s.doc} · ${s.label}` : s.label))])];
-              hint += "\n\nİlk aramadan sonra eksik bilgi için ek bölümler okundu; onlar da belgeler bloğunda.";
-            }
-            if (found?.calcs.length) {
-              toolCalcs = found.calcs;
-              hint += `\n\nBelgedeki sayılarla araçla yapılmış kesin hesaplar:\n${found.calcs.join("\n")}\nBu sonuçları kullan; cevapta işlemi bu haliyle yaz ve "hesaplanan" de.`;
-            }
-            // Stopped by a bound, not because the model had what it needed: the answer may rest on less than it looked for.
-            if (found?.stop === "limit" || found?.stop === "room") {
-              meta.note = [meta.note, "Ek belge araması sınırına ulaştı; cevap o ana kadar okunan bölümlere dayanıyor."].filter(Boolean).join(" ");
-            }
+        // One prefix for every call on the documents (second look, evidence gate, answer): the same system turn, the
+        // same conversation, the documents block first; what each call is for goes last, at the end of the latest user
+        // turn. vLLM's prefix cache then reads the documents once per question instead of once per call (seen live:
+        // 3.6 % cache hits, the first word after 80-100 s). The conversation is chosen once (`common`), with room for the
+        // second look's text and the longest task, so every call starts with the same tokens.
+        // ponytail: a thinking answer still differs from the first token (the template marks thinking in the system turn).
+        const head = `${SYSTEM}${hint}${meaning}${rule}\n\n${DOCS}`;
+        let later = ""; // what the second look found out, for the calls after it
+        const cpt = cptFor(model);
+        const tok = (s: string) => s.length / cptOf([s], cpt);
+        // In tokens, digits one each (cptOf): what the documents' share of the context still holds beside what is
+        // already in it. Found text, the tools' answers and the model's calls all come out of it (lib/lookup size).
+        let room = !fits && toolsOn(chat) && selected.some((d) => d.text.trim())
+          ? Math.min(MAX_LOOKUP_CHARS / cpt, NUM_CTX - reservedFor(NUM_CTX) - tok(context) - tok(web))
+          : 0;
+        if (room < 700) room = 0;
+        let common: Msg[] | null = null;
+        for (const extra of room ? [room, 0] : [0]) {
+          try {
+            common = historyFor([head, context, web], { extraTokens: extra + TASK_TOKENS });
+            room = extra;
+            break;
+          } catch (e) {
+            if (!(e instanceof TooLong)) throw e; // no common prefix: each call chooses its own (and may say TooLong)
+          }
+        }
+        if (!common) room = 0;
+        const listed = () => toolList(chat);
+        const docCall = (task: string, o: { answer?: number; extraTokens?: number; spent?: string[] } = {}): Msg[] => {
+          const own = !common || !!o.spent?.length || tok(task) > TASK_TOKENS;
+          const h = own ? historyFor([head, context, web, task, ...(o.spent ?? [])], o) : common!;
+          return promptFor(head, h, context, [web, task]);
+        };
+        // Plan P6: the first search's sections or a long document's notes may miss what the question needs. A second look
+        // through read-only tools (lib/lookup) adds what it finds to the documents block; everything after works on it
+        // as before. Only where the documents weren't read whole, only on a model server that takes tools.
+        if (room) {
+          status("Belgede eksik bilgi aranıyor…");
+          // File and sheet names are the documents' own text: in a data block, never in the instructions.
+          const task = `${LOOKUP}\n\n${docBlock("bölüm", { konum: "Belgelerin bölümleri (bolum_oku için)" }, outline(selected))}`;
+          const found = await lookup(docCall(task, { answer: LOOKUP_TOKENS, extraTokens: room + LOOKUP_TOKENS + 512 }), {
+            docs: selected, seen, room, size: tok, status, aborted: () => signal.aborted,
+            search: async (q) => (await retrieve(selected, q, signal)).chunks,
+            ask: (m) => admission.model.run(async () => {
+              try {
+                return await chat.chat({ model, messages: m, maxTokens: LOOKUP_TOKENS, signal, tools: listed() });
+              } catch (e) {
+                // Served without --enable-auto-tool-choice: vLLM refuses the request. Tools off until a restart.
+                if (!signal.aborted && e instanceof Error && e.message === "model_http_400") toolsRefused = true;
+                if (!signal.aborted) logError("lookup", e);
+                throw e;
+              }
+            }, signal),
+          });
+          console.info(`lookup: ${found.stop}, ${found.blocks.length} sections, ${found.calcs.length} calcs`);
+          if (found.blocks.length) {
+            context += `\n\n${found.blocks.join("\n\n")}`;
+            meta.sources = [...new Set([...meta.sources, ...found.sources.map((x) => (selected.length > 1 ? `${x.doc} · ${x.label}` : x.label))])];
+            later += "\n\nİlk aramadan sonra eksik bilgi için ek bölümler okundu; onlar da belgeler bloğunda.";
+          }
+          if (found.calcs.length) {
+            toolCalcs = found.calcs;
+            later += `\n\nBelgedeki sayılarla araçla yapılmış kesin hesaplar:\n${found.calcs.join("\n")}\nBu sonuçları kullan; cevapta işlemi bu haliyle yaz ve "hesaplanan" de.`;
+          }
+          // Stopped by a bound, not because the model had what it needed: the answer may rest on less than it looked for.
+          if (found.stop === "limit" || found.stop === "room") {
+            meta.note = [meta.note, "Ek belge araması sınırına ulaştı; cevap o ana kadar okunan bölümlere dayanıyor."].filter(Boolean).join(" ");
           }
         }
         // One specific fact, and no sentence in the documents states it: no answer is written, so none can fill the gap
@@ -615,7 +642,18 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         const factGate = !!SEARCH_URL && !pages.length && !urls.length && scope !== "all" && meta.mode !== "scan";
         if (selected.some((d) => d.text.trim())) {
           status("Belgede kanıt aranıyor…");
-          const said = await chatOnce(chat, model, [{ role: "system", content: `${EVIDENCE}${hint}${meaning}\n\n${DOCS}` }, ...withDocs(historyFor([EVIDENCE, hint, meaning, DOCS, context]), context)], signal, EVIDENCE_TOKENS).catch((e) => {
+          // The tools listed but not callable: the template renders them before the documents, so the same list on every
+          // call on the documents keeps their shared prefix.
+          const gateCall = () => chatOnce(chat, model, docCall(`${EVIDENCE}${later}`), signal, EVIDENCE_TOKENS, { tools: listed(), toolChoice: "none" });
+          const said = await gateCall().catch((e) => {
+            // A server that refuses tools: tools off until a restart, the gate asked again without them.
+            if (!signal.aborted && listed() && e instanceof Error && e.message === "model_http_400") {
+              toolsRefused = true;
+              logError("tools", e);
+              return gateCall();
+            }
+            throw e;
+          }).catch((e) => {
             if (signal.aborted) throw e;
             logError("evidence", e);
             return "";
@@ -642,18 +680,18 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             build: (exchange, note) => {
               const spent = exchange.map((m) => m.content + (m.toolCalls ?? []).map((c) => c.name + c.arguments).join(""));
               try {
-                return [{ role: "system", content: `${SYSTEM}${hint}${meaning}${plain}${rule}${note}\n\n${DOCS}` }, ...withWeb(withDocs(historyFor([SYSTEM, hint, meaning, plain, rule, note, DOCS, context, web, ...spent]), context)), ...exchange];
+                return [...docCall(`${later}${plain}${note}`.trim(), { spent }), ...exchange];
               } catch (e) {
                 if (e instanceof TooLong) return null;
                 throw e;
               }
             },
-            call: async (m, tools) => {
+            call: async (m, offered) => {
               let calls: ToolCall[] = [];
               const text = await streamChat(chat, model, m, think, signal, send, (n) => {
                 // Keeps the connection busy and shows the wait isn't stuck.
                 if (n % 50 === 0) status("Düşünüyor…");
-              }, undefined, { tools, onCalls: (c) => (calls = c) });
+              }, undefined, { tools: listed(), toolChoice: offered ? "auto" : "none", onCalls: (c) => (calls = c) });
               return { text, calls };
             },
             toolsOn: () => toolsOn(chat),

@@ -27,6 +27,8 @@ export interface ChatOpts {
   json?: boolean;
   /** Tools the model may call (vLLM with --enable-auto-tool-choice); the calls come back in ChatResult.toolCalls. */
   tools?: ToolDef[];
+  /** "none": the tools are listed (the template renders them, so calls share a prefix) but the model can't call one. */
+  toolChoice?: "auto" | "none";
 }
 
 export interface ChatResult {
@@ -143,7 +145,7 @@ function openai(base: string, apiKey: string | undefined): Provider {
       : { role: m.role, content: m.content };
   return {
     kind: "openai",
-    async chat({ model, messages, think = false, maxTokens, signal, onText, onThinking, json, tools }) {
+    async chat({ model, messages, think = false, maxTokens, signal, onText, onThinking, json, tools, toolChoice = "auto" }) {
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
         signal,
@@ -159,7 +161,7 @@ function openai(base: string, apiKey: string | undefined): Provider {
           chat_template_kwargs: { enable_thinking: think },
           ...(isGptOss(model) ? { reasoning_effort: effort(think) } : {}),
           ...(json ? { response_format: { type: "json_object" } } : {}),
-          ...(tools?.length ? { tools: tools.map((t) => ({ type: "function", function: t })), tool_choice: "auto" } : {}),
+          ...(tools?.length ? { tools: tools.map((t) => ({ type: "function", function: t })), tool_choice: toolChoice } : {}),
         }),
       });
       if (!res.ok || !res.body) throw new Error(`model_http_${res.status}`);
