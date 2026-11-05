@@ -4,7 +4,12 @@ import { inflateRaw } from "node:zlib";
 
 const inflate = promisify(inflateRaw);
 
-export const ZIP_LIMITS = { totalBytes: 200 * 1024 * 1024, entries: 10_000 };
+/**
+ * `partBytes`: one part inflated, for the files read through a DOM (Word's body, a slide), which holds a part in memory
+ * many times over; a real one is a few MB. Not for workbooks: SheetJS reads without a DOM, and one sheet of a few hundred
+ * thousand rows is past 100 MB of XML (their total limit stays).
+ */
+export const ZIP_LIMITS = { totalBytes: 200 * 1024 * 1024, entries: 10_000, partBytes: 100 * 1024 * 1024 };
 
 const startsWith = (buf: Uint8Array, sig: number[]) => sig.every((b, i) => buf[i] === b);
 const PDF = [0x25, 0x50, 0x44, 0x46, 0x2d]; // %PDF-
@@ -21,8 +26,9 @@ export async function contentProblem(ext: string, buf: Uint8Array): Promise<stri
       // Readers accept junk before the header, but our files come from office tools: header must lead (within 1 KB).
       return indexOf(buf.subarray(0, 1024), PDF) >= 0 ? null : bad;
     case "docx":
-    case "xlsx":
     case "pptx":
+      return startsWith(buf, ZIP) ? zipProblem(buf, ZIP_LIMITS.partBytes) : bad;
+    case "xlsx":
       return startsWith(buf, ZIP) ? zipProblem(buf) : bad;
     case "xls":
       // Some tools save xlsx content as .xls: then it gets the same zip-bomb check.
@@ -46,19 +52,23 @@ export async function contentProblem(ext: string, buf: Uint8Array): Promise<stri
   }
 }
 
-async function zipProblem(buf: Uint8Array): Promise<string | null> {
+async function zipProblem(buf: Uint8Array, partBytes = ZIP_LIMITS.totalBytes): Promise<string | null> {
   const z = zipTotals(buf);
   // Also ZIP64-format archives: never written by Word/Excel/LibreOffice for files this size; re-saving fixes it.
   if (!z) return "Dosyanın iç yapısı desteklenmiyor ya da bozuk. Dosyayı Word/Excel'de açıp yeniden kaydederek tekrar deneyin.";
   const tooBig = "Dosya açıldığında çok büyük (sıkıştırılmış içerik sınırı aşıldı).";
   if (z.entries > ZIP_LIMITS.entries || z.uncompressed > ZIP_LIMITS.totalBytes) return tooBig;
   // Declared sizes are the uploader's word. Inflate for real, capped, before any parser sees the file.
-  const actual = await inflatedSize(buf, ZIP_LIMITS.totalBytes);
+  const actual = await inflatedSize(buf, ZIP_LIMITS.totalBytes, partBytes);
+  if (actual === "part_too_big") return "Dosyanın bir bölümü (bir sayfa ya da belge gövdesi) açıldığında çok büyük. Dosyayı bölerek yükleyin.";
   return actual === "corrupt" ? "Dosya bozuk görünüyor (ZIP içeriği açılamadı)." : actual === "too_big" ? tooBig : null;
 }
 
-/** Real total of all entries (stored + deflate), stopping as soon as it passes `max`. */
-export async function inflatedSize(buf: Uint8Array, max: number): Promise<number | "too_big" | "corrupt"> {
+/**
+ * Real total of all entries (stored + deflate), stopping as soon as it passes `max`, or as soon as one entry passes
+ * `maxPart` ("part_too_big").
+ */
+export async function inflatedSize(buf: Uint8Array, max: number, maxPart = max): Promise<number | "too_big" | "part_too_big" | "corrupt"> {
   const v = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const entries = zipEntries(buf);
   if (!entries) return "corrupt";
@@ -68,13 +78,22 @@ export async function inflatedSize(buf: Uint8Array, max: number): Promise<number
     const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
     if (start + csize > buf.length) return "corrupt";
     const data = buf.subarray(start, start + csize);
-    if (method === 0) total += csize;
-    else if (method === 8) {
+    if (method === 0) {
+      if (csize > maxPart && maxPart < max - total) return "part_too_big";
+      total += csize;
+    } else if (method === 8) {
+      // Stopped at whichever comes first: the rest of the total, or one part's limit.
+      const room = Math.min(max - total, maxPart);
+      let n: number;
       try {
-        total += (await inflate(data, { maxOutputLength: max - total + 1 })).byteLength;
+        n = (await inflate(data, { maxOutputLength: room + 1 })).byteLength;
       } catch (e) {
-        return (e as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE" ? "too_big" : "corrupt";
+        if ((e as NodeJS.ErrnoException).code !== "ERR_BUFFER_TOO_LARGE") return "corrupt";
+        n = room + 1;
       }
+      // Past the part's limit while the total still had room: the part; else the total.
+      if (n > maxPart && maxPart < max - total) return "part_too_big";
+      total += n;
     } else return "corrupt"; // office files only use stored/deflate
     if (total > max) return "too_big";
   }

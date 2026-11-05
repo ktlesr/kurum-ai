@@ -104,6 +104,22 @@ test("real inflate: honest files pass, a bomb that lies about its size is caught
   assert.match((await contentProblem("docx", bomb))!, /çok büyük/);
 });
 
+test("one part past its own limit is refused, though the total is under the total's; parts under it pass", async () => {
+  assert.equal(await inflatedSize(zip([{ data: bytes(3000) }, { data: bytes(3000) }]), 10_000, 4000), 6000, "each part under 4000");
+  assert.equal(await inflatedSize(zip([{ data: bytes(5000) }]), 10_000, 4000), "part_too_big");
+  assert.equal(await inflatedSize(zip([{ data: bytes(5000), stored: true }]), 10_000, 4000), "part_too_big");
+  assert.equal(await inflatedSize(zip([{ data: bytes(3000) }, { data: bytes(3000) }, { data: bytes(3000) }, { data: bytes(3000) }]), 10_000, 4000), "too_big", "the total still counts");
+  assert.equal(await inflatedSize(zip([{ data: bytes(4000) }]), 10_000, 4000), 4000, "exactly at the part's limit passes");
+  assert.equal(await inflatedSize(zip([{ data: bytes(8000) }, { data: bytes(3000) }]), 10_000, 4000), "part_too_big");
+  assert.equal(await inflatedSize(zip([{ data: bytes(3000) }, { data: bytes(3000) }, { data: bytes(3500) }]), 10_000, 4000), 9500);
+  assert.equal(await inflatedSize(zip([{ data: bytes(3000) }, { data: bytes(3000) }, { data: bytes(3000) }, { data: bytes(3900) }]), 10_000, 4000), "too_big", "the total's room, not the part's, ran out");
+  const big = zip([{ data: bytes(ZIP_LIMITS.partBytes + 1), declared: 10 }]);
+  assert.match((await contentProblem("docx", big))!, /bir bölümü .* çok büyük/u);
+  assert.match((await contentProblem("pptx", big))!, /bir bölümü .* çok büyük/u);
+  // A workbook's one big sheet is still read (its total limit only), as before.
+  assert.equal(await contentProblem("xlsx", big), null);
+});
+
 test("docx/xlsx/xls-as-zip: declared bomb, broken zip, mismatched content", async () => {
   assert.equal(await contentProblem("docx", zip([{ data: bytes(1000) }])), null);
   assert.match((await contentProblem("xlsx", zip([{ data: bytes(1), declared: ZIP_LIMITS.totalBytes + 1 }])))!, /çok büyük/);
