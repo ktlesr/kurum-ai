@@ -42,6 +42,26 @@ const MIGRATIONS = [
   // Where a user's sign-in details are mailed; a password someone else has seen (it was mailed) is changed at the next sign-in.
   `ALTER TABLE users ADD COLUMN email text;
   ALTER TABLE users ADD COLUMN must_change_password boolean NOT NULL DEFAULT false;`,
+  // The shared folder's content index (lib/doc-indexer): sections of each file's text, found by full-text search. Only
+  // derived data: dropping both tables loses nothing but the time to read the files again.
+  `CREATE TABLE doc_files (
+    file_id text PRIMARY KEY,
+    version text NOT NULL,
+    status text NOT NULL CHECK (status IN ('ok', 'failed', 'retry')),
+    error text,
+    fails int NOT NULL DEFAULT 0,
+    at timestamptz NOT NULL DEFAULT now(),
+    gone_since timestamptz
+  );
+  CREATE TABLE doc_sections (
+    file_id text NOT NULL,
+    ord int NOT NULL,
+    label text NOT NULL,
+    body text NOT NULL,
+    tsv tsvector NOT NULL,
+    PRIMARY KEY (file_id, ord)
+  );
+  CREATE INDEX doc_sections_tsv ON doc_sections USING gin (tsv);`,
 ];
 
 async function migrate(sql: postgres.Sql) {

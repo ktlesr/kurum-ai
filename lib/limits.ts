@@ -1,5 +1,14 @@
 // Admission control for the shared GPU/CPU (plan §8: chat, OCR and vision share one machine; audit S7).
 // Pure, per process — fine because lib/boot allows one instance per database.
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const backgroundWork = new AsyncLocalStorage<true>();
+/**
+ * Runs `fn` as background work (the content index reading a file): every slot it takes on the way, however deep (Docling,
+ * the vision model inside an extraction), is taken as background — not counted as use for idleFor, and not as someone
+ * waiting in `queued`.
+ */
+export const asBackground = <T>(fn: () => Promise<T>): Promise<T> => backgroundWork.run(true, fn);
 
 /** Thrown when the wait queue is full: map to HTTP 429. */
 export class Busy extends Error {
@@ -8,10 +17,14 @@ export class Busy extends Error {
   }
 }
 
-/** At most `slots` holders at once; up to `maxQueue` more wait in FIFO order, beyond that → Busy. */
+/**
+ * At most `slots` holders at once; up to `maxQueue` more wait in FIFO order, beyond that → Busy. Background work waits
+ * in a queue of its own size and behind every person: a freed slot goes to the first person waiting, and background
+ * waiters never fill the queue a person is refused for.
+ */
 export class Semaphore {
   private used = 0;
-  private waiting: { go: () => void; fail: (e: unknown) => void }[] = [];
+  private waiting: { go: () => void; fail: (e: unknown) => void; background: boolean }[] = [];
   readonly slots: number;
   readonly maxQueue: number;
   // No parameter properties: node --test strips types only (scripts/tests run this file unbundled).
@@ -22,7 +35,12 @@ export class Semaphore {
 
   /** True when a new caller would be refused outright (all slots busy and the queue full). */
   get saturated() {
-    return this.used >= this.slots && this.waiting.length >= this.maxQueue;
+    return this.used >= this.slots && this.queued >= this.maxQueue;
+  }
+
+  /** How many people are waiting for a slot, background work not counted (it steps aside when someone is). */
+  get queued() {
+    return this.waiting.filter((w) => !w.background).length;
   }
 
   /** True when a caller would have to wait (lets the UI say "sırada"). */
@@ -33,11 +51,12 @@ export class Semaphore {
   /** `background`: work that mustn't count as use for idleFor (a caption's own call would hold back the next one). */
   async acquire(signal?: AbortSignal, background = false): Promise<() => void> {
     signal?.throwIfAborted();
+    background ||= backgroundWork.getStore() === true;
     if (this.used < this.slots) {
       this.used++;
       return this.releaser(background);
     }
-    if (this.waiting.length >= this.maxQueue) throw new Busy();
+    if (this.waiting.filter((w) => w.background === background).length >= this.maxQueue) throw new Busy();
     await new Promise<void>((go, fail) => {
       const entry = {
         go: () => {
@@ -45,6 +64,7 @@ export class Semaphore {
           go();
         },
         fail,
+        background,
       };
       const onAbort = () => {
         this.waiting = this.waiting.filter((w) => w !== entry);
@@ -70,7 +90,9 @@ export class Semaphore {
     return () => {
       if (done) return;
       done = true;
-      const next = this.waiting.shift();
+      // A person first, then background work; FIFO within each.
+      const i = this.waiting.findIndex((w) => !w.background);
+      const next = i >= 0 ? this.waiting.splice(i, 1)[0] : this.waiting.shift();
       if (next) next.go(); // hand the slot over directly: no window where a newcomer could jump the queue
       else this.used--;
       if (!background) this.lastUsed = Date.now();

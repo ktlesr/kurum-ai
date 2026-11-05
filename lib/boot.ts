@@ -39,6 +39,7 @@ export async function boot() {
   g.__instanceLock = lock;
   // After the lock: one worker per database, whatever else is starting.
   (await import("./gallery")).startGalleryWorker();
+  (await import("./doc-indexer")).startDocIndexer();
 
   // Belt and braces: confirm the lock is still held by this very session (catches a silent reconnect).
   setInterval(async () => {

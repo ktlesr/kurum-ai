@@ -20,7 +20,7 @@ export const MAX_FOUND = 30;
 
 /** Words about the asking, not the files. */
 const STOP = new Set(["ile", "ilgili", "icin", "olan", "en", "son", "guncel", "yeni", "eski", "hangi", "hangisi", "hangileri", "ne", "zaman", "nerede", "var", "mi", "mu", "ve", "veya", "bir", "bu", "su", "ortak", "ortakta", "ortaktaki", "klasor", "klasoru", "klasorde", "klasorunde", "klasorundeki", "klasorleri", "klasorlerinde", "dosya", "dosyasi", "dosyalar", "dosyalari", "belge", "belgeler", "belgesi", "icinde", "icerisinde", "ara", "bul", "listele", "goster", "hazirlanan", "yapilan", "yapilmis"]);
-const words = (s: string) => (foldTr(s).match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => (w.length >= 3 || /^\d+$/u.test(w)) && !STOP.has(w));
+export const words = (s: string) => (foldTr(s).match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => (w.length >= 3 || /^\d+$/u.test(w)) && !STOP.has(w));
 /** "sunumu" finds "Sunum", "kooperatifinin" finds "Kooperatif": a path word at the start of the asked one, or the other way. */
 const meets = (asked: string, have: string) => have.startsWith(asked) || (have.length >= 4 && asked.startsWith(have));
 

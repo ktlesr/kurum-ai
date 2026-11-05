@@ -5,6 +5,8 @@ import { asksForOutline, docOutline, outlineMarkdown } from "@/lib/outline";
 import { cptFor, docsOf, getDoc, recordTokens, type Doc } from "@/lib/server";
 import { isSharedId, sharedDoc, sharedFilesFor, sharedFor, type SharedEntry } from "@/lib/library";
 import { filesCall, FILES_RULE, FILES_TOOL, type FileEntry } from "@/lib/file-search";
+import { CONTENT_RULE } from "@/lib/doc-index";
+import { CONTENT_TOOL, contentCall } from "@/lib/doc-indexer";
 import { PICK_PROMPT, pickFrom, pickerInput, planSources, type SourceEntry } from "@/lib/sources";
 import { parseFile, parsePdf, UserError } from "@/lib/parse";
 import { withJobDir } from "@/lib/workspace";
@@ -526,7 +528,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
               let calls: ToolCall[] = [];
               const text = await streamChat(chat, model, m, think, signal, send, (n) => {
                 if (n % 50 === 0) status("Düşünüyor…");
-              }, undefined, offered ? { tools: [FILES_TOOL], onCalls: (c) => (calls = c) } : {});
+              }, undefined, offered ? { tools: [FILES_TOOL, CONTENT_TOOL], onCalls: (c) => (calls = c) } : {});
               return { text, calls };
             },
             toolsOn: () => toolsOn(chat),
@@ -542,10 +544,14 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             },
             status,
             tools: {
-              rule: FILES_RULE,
-              folded: "dosya_ara aracının bulduğu dosyalar (bunlara dayanarak cevap ver):",
+              rule: FILES_RULE + CONTENT_RULE,
+              folded: "dosya_ara ve belge_ara araçlarının bulduğu dosyalar (bunlara dayanarak cevap ver):",
               busy: "Dosyalar aranıyor…",
               run: async (c) => {
+                if (c.name === CONTENT_TOOL.name) {
+                  const out = await contentCall(user, c.arguments);
+                  return { out, line: out };
+                }
                 if (c.name !== FILES_TOOL.name) return { out: `HATA: bilinmeyen araç "${c.name}".` };
                 const out = filesCall(c.arguments, await filesFor());
                 return { out, line: out };

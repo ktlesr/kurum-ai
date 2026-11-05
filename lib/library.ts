@@ -66,6 +66,8 @@ interface State {
   skipped: Skipped | null;
   dirs: string[];
   swept: number;
+  /** The last scan ended well and may be taken as the folder's contents (safeToForget): what is missing from it is gone. */
+  clean?: boolean;
   rules?: { at: number; rules: FolderRule[] };
 }
 const g = globalThis as typeof globalThis & { __shared2?: State };
@@ -98,7 +100,8 @@ function refresh(): Promise<void> {
       state.dirs = r.dirs;
       state.ok = true;
       state.error = undefined;
-      if (safeToForget(before, state.list.length, r.skipped)) sweepCache();
+      state.clean = safeToForget(before, state.list.length, r.skipped);
+      if (state.clean) sweepCache();
     } catch (e) {
       // A folder that was never set up is an empty library, as it always was; a share that was there and went away is an outage.
       const code = e instanceof ScanFailed ? e.message : "unreadable";
@@ -107,6 +110,7 @@ function refresh(): Promise<void> {
         state.error = undefined;
       } else {
         state.ok = false;
+        state.clean = false;
         state.error = code;
         if (!(e instanceof ScanFailed)) logError("library", e);
       }
@@ -162,6 +166,8 @@ export async function sharedFilesFor(who: Viewer): Promise<{ path: string; size:
   return rs ? all.filter((f) => f.readable || canSee(f.path, who, rs)) : all.filter((f) => f.readable);
 }
 export const libraryDown = () => !state.ok;
+/** The readable files' ids when the last scan may be taken as the folder's contents, else null (lib/doc-indexer's sweep). */
+export const cleanScanIds = (): string[] | null => (state.ok && state.clean ? state.list.map((e) => e.id) : null);
 export const filePathOf = (e: SharedEntry) => path.join(ROOT(), ...e.path.split("/"));
 
 export async function libraryStatus(): Promise<LibraryStatus> {
@@ -220,17 +226,22 @@ function sweepCache() {
   }
 }
 
-/** The document's text, extracted on first use; a changed file (new content) is extracted again. */
-export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => void, signal: AbortSignal): Promise<Doc> {
+/**
+ * The document's text, extracted on first use; a changed file (new content) is extracted again.
+ * `keep: false` (the background content index): read through the same cache, but not kept in memory, so a folder's worth
+ * of files doesn't push out the documents chats are using (and the search vectors computed for them); not shared with a
+ * chat asking for the same file meanwhile (that one reads on its own), so `signal` can stop it halfway.
+ */
+export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => void, signal: AbortSignal, keep = true): Promise<Doc> {
   // Same size and time: no need to read and hash the file again.
   const key = `${e.id}:${e.size}:${e.mtime}`;
   const had = state.loaded.get(key);
   if (had) return had;
-  const running = state.running.get(key);
+  const running = keep ? state.running.get(key) : undefined;
   if (running) return running;
   // Held from reading the file to the end of extraction: the same global limit as uploads (a full queue is refused).
   const job = admission.upload.run(async () => {
-    const buf = await readWithin(filePathOf(e), READ_MS).catch(() => {
+    const buf = await readWithin(filePathOf(e), READ_MS, keep ? undefined : signal).catch(() => {
       throw new UserError("ortak klasördeki dosyaya şu an ulaşılamıyor");
     });
     const hash = createHash("sha256").update(buf).digest("hex");
@@ -249,18 +260,20 @@ export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => v
       const problem = await contentProblem(ext, buf).catch(() => "Dosya okunamadı.");
       if (problem) throw new UserError(problem);
       // One request's cancel must not fail another waiting for the same file: extraction runs to its end.
-      const parsed = await withJobDir((dir) => parseFile(e.name, buf, () => {}, new AbortController().signal, dir));
+      // A background read stops when told (someone is waiting for Docling): nobody else waits on it, it isn't in `running`.
+      const parsed = await withJobDir((dir) => parseFile(e.name, buf, () => {}, keep ? new AbortController().signal : signal, dir));
       doc = { id: e.id, ownerId: "shared", sourceHash: hash, name, size: e.size, chars: parsed.text.length, ...parsed } as Doc;
       mkdirSync(CACHE, { recursive: true });
       writeFileAtomic(file, JSON.stringify({ ...doc, chunks: undefined, chunksKey: undefined, digests: undefined }));
     }
     remember(file, key);
+    if (!keep) return doc;
     state.loaded.set(key, doc);
     // ponytail: oldest out first; a large library's most used documents are simply loaded again from the cache.
     if (state.loaded.size > MAX_LOADED) state.loaded.delete(state.loaded.keys().next().value as string);
     return doc;
-  }, new AbortController().signal).finally(() => state.running.delete(key));
-  state.running.set(key, job);
+  }, keep ? new AbortController().signal : signal).finally(() => keep && state.running.delete(key));
+  if (keep) state.running.set(key, job);
   onProgress(e.path);
   signal.throwIfAborted();
   return job;

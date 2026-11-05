@@ -66,3 +66,45 @@ test("Semaphore: background work doesn't count as use for idleFor", async () => 
   await s.run(async () => {});
   assert.ok(!s.idleFor(60_000), "a chat's call does count");
 });
+
+test("semaphore: background work (asBackground, however deep) is neither use for idleFor nor someone queued", async () => {
+  const { asBackground } = await import("./limits.ts");
+  const s = new Semaphore(1, 4);
+  let release!: () => void;
+  await asBackground(async () => {
+    release = await s.acquire();
+  });
+  // A second background call queued behind it: its own work, nobody waiting.
+  const own = asBackground(() => s.run(async () => {}));
+  await tick();
+  assert.equal(s.queued, 0);
+  const person = s.acquire();
+  assert.equal(s.queued, 1);
+  release();
+  (await person)(); // the person first, though queued later
+  await own;
+  assert.equal(s.queued, 0);
+  const bg = new Semaphore(1, 4);
+  await asBackground(() => bg.run(async () => {}));
+  assert.equal(bg.idleFor(60_000), true, "background use leaves the semaphore idle");
+});
+
+test("semaphore: a full background queue never refuses a person, and a freed slot goes to the person first", async () => {
+  const { asBackground } = await import("./limits.ts");
+  const s = new Semaphore(1, 2);
+  const order: string[] = [];
+  let release!: () => void;
+  await asBackground(async () => {
+    release = await s.acquire();
+  });
+  // A table's strips read side by side: the background queue full.
+  const strips = [1, 2].map((n) => asBackground(() => s.run(async () => void order.push(`strip${n}`))));
+  await tick();
+  await assert.rejects(asBackground(() => s.acquire()), Busy, "background bounded by its own queue");
+  const person = s.run(async () => void order.push("person"));
+  assert.equal(s.queued, 1);
+  assert.equal(s.saturated, false);
+  release();
+  await Promise.all([person, ...strips]);
+  assert.deepEqual(order, ["person", "strip1", "strip2"]);
+});
