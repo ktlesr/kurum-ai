@@ -3,6 +3,7 @@
 // read, and only what the person may see is passed in (lib/library filesFor, the folder rules). Pure: tests drive it.
 
 import { foldTr } from "./gallery-search.ts";
+import { nameDate, todayKey, type NameDate } from "./name-date.ts";
 import type { ToolDef } from "./provider.ts";
 
 export interface FileEntry {
@@ -14,7 +15,8 @@ export interface FileEntry {
   readable: boolean;
 }
 
-export interface FileQuery { sorgu?: string; klasor?: string; siralama?: "yeni" | "ilgi" }
+/** yeni: the newest by what the file is about (its name's date, else its file time); degisiklik: by file time alone. */
+export interface FileQuery { sorgu?: string; klasor?: string; siralama?: "yeni" | "degisiklik" | "ilgi" }
 
 export const MAX_FOUND = 30;
 
@@ -27,11 +29,24 @@ const meets = (asked: string, have: string) => have.startsWith(asked) || (have.l
 const day = (ms: number) => new Date(ms).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Istanbul" });
 const sizeOf = (b: number) => (b >= 1 << 20 ? `${(b / (1 << 20)).toFixed(1).replace(".", ",")} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 
+const keyOfTime = (ms: number) => {
+  const [d, m, y] = new Date(ms).toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul", day: "2-digit", month: "2-digit", year: "numeric" }).split(".").map(Number);
+  return y * 10000 + m * 100 + d;
+};
+
+/**
+ * How new a file is: the date its name or folders give ("Mart 2026", "2026/…"), else its file time, which a copy or a
+ * restore changes. A name date later than today is a plan or a forecast ("Taslak 2027"), never the latest: after every
+ * other file (and among such files, by file time).
+ */
+export const recency = (f: FileEntry, nd: NameDate | null, today: number) => (nd && nd.key > today ? -1 : nd ? nd.key : f.mtime ? keyOfTime(f.mtime) : 0);
+
 /**
  * Files matching the words (most matched first, then newest), within a folder when one is named (every word of it in
- * the file's folders), or the newest first when asked so. A Markdown table for the model: path, date, size, readable.
+ * the file's folders), or the newest first when asked so (recency). A Markdown table for the model: path, file time,
+ * the name's date and where it came from, size, readable.
  */
-export function findFiles(all: readonly FileEntry[], q: FileQuery, max = MAX_FOUND): { text: string; count: number } {
+export function findFiles(all: readonly FileEntry[], q: FileQuery, max = MAX_FOUND, now = Date.now()): { text: string; count: number } {
   const asked = words(q.sorgu ?? "");
   const folder = words(q.klasor ?? "");
   const scored = all.flatMap((f) => {
@@ -40,20 +55,23 @@ export function findFiles(all: readonly FileEntry[], q: FileQuery, max = MAX_FOU
     // A word in the file's own name counts twice one only in its folders ("Sunum/…" names every file under it).
     const name = words(f.path.split("/").pop() ?? "");
     const score = asked.reduce((n, w) => n + (name.some((h) => meets(w, h)) ? 2 : dirs.some((h) => meets(w, h)) ? 1 : 0), 0);
-    return asked.length && !score ? [] : [{ f, score }];
+    return asked.length && !score ? [] : [{ f, score, nd: nameDate(f.path) }];
   });
-  const newest = (a: { f: FileEntry }, b: { f: FileEntry }) => (b.f.mtime ?? 0) - (a.f.mtime ?? 0);
-  scored.sort(q.siralama === "yeni" ? newest : (a, b) => b.score - a.score || newest(a, b));
+  const today = todayKey(now);
+  const newest = (a: (typeof scored)[number], b: (typeof scored)[number]) => recency(b.f, b.nd, today) - recency(a.f, a.nd, today) || (b.f.mtime ?? 0) - (a.f.mtime ?? 0);
+  const changed = (a: (typeof scored)[number], b: (typeof scored)[number]) => (b.f.mtime ?? 0) - (a.f.mtime ?? 0);
+  scored.sort(q.siralama === "yeni" ? newest : q.siralama === "degisiklik" ? changed : (a, b) => b.score - a.score || newest(a, b));
   const shown = scored.slice(0, max);
   const asks = [q.sorgu && `"${q.sorgu}"`, q.klasor && `klasör "${q.klasor}"`].filter(Boolean).join(", ") || "tüm dosyalar";
   if (!shown.length) return { text: `Dosya arama (${asks}): eşleşen dosya yok. Başka kelimelerle ya da klasör adı vermeden yeniden aranabilir.`, count: 0 };
-  const rows = shown.map(({ f }) => `| ${f.path.replace(/\|/gu, "\\|")} | ${f.mtime ? day(f.mtime) : "—"} | ${sizeOf(f.size)} | ${f.readable ? "evet" : "hayır"} |`);
+  const named = (nd: NameDate | null) => (nd ? `${nd.shown} (${nd.from}${nd.key > today ? ", ileri tarih" : ""})` : "—");
+  const rows = shown.map(({ f, nd }) => `| ${f.path.replace(/\|/gu, "\\|")} | ${f.mtime ? day(f.mtime) : "—"} | ${named(nd)} | ${sizeOf(f.size)} | ${f.readable ? "evet" : "hayır"} |`);
   return {
     text: [
-      `Dosya arama (${asks}): ${scored.length} dosya eşleşti${scored.length > max ? `, ilk ${max} tanesi` : ""}${q.siralama === "yeni" ? ", en yeni önce" : ""}.`,
+      `Dosya arama (${asks}): ${scored.length} dosya eşleşti${scored.length > max ? `, ilk ${max} tanesi` : ""}${q.siralama === "yeni" ? ", en yeni önce (adındaki ya da klasöründeki tarihe göre, o yoksa son değiştirilme tarihine göre; adında ileri bir tarih olanlar en sonda)" : q.siralama === "degisiklik" ? ", en son değiştirilen önce (yalnızca son değiştirilme tarihine göre)" : ""}.`,
       "",
-      "| Yol | Son değiştirilme | Boyut | İçeriği okunabilir |",
-      "| --- | --- | --- | --- |",
+      "| Yol | Son değiştirilme | Adındaki tarih | Boyut | İçeriği okunabilir |",
+      "| --- | --- | --- | --- | --- |",
       ...rows,
     ].join("\n"),
     count: scored.length,
@@ -71,7 +89,7 @@ export function filesCall(args: string, all: readonly FileEntry[]): string {
   if (!a || typeof a !== "object" || Array.isArray(a)) return "HATA: argümanlar bir JSON nesnesi olmalı.";
   const o = a as Record<string, unknown>;
   const str = (k: string) => (typeof o[k] === "string" ? (o[k] as string).slice(0, 300) : undefined);
-  return findFiles(all, { sorgu: str("sorgu"), klasor: str("klasor"), siralama: o.siralama === "yeni" ? "yeni" : "ilgi" }).text;
+  return findFiles(all, { sorgu: str("sorgu"), klasor: str("klasor"), siralama: o.siralama === "yeni" || o.siralama === "degisiklik" ? o.siralama : "ilgi" }).text;
 }
 
 export const FILES_TOOL: ToolDef = {
@@ -82,10 +100,10 @@ export const FILES_TOOL: ToolDef = {
     properties: {
       sorgu: { type: "string", description: "Dosya ya da klasör adında geçmesi beklenen kelimeler (ör. \"ekspertiz raporu\", \"cumhurbaşkanı yardımcısı sunum\")" },
       klasor: { type: "string", description: "Yalnızca bu klasörün altında ara (ör. \"Ajans Tanıtım ve Brifing/Sunum/2025\")" },
-      siralama: { type: "string", enum: ["yeni", "ilgi"], description: "yeni: en son değişen önce; ilgi: en çok eşleşen önce" },
+      siralama: { type: "string", enum: ["yeni", "degisiklik", "ilgi"], description: "yeni: en güncel dönem önce (dosya ya da klasör adındaki tarihe göre, yoksa son değiştirilme tarihine göre; 'en son rapor/tablo'); degisiklik: en son değiştirilen dosya önce (yalnızca değiştirilme tarihi; 'en son kim neyi değiştirdi'); ilgi: en çok eşleşen önce" },
     },
   },
 };
 
 /** In the system turn of a plain chat while dosya_ara is offered. */
-export const FILES_RULE = `\n\nKurumun ortak klasöründeki ve kullanıcının Belgelerim'deki dosyaların adlarını, klasörlerini ve son değiştirilme tarihlerini dosya_ara aracıyla arayabilirsin: bir dosyayı bulma, bir klasörde ne olduğu, en güncel ya da en son dosya gibi sorularda bu aracı kullan, "erişemem" deme. Bulamazsan başka kelimelerle ya da klasör vermeden bir kez daha ara. Dosyaların içeriğini buradan okuyamazsın; içerik gerekiyorsa kullanıcıya belgeyi yan menüden seçmesini söyle. Tarih, dosyanın son değiştirilme tarihidir; belgenin hazırlandığı tarih olmayabilir, bunu belirt. Sonuçtaki yolları olduğu gibi yaz.`;
+export const FILES_RULE = `\n\nKurumun ortak klasöründeki ve kullanıcının Belgelerim'deki dosyaların adlarını, klasörlerini ve son değiştirilme tarihlerini dosya_ara aracıyla arayabilirsin: bir dosyayı bulma, bir klasörde ne olduğu, en güncel ya da en son dosya gibi sorularda bu aracı kullan, "erişemem" deme. Bulamazsan başka kelimelerle ya da klasör vermeden bir kez daha ara. Dosyaların içeriğini buradan okuyamazsın; içerik gerekiyorsa kullanıcıya belgeyi yan menüden seçmesini söyle. "En son, en güncel" rapor/tablo sorularında siralama "yeni", "en son değiştirilen/güncellenen dosya" sorularında "degisiklik" kullan; hangi tarihe göre seçtiğini yaz: dosyanın adındaki ya da klasöründeki tarih (rapor dönemi) mi, son değiştirilme tarihi mi; değiştirilme tarihi kopyalamayla değişebilir. Adında ileri bir tarih olan dosya (taslak, tahmin) en son gönderilen değildir. "Gönderilecekler", "Taslak" gibi klasörler gönderildiğini göstermez; klasör adı "Giden/Gönderilen" olsa da bu yalnızca klasör adına dayanır, öyle söyle. Birden çok dosya uygunsa en uygununu söyle, diğerlerini de say. Sonuçtaki yolları olduğu gibi yaz.`;
