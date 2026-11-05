@@ -73,6 +73,9 @@ test("convertLegacy: the job's profile turns macros off and sends web requests t
     assert.match(xcu, /DisableMacrosExecution[^]*?<value>true<\/value>/u);
     assert.match(xcu, /ooInetHTTPProxyName[^]*?<value>127\.0\.0\.1<\/value>/u);
     assert.match(xcu, /ooInetProxyType[^]*?<value>1<\/value>/u);
+    assert.match(xcu, /Writer\/Content\/Update"><prop oor:name="Link"[^]*?<value>0<\/value>/u, "links never updated (0 = NEVER in LibreOffice's code)");
+    assert.match(xcu, /BlockUntrustedRefererLinks[^]*?<value>true<\/value>/u);
+    assert.match(xcu, /Writer\/Content\/Update"><prop oor:name="Field"[^]*?<value>false<\/value>/u);
   });
 });
 

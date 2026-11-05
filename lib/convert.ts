@@ -35,13 +35,21 @@ export const convertEnv = (dir: string) => ({
 }) as unknown as NodeJS.ProcessEnv; // the app's own type requires NODE_ENV: this environment has none on purpose
 
 /**
- * The job's LibreOffice profile, written before the run: no macro runs in any form, and every web request it might make
- * for a linked picture or object goes to a closed local port (the file is untrusted; the server must not fetch for it).
+ * The job's LibreOffice profile, written before the run: no macro runs in any form; links and fields are never updated
+ * (Writer's Content/Update: Link 0 = never — the code's enum UpdateLinks { NEVER, MANUAL, AUTOMATIC } in
+ * sw/inc/linkenum.hxx, not the schema's label, which has it the other way round; Field off), so a linked section or an
+ * INCLUDETEXT field keeps the text the file was saved with and never reads a file of this server; every web request it
+ * might still make goes to a closed local port. Checked against crafted files (a linked section, INCLUDETEXT in .docx
+ * and .doc) with Link 0, 1 and 2: no file content came in. ponytail: not a sandbox; conversion stays off by default
+ * (canConvert) until enabled.
  */
 export const PROFILE = `<?xml version="1.0" encoding="UTF-8"?>
 <oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 <item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>
 <item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Office.Writer/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>0</value></prop></item>
+<item oor:path="/org.openoffice.Office.Writer/Content/Update"><prop oor:name="Field" oor:op="fuse"><value>false</value></prop></item>
 <item oor:path="/org.openoffice.Inet/Settings"><prop oor:name="ooInetProxyType" oor:op="fuse"><value>1</value></prop></item>
 <item oor:path="/org.openoffice.Inet/Settings"><prop oor:name="ooInetHTTPProxyName" oor:op="fuse"><value>127.0.0.1</value></prop></item>
 <item oor:path="/org.openoffice.Inet/Settings"><prop oor:name="ooInetHTTPProxyPort" oor:op="fuse"><value>9</value></prop></item>
