@@ -84,7 +84,7 @@ async function accept(req: Request, user: User, releaseSlot: () => void): Promis
     return done(fail(problem, 415));
   }
   // Docling queue already full: a clean 429 now beats an error event minutes later.
-  if ((ext === "pdf" || ext === "docx") && admission.docling.saturated) {
+  if (["pdf", "docx", "doc", "ppt"].includes(ext) && admission.docling.saturated) {
     release();
     return done(busy());
   }

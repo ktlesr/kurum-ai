@@ -30,6 +30,10 @@ export async function contentProblem(ext: string, buf: Uint8Array): Promise<stri
       return startsWith(buf, ZIP) ? zipProblem(buf, ZIP_LIMITS.partBytes) : bad;
     case "xlsx":
       return startsWith(buf, ZIP) ? zipProblem(buf) : bad;
+    case "doc":
+    case "ppt":
+      // The old binary formats are OLE compound files (LibreOffice converts them, lib/convert).
+      return startsWith(buf, OLE) ? null : bad;
     case "xls":
       // Some tools save xlsx content as .xls: then it gets the same zip-bomb check.
       return startsWith(buf, OLE) ? null : startsWith(buf, ZIP) ? zipProblem(buf) : bad;

@@ -21,7 +21,7 @@ const PAUSE_AFTER_FAIL_MS = 10 * 60_000;
 const PAUSE_AFTER_YIELD_MS = 60_000;
 const SWEEP_MS = 60 * 60_000;
 const MAX_FAILS = 3;
-const HEAVY = new Set(["pdf", "docx"]); // Docling: minutes each, so the cheap files go first
+const HEAVY = new Set(["pdf", "docx", "doc", "ppt"]); // Docling or LibreOffice: minutes each, so the cheap files go first
 const ADMIN: Viewer = { username: "", role: "admin" };
 
 type Mark = { v: string; status: "ok" | "failed" | "retry"; fails: number };

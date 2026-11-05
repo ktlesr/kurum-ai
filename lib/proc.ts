@@ -15,10 +15,10 @@ export const KILL_GRACE_MS = 5_000;
 export function runJsonLines<T>(
   cmd: string,
   args: string[],
-  opts: Omit<SpawnOptions, "signal" | "stdio" | "detached"> & { signal?: AbortSignal },
+  opts: Omit<SpawnOptions, "signal" | "stdio" | "detached"> & { signal?: AbortSignal; ignoreOutput?: boolean },
   onLine: (v: T) => void,
 ): Promise<void> {
-  const { signal, ...spawnOpts } = opts;
+  const { signal, ignoreOutput, ...spawnOpts } = opts;
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason);
     const posix = process.platform !== "win32";
@@ -51,7 +51,8 @@ export function runJsonLines<T>(
     const rl = createInterface({ input: proc.stdout! });
     rl.on("error", () => fail(new Error("proc_stdout_error")));
     rl.on("line", (l) => {
-      if (failure || !l.trim()) return;
+      // A tool that only prints progress (LibreOffice's "convert … -> …"): its lines are drained, never parsed.
+      if (failure || ignoreOutput || !l.trim()) return;
       let v: T;
       try {
         v = JSON.parse(l) as T;

@@ -57,6 +57,8 @@ COPY --from=deps /src/node_modules/postgres /app/node_modules/postgres
 # ffmpeg: a still from each video in the gallery (lib/video-frame). Here and not in "runtime": the Docling layer below stays cached.
 FROM runtime AS app
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+# LibreOffice, headless only: old .doc/.ppt files are saved as .docx/.pptx and read like them (lib/convert).
+RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-writer-nogui libreoffice-impress-nogui && rm -rf /var/lib/apt/lists/*
 COPY --from=files /app ./
 USER app
 
@@ -82,5 +84,6 @@ COPY deploy/searxng.yml /etc/searxng/settings.yml
 
 FROM docling AS app-docling
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-writer-nogui libreoffice-impress-nogui && rm -rf /var/lib/apt/lists/*
 COPY --from=files /app ./
 USER app

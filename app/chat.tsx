@@ -49,7 +49,7 @@ type UploadEvent =
  */
 
 const MAX_CHAT_DOCS = 20; // LIMITS.files in lib/validate
-const ACCEPT = ".pdf,.docx,.doc,.pptx,.xlsx,.xls,.csv,.txt,.md,.html,.htm,.png,.jpg,.jpeg,.webp";
+const ACCEPT = ".pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.csv,.txt,.md,.html,.htm,.png,.jpg,.jpeg,.webp";
 const MAX_BYTES = 25 * 1024 * 1024;
 const ICONS = { pdf: FileText, docx: FileType, sheet: FileSpreadsheet, text: FileIcon, image: ImageIcon } as const;
 // A screenshot or photo is stored as text (what the vision model read), but its card still shows it's an image.

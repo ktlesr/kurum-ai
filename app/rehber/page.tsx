@@ -131,7 +131,7 @@ export default async function GuidePage() {
                 <li>Ekran görüntüsünü soru kutusuna yapıştırmak; görüntü metne okunur.</li>
                 <li>Yan menüde <L>Belgelerim</L> yanındaki yükleme simgesi (<L>Belge yükle</L>).</li>
               </ul>
-              <p><strong className="font-semibold">Desteklenen biçimler:</strong> PDF, DOCX, XLSX, XLS, CSV, TXT, MD, HTML, PNG, JPG, WEBP. Eski .doc dosyalarını Word&apos;de açıp .docx olarak kaydedin.</p>
+              <p><strong className="font-semibold">Desteklenen biçimler:</strong> PDF, DOCX, PPTX, XLSX, XLS, CSV, TXT, MD, HTML, PNG, JPG, WEBP. Eski .doc ve .ppt dosyaları da okunur (sunucuda .docx/.pptx biçimine çevrilerek); çevrilemeyen bir dosyayı Word&apos;de ya da PowerPoint&apos;te açıp yeni biçimde kaydedin.</p>
               <p>Belge okunurken adının yanında dönen simge görünür. Bitince sorabilirsiniz. Adının yanındaki X belgeyi yalnızca bu sohbetten çıkarır, silmez.</p>
             </Topic>
             <Topic id="kitaplik" title="Ortak belgeler ve Belgelerim">
@@ -343,7 +343,8 @@ export default async function GuidePage() {
                     ["Model sunucusuna ulaşılamıyor. Yöneticinize bildirin.", "Sistem güncelleniyor olabilir. Birkaç dakika sonra deneyin, sürerse yöneticinize bildirin."],
                     ["Sunucu şu an çok yoğun. Biraz sonra tekrar deneyin.", "Kısa süre bekleyip yeniden gönderin."],
                     ["Dosya okunamadı. Bozuk ya da parola korumalı olabilir.", "Parola korumasını kaldırın ya da dosyayı yeniden kaydedin."],
-                    ["Eski .doc biçimi desteklenmiyor. Dosyayı Word'de açıp .docx olarak kaydedin.", "Dosyayı .docx olarak kaydedip yeniden yükleyin."],
+                    ["Eski .doc biçimi bu sunucuda desteklenmiyor. Dosyayı Word'de açıp .docx olarak kaydedin.", "Dosyayı .docx olarak kaydedip yeniden yükleyin."],
+                    ["Eski .doc dosyası dönüştürülemedi: bozuk ya da parolalı olabilir.", "Dosyayı Word'de açıp .docx olarak kaydedip yeniden yükleyin."],
                     ["Tarayıcı depolama alanı dolu: eski sohbetleri silin ya da yedek alıp temizleyin.", "Yedek alın, eski sohbetleri silin."],
                     ["Bağlantı koptu. Lütfen tekrar deneyin.", "İnternetinizi kontrol edip soruyu yeniden gönderin."],
                     ["Bu tarayıcı video kaydedemiyor. Güncel Chrome ya da Edge kullanın.", "Chrome ya da Edge ile açın. Çalışmanızı proje dosyası olarak taşıyabilirsiniz."],

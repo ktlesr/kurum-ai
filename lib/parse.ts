@@ -5,6 +5,11 @@ import type { DocKind } from "./server";
 import { extractWithDocling, MAX_PAGES, readImage, tooManyPages, type Extracted, type Progress } from "./extract";
 import { readCsv, readXlsx, sheetText } from "./sheet-text";
 import { pptxText, SlidesError } from "./pptx";
+import { convertLegacy } from "./convert";
+import { contentProblem } from "./filetype";
+import { admission } from "./admission";
+import { Busy } from "./limits";
+import { withJobDir } from "./workspace";
 
 export interface Parsed {
   kind: DocKind;
@@ -50,7 +55,27 @@ async function parseRaw(name: string, buf: Buffer, onProgress: (p: Progress) => 
       return { kind, text: (await mammoth.extractRawText({ buffer: buf })).value.replace(/\n{3,}/g, "\n\n").trim() };
     }
     case "doc":
-      throw new UserError("Eski .doc biçimi desteklenmiyor. Dosyayı Word'de açıp .docx olarak kaydedin.");
+    case "ppt": {
+      // Saved as .docx / .pptx by LibreOffice (lib/convert) in a job folder of its own, then read like one. One
+      // conversion at a time with Docling's runs (both are heavy), released before the reading takes its own turn.
+      const target = ext === "doc" ? "docx" : "pptx";
+      onProgress({ stage: "Eski biçim dönüştürülüyor", done: 0, total: 1 });
+      let converted: Buffer | null;
+      try {
+        converted = await admission.docling.run(() => withJobDir((dir) => convertLegacy(buf, ext, dir, signal)), signal);
+      } catch (e) {
+        if (signal.aborted) throw e;
+        if (e instanceof Busy) throw new UserError("Sunucu şu an çok yoğun; dosya okunamadı. Biraz sonra tekrar deneyin.");
+        throw new UserError(ext === "doc"
+          ? "Eski .doc dosyası dönüştürülemedi: bozuk ya da parolalı olabilir. Dosyayı Word'de açıp .docx olarak kaydedin."
+          : "Eski .ppt dosyası dönüştürülemedi: bozuk ya da parolalı olabilir. Dosyayı PowerPoint'te açıp .pptx olarak kaydedin.");
+      }
+      if (!converted) throw new UserError(ext === "doc" ? "Eski .doc biçimi bu sunucuda desteklenmiyor. Dosyayı Word'de açıp .docx olarak kaydedin." : "Eski .ppt biçimi bu sunucuda desteklenmiyor. Dosyayı PowerPoint'te açıp .pptx olarak kaydedin.");
+      // What LibreOffice wrote is checked like an upload of that type (its zip, its size) before it is read.
+      const problem = await contentProblem(target, converted);
+      if (problem) throw new UserError(problem);
+      return parseRaw(`${name.replace(/\.[^.]+$/u, "")}.${target}`, converted, onProgress, signal, cacheDir);
+    }
     case "pptx": {
       onProgress({ stage: "Sunum okunuyor", done: 0, total: 1 });
       try {
@@ -61,8 +86,6 @@ async function parseRaw(name: string, buf: Buffer, onProgress: (p: Progress) => 
         throw e;
       }
     }
-    case "ppt":
-      throw new UserError("Eski .ppt biçimi desteklenmiyor. Dosyayı PowerPoint'te açıp .pptx olarak kaydedin.");
     case "xlsx":
     case "xls":
       return { kind: "sheet", ...sheetText(readXlsx(buf), { csv: false }) };

@@ -46,6 +46,13 @@ test("non-zero exit rejects with a code, stderr is not in the error", async () =
   await assert.rejects(run(`console.error("gizli belge metni");process.exit(3)`), (e: Error) => e.message === "proc_exit_3");
 });
 
+test("ignoreOutput: a tool printing plain text runs to its exit, its lines never parsed", async () => {
+  const seen: unknown[] = [];
+  await runJsonLines(process.execPath, ["-e", "console.log('convert a.doc -> a.docx'); console.log('{}')"], { ignoreOutput: true }, (v) => seen.push(v));
+  assert.deepEqual(seen, []);
+  await assert.rejects(runJsonLines(process.execPath, ["-e", "console.log('x'); process.exit(3)"], { ignoreOutput: true }, () => {}), /proc_exit_3/u);
+});
+
 test("missing executable rejects", async () => {
   await assert.rejects(runJsonLines("bu-komut-yok-123", [], {}, () => {}));
 });
