@@ -10,7 +10,7 @@ import { foldTr } from "./gallery-search.ts";
 import type { ToolDef } from "./provider.ts";
 
 /** Bump when what goes into a row changes: every file is indexed again. */
-export const INDEXING = "i1";
+export const INDEXING = "i2"; // i2: workbooks read with their Excel row numbers
 
 export interface IndexRow { ord: number; label: string; body: string; pathFold: string; bodyFold: string }
 

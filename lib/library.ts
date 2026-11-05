@@ -249,7 +249,8 @@ export async function sharedDoc(e: SharedEntry, onProgress: (stage: string) => v
     const ext = e.name.toLowerCase().split(".").pop() ?? "";
     // Spreadsheets are read again once: their number cells are now written the Turkish way (lib/parse, SHEET_TR); the
     // old text read "1,234" as one and a bit. remember() takes the version off the old cache file, and the sweep removes it.
-    const file = path.join(CACHE, `${hash}.${ext}${SHEET_EXTS.has(ext) ? ".tr" : ""}.json`);
+    // ".t2": read again once more, with each row's Excel row number, total and footnote rows told apart (lib/table).
+    const file = path.join(CACHE, `${hash}.${ext}${SHEET_EXTS.has(ext) ? ".t2" : ""}.json`);
     // The name goes into prompts inside an attribute: no quote or bracket can close it.
     const name = e.path.replace(/["<>]/g, "");
     let doc: Doc | undefined;

@@ -23,6 +23,65 @@ export interface Table {
    * more); read the Turkish way they'd come out a thousand times too small.
    */
   english: boolean;
+  /** Each row's Excel row number (lib/sheet-text "Excel satırları"); absent for a text read before it, or a CSV. */
+  excelRows?: number[];
+  /** The Excel letter of the table's first column ("A" unless the sheet starts further right). */
+  firstCol?: number;
+  /**
+   * Total rows ("Toplam", "Genel Toplam", "Ara Toplam", "Yekûn", "Total"): out of `rows`, so a sum over the rows
+   * doesn't add the sheet's own total to itself and "the last entry" is no total; shown beside every result instead.
+   */
+  totals: { cells: string[]; excel?: number }[];
+  /** Hidden in Excel (lib/sheet-text): a result from it says so. */
+  hidden: boolean;
+}
+
+/**
+ * A total's label, the whole cell: "Toplam", "Genel Toplam", "Ara Toplam", "TOPLAM:", "Genel Toplam (Bin TL)", "Yekûn",
+ * "Total". Not a text that starts so ("Toplam kalite yönetimi eğitimi" is an entry).
+ */
+const TOTAL = /^(?:(?:genel|ara|alt) )?toplam(?:lar[ıi])?\s*(?::|\(.*\))?$|^yek[uû]n:?$|^(?:grand |sub ?)?total:?$/iu;
+/** "Genel" alone is a total's label only as a row's first cell (in a later column it is a category: "Bütçe türü: Genel"). */
+const GENERAL = /^genel:?$/iu;
+/** A row number, a Roman one ("IV." reads "ıv." in Turkish lower case) or a short code with a digit ("B-3") before the label. */
+const CODE = /^(?:\d+[.)]?|[ıivxlc]+\.|(?=[^\s]*\d)[\p{L}\d][\p{L}\d./-]{0,5})$/iu;
+/** A row the sheet's maker wrote as a total: its first filled cell says so, or its second after a row number or code. */
+/** A cell as the labels are matched: Turkish lower case, any run of spaces or line breaks one space ("Genel
+Toplam"). */
+const label = (c: string) => c.toLocaleLowerCase("tr").replace(/\s+/gu, " ").trim();
+export const isTotalRow = (r: string[]) => {
+  const [a, b] = r.map(label).filter(Boolean);
+  // "Genel" by its place: the row's own first cell, not the first filled one ("| | Genel | 200 |" is a category).
+  return !!a && (TOTAL.test(a) || GENERAL.test(label(r[0] ?? "")) || (!!b && CODE.test(a) && TOTAL.test(b)));
+};
+
+/** A line of one filled cell that opens as a footnote (FOOTNOTE): a sheet's note, not an entry, when after its entries. */
+export const isNoteRow = (r: string[]) => {
+  const filled = r.map(label).filter(Boolean);
+  return filled.length === 1 && FOOTNOTE.test(filled[0]);
+};
+
+/** A footnote's opening: a mark ("*", "¹", "(1)", "1)") or a word that says what follows (Not, Kaynak, Açıklama…). */
+const FOOTNOTE = /^(?:\*+|[¹²³⁴⁵⁶⁷⁸⁹⁰]+|\(\d{1,2}\)|\d{1,2}\)|(?:not(?:lar)?|kaynak(?:lar|ça)?|açıklama(?:lar)?|dipnot(?:lar)?|uyarı|hazırlayan|veri kaynağı)\s*[:.-])/u;
+
+/** "2-15, 17": the Excel row numbers back, or none when a span doesn't read (an old text, hand-edited). */
+/** The last row an Excel sheet can have. */
+const EXCEL_ROWS = 1_048_576;
+/**
+ * The line is the document's text (an upload can write anything): rows within Excel's own range, rising, and never more
+ * of them than the table has lines (`count`): no line can make this loop long or the list big.
+ */
+function spansOf(line: string | undefined, count: number): number[] | undefined {
+  if (!line) return undefined;
+  const out: number[] = [];
+  for (const part of line.split(",")) {
+    const m = /^\s*(\d{1,7})(?:-(\d{1,7}))?\s*$/u.exec(part);
+    if (!m) return undefined;
+    const a = +m[1], b = m[2] ? +m[2] : a;
+    if (a < 1 || b < a || b > EXCEL_ROWS || (out.length && a <= out[out.length - 1]) || out.length + (b - a + 1) > count) return undefined;
+    for (let r = a; r <= b; r++) out.push(r);
+  }
+  return out;
 }
 
 const cells = (line: string) => line.trim().replace(/^\|/u, "").replace(/\|$/u, "").split(/(?<!\\)\|/u).map((c) => c.replace(/\\\|/gu, "|").trim());
@@ -59,11 +118,16 @@ export function tablesOf(text: string): Table[] {
     const sheet = lines[0].slice("## Sheet: ".length).trim();
     const english = !lines.slice(1, 4).includes(SHEET_TR);
     // lib/parse's own lines about the sheet (its size, its first row as names): said again by the schema.
-    const about = (l: string) => l === SHEET_TR || /^(Satır: \d+, Sütun: \d+|Sütun başlıkları: )/u.test(l);
+    const about = (l: string) => l === SHEET_TR || /^(Satır: \d+, Sütun: \d+|Sütun başlıkları: |Excel satırları: |İlk sütun: [A-Z]{1,3}$|> Bu sayfa Excel'de gizli\.$)/u.test(l);
+    const head = lines.slice(1, 8);
+    const hidden = head.includes("> Bu sayfa Excel'de gizli.");
+    const spansLine = head.find((l) => l.startsWith("Excel satırları: "))?.slice("Excel satırları: ".length);
+    const first = head.find((l) => /^İlk sütun: [A-Z]{1,3}$/u.test(l))?.slice("İlk sütun: ".length);
+    const firstCol = first ? [...first].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1 : 0;
     const at = lines.findIndex((l) => l.trimStart().startsWith("|"));
     const isTable = at >= 0 && /^\s*\|?\s*:?-{3,}/u.test(lines[at + 1] ?? "");
     if (!isTable) {
-      out.push({ sheet, columns: [], rows: [], notes: lines.slice(1).filter((l) => l.trim() && !about(l)), english });
+      out.push({ sheet, columns: [], rows: [], notes: lines.slice(1).filter((l) => l.trim() && !about(l)), english, totals: [], hidden });
       continue;
     }
     let end = at + 2;
@@ -77,8 +141,26 @@ export function tablesOf(text: string): Table[] {
       ...lines.slice(end).filter((l) => l.trim()),
     ];
     const columns = names(h >= 0 ? grid[h] : undefined, width);
-    const rows = grid.slice(h + 1).map((r) => columns.map((_, k) => r[k] ?? ""));
-    out.push({ sheet, columns, rows, notes, english });
+    // The Excel row of every grid line, when the text says them and they match its lines one to one.
+    const spans = spansOf(spansLine, grid.length);
+    const excelOf = spans && spans.length === grid.length ? spans : undefined;
+    const all = grid.slice(h + 1).map((r, i) => ({ cells: columns.map((_, k) => r[k] ?? ""), excel: excelOf?.[h + 1 + i] }));
+    // Total rows, wherever they stand, are the sheet's totals. Lines after the last entry (neither a total nor a note)
+    // with one filled cell that reads as a footnote ("* Kaynak: TÜİK", "Not: …", "(1) …") are its notes, before or
+    // after a total. Marked so, and only in a table of two columns or more: a last entry with an empty cell ("Uşak | ")
+    // or a one-column list is an entry.
+    const note = (r: (typeof all)[number]) => columns.length >= 2 && !isTotalRow(r.cells) && isNoteRow(r.cells);
+    let lastEntry = all.length - 1;
+    while (lastEntry >= 0 && (isTotalRow(all[lastEntry].cells) || note(all[lastEntry]))) lastEntry--;
+    const isFoot = (r: (typeof all)[number], i: number) => i > lastEntry && note(r);
+    const foot = all.filter(isFoot).map((r) => r.cells.filter(Boolean).join(" "));
+    const totals = all.filter((r) => isTotalRow(r.cells));
+    const data = all.filter((r, i) => !isTotalRow(r.cells) && !isFoot(r, i));
+    out.push({
+      sheet, columns, rows: data.map((r) => r.cells), notes: [...notes, ...foot], english, hidden, firstCol,
+      totals: totals.map((r) => ({ cells: r.cells, excel: r.excel })),
+      ...(excelOf ? { excelRows: data.map((r) => r.excel!) } : {}),
+    });
   }
   return out;
 }
@@ -156,7 +238,9 @@ export function schemaOf(tables: Table[]): string {
       const shown = distinct.slice(0, MAX_VALUES).map(short).join(" | ");
       return `- ${short(c)}: metin, ${distinct.length} farklı değer: ${shown}${distinct.length > MAX_VALUES ? " | …" : ""}`;
     });
-    return `Sayfa: ${t.sheet} (${t.rows.length} satır)\nSütunlar:\n${cols.join("\n")}${text}`;
+    const where = t.excelRows?.length ? `, Excel satırları ${t.excelRows[0]}–${t.excelRows.at(-1)}` : "";
+    const totals = t.totals.length ? `\nToplam satırları (sorgulara katılmaz, sonuçla birlikte verilir): ${t.totals.map((r) => short(r.cells.filter(Boolean).join(" · "))).join(" | ")}` : "";
+    return `Sayfa: ${t.sheet} (${t.rows.length} satır${where})${t.hidden ? " — Excel'de gizli sayfa" : ""}\nSütunlar:\n${cols.join("\n")}${totals}${text}`;
   }).join("\n\n");
 }
 
@@ -291,15 +375,28 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
     ...(q.filtreler ?? []).map((f) => `${f.sutun} ${[...(f.esit ?? []).map((v) => `= ${v}`), ...(f.icerir ?? []).map((v) => `içerir ${v}`)].join(" ya da ")}`),
   ].join("; ");
   const head = `Tablo sorgusu (kodla, belgedeki hücrelerden): ${asked}${order}. Eşleşen satır: ${hits.length}.`;
+  // Said with every result: the sheet hidden, and its own total rows (kept out of the rows above, never summed again).
+  const letterOf = (k: number) => letter((t.firstCol ?? 0) + k);
+  const totalLines = t.totals.map((r) => `- ${r.excel ? `Excel satırı ${r.excel}: ` : ""}${t.columns.map((c, k) => (r.cells[k] ? `${c} = ${r.cells[k]}` : "")).filter(Boolean).join("; ")}`);
+  const after = [
+    t.hidden ? "Not: bu sayfa Excel'de gizli." : "",
+    totalLines.length ? `Sayfanın kendi toplam satırları (yukarıdaki satırlara ve toplamlara katılmadı):\n${totalLines.join("\n")}` : "",
+  ].filter(Boolean).join("\n");
+  const tail = after ? `\n\n${after}` : "";
+  const excelOf = new Map(t.excelRows ? t.rows.map((r, i) => [r, t.excelRows![i]] as const) : []);
   const md = (cols: string[], rows: string[][]) =>
     [`| ${cols.join(" | ")} |`, `| ${cols.map(() => "---").join(" | ")} |`, ...rows.map((r) => `| ${r.map((c) => c.replace(/\|/gu, "\\|")).join(" | ")} |`)].join("\n");
   if (!q.topla?.length) {
     const show = q.sutunlar?.length ? q.sutunlar.map(col) : t.columns.map((_, k) => k);
     const n = Math.min(q.adet ?? MAX_ROWS, MAX_ROWS);
-    const rows = hits.slice(0, n).map((r) => show.map((k) => r[k]));
+    const picked = hits.slice(0, n);
+    // Where each row stands in the workbook: its Excel row first, the columns' letters below the table.
+    const at = excelOf.size ? picked.map((r) => String(excelOf.get(r) ?? "")) : [];
+    const rows = picked.map((r, i) => [...(at.length ? [at[i]] : []), ...show.map((k) => r[k])]);
     const cut = hits.length > n && q.adet === undefined ? `\n…(ilk ${MAX_ROWS} satır; daha dar bir filtre, sirala ve adet ya da topla kullanın)` : "";
-    const table = md(show.map((k) => t.columns[k]), rows);
-    return { text: `${head}\n\n${table}${cut}`, table, sheet: t.sheet, numbers: [], counts: [String(hits.length)] };
+    const table = md([...(at.length ? ["Excel satırı"] : []), ...show.map((k) => t.columns[k])], rows);
+    const letters = at.length ? `\nSütunların Excel harfleri: ${show.map((k) => `${t.columns[k]} ${letterOf(k)}`).join(", ")}.` : "";
+    return { text: `${head}\n\n${table}${cut}${letters}${tail}`, table, sheet: t.sheet, numbers: at.filter(Boolean), counts: [String(hits.length)] };
   }
   const sums = q.topla.map(col);
   const keys = (q.grupla ?? []).map(col);
@@ -346,5 +443,5 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
   ].filter(Boolean).join(" ");
   const table = md(cols, body);
   const counts = [String(hits.length), ...(keys.length ? list.map((g) => String(g.rows.length)) : [])];
-  return { text: `${head}\n\n${table}${notes ? `\n${notes}` : ""}`, table, sheet: t.sheet, numbers, counts };
+  return { text: `${head}\n\n${table}${notes ? `\n${notes}` : ""}${tail}`, table, sheet: t.sheet, numbers, counts };
 }
