@@ -5,7 +5,7 @@ import type { DocKind } from "./server";
 import { extractWithDocling, MAX_PAGES, readImage, tooManyPages, type Extracted, type Progress } from "./extract";
 import { readCsv, readXlsx, sheetText } from "./sheet-text";
 import { pptxText, SlidesError } from "./pptx";
-import { convertLegacy } from "./convert";
+import { canConvert, convertLegacy } from "./convert";
 import { contentProblem } from "./filetype";
 import { admission } from "./admission";
 import { Busy } from "./limits";
@@ -59,10 +59,10 @@ async function parseRaw(name: string, buf: Buffer, onProgress: (p: Progress) => 
       // Saved as .docx / .pptx by LibreOffice (lib/convert) in a job folder of its own, then read like one. One
       // conversion at a time with Docling's runs (both are heavy), released before the reading takes its own turn.
       const target = ext === "doc" ? "docx" : "pptx";
-      onProgress({ stage: "Eski biçim dönüştürülüyor", done: 0, total: 1 });
+      if (canConvert()) onProgress({ stage: "Eski biçim dönüştürülüyor", done: 0, total: 1 });
       let converted: Buffer | null;
       try {
-        converted = await admission.docling.run(() => withJobDir((dir) => convertLegacy(buf, ext, dir, signal)), signal);
+        converted = canConvert() ? await admission.docling.run(() => withJobDir((dir) => convertLegacy(buf, ext, dir, signal)), signal) : null;
       } catch (e) {
         if (signal.aborted) throw e;
         if (e instanceof Busy) throw new UserError("Sunucu şu an çok yoğun; dosya okunamadı. Biraz sonra tekrar deneyin.");

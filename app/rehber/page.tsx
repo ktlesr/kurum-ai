@@ -131,7 +131,7 @@ export default async function GuidePage() {
                 <li>Ekran görüntüsünü soru kutusuna yapıştırmak; görüntü metne okunur.</li>
                 <li>Yan menüde <L>Belgelerim</L> yanındaki yükleme simgesi (<L>Belge yükle</L>).</li>
               </ul>
-              <p><strong className="font-semibold">Desteklenen biçimler:</strong> PDF, DOCX, PPTX, XLSX, XLS, CSV, TXT, MD, HTML, PNG, JPG, WEBP. Eski .doc ve .ppt dosyaları da okunur (sunucuda .docx/.pptx biçimine çevrilerek); çevrilemeyen bir dosyayı Word&apos;de ya da PowerPoint&apos;te açıp yeni biçimde kaydedin.</p>
+              <p><strong className="font-semibold">Desteklenen biçimler:</strong> PDF, DOCX, PPTX, XLSX, XLS, CSV, TXT, MD, HTML, PNG, JPG, WEBP. Eski .doc ve .ppt dosyalarını Word&apos;de ya da PowerPoint&apos;te açıp .docx / .pptx olarak kaydedin (yöneticiniz eski biçim dönüştürmeyi açtıysa doğrudan da okunurlar).</p>
               <p>Belge okunurken adının yanında dönen simge görünür. Bitince sorabilirsiniz. Adının yanındaki X belgeyi yalnızca bu sohbetten çıkarır, silmez.</p>
             </Topic>
             <Topic id="kitaplik" title="Ortak belgeler ve Belgelerim">

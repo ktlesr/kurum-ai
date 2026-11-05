@@ -2,16 +2,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Document, Packer, Paragraph } from "docx";
 import mammoth from "mammoth";
 import PptxGenJS from "pptxgenjs";
-import { canConvert, convertLegacy, SOFFICE } from "./convert.ts";
+import { canConvert, convertEnv, convertLegacy, SOFFICE } from "./convert.ts";
 import { pptxText } from "./pptx.ts";
 
-const NO = !canConvert() && "LibreOffice yok";
+const NO = !existsSync(SOFFICE) && "LibreOffice yok";
 
 /** A real old-format file: made new (docx/pptx), then saved old by LibreOffice itself. */
 function oldOf(buf: Buffer, from: "docx" | "pptx", to: "doc" | "ppt"): Buffer {
@@ -74,4 +74,22 @@ test("convertLegacy: the job's profile turns macros off and sends web requests t
     assert.match(xcu, /ooInetHTTPProxyName[^]*?<value>127\.0\.0\.1<\/value>/u);
     assert.match(xcu, /ooInetProxyType[^]*?<value>1<\/value>/u);
   });
+});
+
+test("convertEnv: none of the app's environment reaches LibreOffice", () => {
+  process.env.DATABASE_URL = "postgres://u:gizli@db/x";
+  const env = convertEnv("/tmp/job");
+  assert.deepEqual(Object.keys(env).sort(), ["HOME", "LANG", "PATH", "TMPDIR", "http_proxy", "https_proxy", "no_proxy"]);
+  assert.ok(!JSON.stringify(env).includes("gizli"));
+  delete process.env.DATABASE_URL;
+});
+
+test("canConvert: off unless LEGACY_CONVERT=on, whatever is installed", () => {
+  const had = process.env.LEGACY_CONVERT;
+  delete process.env.LEGACY_CONVERT;
+  assert.equal(canConvert(), false);
+  process.env.LEGACY_CONVERT = "on";
+  assert.equal(canConvert(), existsSync(SOFFICE));
+  if (had === undefined) delete process.env.LEGACY_CONVERT;
+  else process.env.LEGACY_CONVERT = had;
 });

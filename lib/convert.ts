@@ -17,7 +17,22 @@ const TARGET = { doc: "docx", ppt: "pptx" } as const;
  */
 const FILTER = { doc: "MS Word 97", ppt: "MS PowerPoint 97" } as const;
 
-export const canConvert = () => existsSync(SOFFICE);
+/**
+ * Off unless LEGACY_CONVERT=on: a document's fields and links can make LibreOffice pull a file of the server into what
+ * it writes. Until that is shut off and checked against such a file, old .doc/.ppt stay listed only, as before.
+ */
+export const canConvert = () => process.env.LEGACY_CONVERT === "on" && existsSync(SOFFICE);
+
+/** The conversion's whole environment: nothing of the app's (keys, database password), only what starting needs. */
+export const convertEnv = (dir: string) => ({
+  PATH: "/usr/local/bin:/usr/bin:/bin",
+  HOME: dir,
+  TMPDIR: dir,
+  LANG: "C.UTF-8",
+  http_proxy: "http://127.0.0.1:9",
+  https_proxy: "http://127.0.0.1:9",
+  no_proxy: "",
+}) as unknown as NodeJS.ProcessEnv; // the app's own type requires NODE_ENV: this environment has none on purpose
 
 /**
  * The job's LibreOffice profile, written before the run: no macro runs in any form, and every web request it might make
@@ -53,9 +68,10 @@ export async function convertLegacy(buf: Uint8Array, ext: keyof typeof TARGET, d
       "--headless", "--norestore", "--nologo", "--nodefault", "--nolockcheck", "--nofirststartwizard",
       `--infilter=${FILTER[ext]}`, "--convert-to", TARGET[ext], "--outdir", out, input,
     ],
-    // HOME in the job folder too: nothing of one run outlives it. Its output is progress text, not data. The proxy
-    // variables point at the same closed port, for any part of it that reads them instead of its profile.
-    { signal: AbortSignal.any([signal, timeout]), env: { ...process.env, HOME: dir, http_proxy: "http://127.0.0.1:9", https_proxy: "http://127.0.0.1:9", no_proxy: "" }, ignoreOutput: true },
+    // Not the app's environment: a document could pull it in (a field reading /proc/self/environ), and it holds the
+    // database password and keys. Only what LibreOffice needs to start; HOME in the job folder (nothing of one run
+    // outlives it). The proxy variables point at the closed port too, for any part that reads them over its profile.
+    { signal: AbortSignal.any([signal, timeout]), env: convertEnv(dir), ignoreOutput: true },
     () => {},
   );
   const made = path.join(out, `input.${TARGET[ext]}`);

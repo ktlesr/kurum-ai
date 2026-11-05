@@ -11,6 +11,7 @@ import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
 import type { User } from "@/lib/auth";
 import { contentProblem, readLimited } from "@/lib/filetype";
+import { canConvert } from "@/lib/convert";
 
 export const runtime = "nodejs";
 
@@ -84,7 +85,7 @@ async function accept(req: Request, user: User, releaseSlot: () => void): Promis
     return done(fail(problem, 415));
   }
   // Docling queue already full: a clean 429 now beats an error event minutes later.
-  if (["pdf", "docx", "doc", "ppt"].includes(ext) && admission.docling.saturated) {
+  if ((["pdf", "docx"].includes(ext) || (["doc", "ppt"].includes(ext) && canConvert())) && admission.docling.saturated) {
     release();
     return done(busy());
   }
