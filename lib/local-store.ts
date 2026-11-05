@@ -149,6 +149,8 @@ function cleanMeta(m: unknown): ChatMeta | undefined {
             .map((f) => ({ id: f.id, name: f.name.slice(0, 300), ...(typeof f.label === "string" ? { label: f.label.slice(0, 120) } : {}) })),
         }
       : {}),
+    ...(Array.isArray(x.sheets) ? { sheets: x.sheets.filter((s) => typeof s === "string").slice(0, 200).map((s) => s.slice(0, 120)) } : {}),
+    ...(Array.isArray(x.pages) ? { pages: x.pages.filter((n) => Number.isInteger(n) && n > 0 && n < 100_000).slice(0, 5000) } : {}),
     // The document of a single-document answer: a bare "Sayfa N" chip resolves against it, never another one.
     ...(typeof x.doc === "string" ? { doc: x.doc.slice(0, 300) } : {}),
     ...(Array.isArray(x.claims)

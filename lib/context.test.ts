@@ -48,6 +48,38 @@ test("linkPages links single-doc page refs in text only; only existing pages; sk
   assert.deepEqual(run(para(t("Sayfa 4")), { ...meta, pages: undefined }), para(t("Sayfa 4")));
 });
 
+test("linkPages: '<sheet> › Excel satırı N' links that sheet's row; alone only in a one-sheet workbook; unknown sheets stay text", () => {
+  const meta = { mode: "full" as const, sources: [], doc: "b.xlsx", sheets: ["İl Bazlı", "Özet"], unverified: [], uncertain: [] };
+  const run = (tree: MdNode, m: ChatMeta = meta) => (linkPages(m, "n1")()(tree), tree);
+  const para = (...children: MdNode[]) => ({ type: "root", children: [{ type: "paragraph", children }] });
+  const t = (value: string) => ({ type: "text", value });
+  assert.deepEqual(run(para(t("Son kayıt: İl Bazlı › Excel satırı 247 (Uşak)."))), para(
+    t("Son kayıt: "), { type: "link", url: "#satir-n1-0-247", children: [t("İl Bazlı › Excel satırı 247")] }, t(" (Uşak)."),
+  ));
+  assert.deepEqual(run(para(t("Excel satırı 5"))), para(t("Excel satırı 5")), "two sheets: which one is unsaid");
+  assert.deepEqual(run(para(t("Excel satırı 5")), { ...meta, sheets: ["Tek"] }), para({ type: "link", url: "#satir-n1-0-5", children: [t("Excel satırı 5")] }));
+  assert.deepEqual(run(para(t("Bütçe › Excel satırı 5"))), para(t("Bütçe › Excel satırı 5")));
+  assert.deepEqual(run(para(t("Excel satırı 5")), { ...meta, doc: undefined, sheets: ["Tek"] }), para(t("Excel satırı 5")), "several documents: no links");
+  // Each mention on its own, a quoted sheet name, a page link beside a row link.
+  const one = { ...meta, sheets: ["Tek"], pages: [2] };
+  assert.deepEqual(run(para(t("Excel satırı 5, Tek › Excel satırı 6")), one), para(
+    { type: "link", url: "#satir-n1-0-5", children: [t("Excel satırı 5")] }, t(", "), { type: "link", url: "#satir-n1-0-6", children: [t("Tek › Excel satırı 6")] },
+  ));
+  assert.deepEqual(run(para(t('Bkz. "İl Bazlı" › Excel satırı 7'))), para(t("Bkz. "), { type: "link", url: "#satir-n1-0-7", children: [t('"İl Bazlı" › Excel satırı 7')] }));
+  assert.deepEqual(run(para(t("Sayfa 2 ve Tek › Excel satırı 3")), one), para(
+    { type: "link", url: "#sayfa-n1-2", children: [t("Sayfa 2")] }, t(" ve "), { type: "link", url: "#satir-n1-0-3", children: [t("Tek › Excel satırı 3")] },
+  ));
+  // A word that only ends like a sheet name is not that sheet; an unknown one before the arrow, no link.
+  assert.deepEqual(run(para(t("Toplam › Excel satırı 9"))), para(t("Toplam › Excel satırı 9")));
+  assert.deepEqual(run(para(t("Bİl Bazlı › Excel satırı 9"))), para(t("Bİl Bazlı › Excel satırı 9")));
+  // Long odd text: linear time, not a scan back over it from every position.
+  const odd = `${" ".repeat(79)}›`.repeat(12_000) + " Excel satırı 1";
+  const started = Date.now();
+  run(para(t(odd)));
+  run(para(t(`${" ".repeat(40)}›${" ".repeat(40)}`.repeat(10_000))));
+  assert.ok(Date.now() - started < 500, `${Date.now() - started} ms`);
+});
+
 test("plainNumbering: a line's own number stays text in any document; real bullets and code stay", () => {
   assert.equal(plainNumbering("- 1) Proje"), "1\\) Proje");
   assert.equal(plainNumbering("* 2. Hedef\n+ (b) Bent\n- a) Orta Asya\n- (2) Birinci\n- \"ç) Kalkınma"), "2. Hedef\n(b) Bent\na) Orta Asya\n(2) Birinci\n\"ç) Kalkınma");

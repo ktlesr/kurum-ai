@@ -84,6 +84,23 @@ function spansOf(line: string | undefined, count: number): number[] | undefined 
   return out;
 }
 
+/**
+ * Where Excel row `row` is in a sheet's own text (its "## Sheet:" section, as the source panel shows it): the 1-based line
+ * of its table line, or null when the text doesn't say its rows (a CSV, an old read) or has no such row.
+ */
+export function rowLineOf(sectionText: string, row: number): number | null {
+  const lines = sectionText.split("\n");
+  const spansLine = lines.slice(0, 8).find((l) => l.startsWith("Excel satırları: "))?.slice("Excel satırları: ".length);
+  const at = lines.findIndex((l) => l.trimStart().startsWith("|"));
+  if (!spansLine || at < 0 || !/^\s*\|?\s*:?-{3,}/u.test(lines[at + 1] ?? "")) return null;
+  const grid = [at];
+  for (let i = at + 2; i < lines.length && lines[i].trimStart().startsWith("|"); i++) grid.push(i);
+  const spans = spansOf(spansLine, grid.length);
+  if (!spans || spans.length !== grid.length) return null;
+  const k = spans.indexOf(row);
+  return k < 0 ? null : grid[k] + 1;
+}
+
 const cells = (line: string) => line.trim().replace(/^\|/u, "").replace(/\|$/u, "").split(/(?<!\\)\|/u).map((c) => c.replace(/\\\|/gu, "|").trim());
 const low = (s: string) => s.toLocaleLowerCase("tr").trim();
 const letter = (k: number): string => (k < 26 ? String.fromCharCode(65 + k) : letter(Math.floor(k / 26) - 1) + letter(k % 26));

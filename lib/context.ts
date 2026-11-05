@@ -121,6 +121,8 @@ export interface ChatMeta {
   doc?: string;
   /** Pages that document has (from its page markers); page links are made only for these. */
   pages?: number[];
+  /** That document's sheets (a workbook): "İl Bazlı › Excel satırı 247" links open the sheet at that row. */
+  sheets?: string[];
   /** Cited pages no selected document has (lib/checks checkPages). Optional: older saved chats lack it. */
   badPages?: string[];
   /** Each factual sentence of the answer with the passage that supports it, or none (lib/trace). */
@@ -183,24 +185,56 @@ const NO_LINK = new Set(["link", "linkReference", "inlineCode", "code", "definit
  */
 export function linkPages(meta: ChatMeta | undefined, nonce: string) {
   const pages = new Set(meta?.doc ? meta.pages : []);
+  const sheets = meta?.doc ? meta.sheets ?? [] : [];
+  // "<sheet> › Excel satırı N" (the sheet named just before it), or "Excel satırı N" alone when the workbook has one
+  // sheet. Each "Excel satırı N" is found on its own, then the few characters before it are looked at: no pattern runs
+  // back over the text, so the cost stays linear in it (a stored answer is untrusted, it may be long and odd).
+  const ROW = /Excel satırı (\d{1,7})\b/gu;
+  const bySize = [...sheets].sort((x, y) => y.length - x.length);
+  const rowLink = (text: string, m: RegExpMatchArray): { at: number; node: MdNode } | null => {
+    const start = m.index!;
+    const before = text.slice(Math.max(0, start - 140), start);
+    const arrow = /[ \t]{0,3}›[ \t]{0,3}$/u.exec(before);
+    let at = start;
+    let sheet: string | undefined;
+    if (arrow) {
+      // The sheet's name ends right at the arrow, maybe in quotes: the longest one that fits wins.
+      const head = before.slice(0, arrow.index);
+      const quoted = /["“”']$/u.test(head);
+      const name = quoted ? head.slice(0, -1) : head;
+      sheet = bySize.find((s) => name.endsWith(s) && !/[\p{L}\p{N}]$/u.test(name.slice(0, -s.length)));
+      if (!sheet) return null;
+      at = start - (before.length - (name.length - sheet.length)) - (quoted && /["“”']$/u.test(name.slice(0, -sheet.length)) ? 1 : 0);
+    } else if (sheets.length === 1) sheet = sheets[0];
+    else return null;
+    return { at, node: { type: "link", url: `#satir-${nonce}-${sheets.indexOf(sheet)}-${Number(m[1])}`, children: [{ type: "text", value: text.slice(at, start + m[0].length) }] } };
+  };
   const walk = (node: MdNode) => {
     if (!node.children || NO_LINK.has(node.type)) return;
     node.children = node.children.flatMap((c): MdNode[] => {
       if (c.type !== "text") return walk(c), [c];
       const out: MdNode[] = [];
       let last = 0;
+      const found: { at: number; end: number; node: MdNode }[] = [];
       for (const m of c.value!.matchAll(/\bSayfa (\d+)\b/g)) {
-        if (!pages.has(Number(m[1]))) continue;
-        if (m.index > last) out.push({ type: "text", value: c.value!.slice(last, m.index) });
-        out.push({ type: "link", url: `#sayfa-${nonce}-${Number(m[1])}`, children: [{ type: "text", value: m[0] }] });
-        last = m.index + m[0].length;
+        if (pages.has(Number(m[1]))) found.push({ at: m.index, end: m.index + m[0].length, node: { type: "link", url: `#sayfa-${nonce}-${Number(m[1])}`, children: [{ type: "text", value: m[0] }] } });
+      }
+      if (sheets.length) for (const m of c.value!.matchAll(ROW)) {
+        const r = rowLink(c.value!, m);
+        if (r) found.push({ at: r.at, end: m.index! + m[0].length, node: r.node });
+      }
+      for (const f of found.sort((a, b) => a.at - b.at)) {
+        if (f.at < last) continue; // overlapping matches: the first one
+        if (f.at > last) out.push({ type: "text", value: c.value!.slice(last, f.at) });
+        out.push(f.node);
+        last = f.end;
       }
       if (!out.length) return [c];
       if (last < c.value!.length) out.push({ type: "text", value: c.value!.slice(last) });
       return out;
     });
   };
-  return () => (tree: MdNode) => { if (pages.size) walk(tree); };
+  return () => (tree: MdNode) => { if (pages.size || sheets.length) walk(tree); };
 }
 
 /**

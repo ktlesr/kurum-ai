@@ -104,3 +104,11 @@ test("backup meta: found files keep a shared id, their path and section; anythin
   const back = parseBackup(JSON.stringify(makeBackup([chat("a", 1, { messages: [{ role: "assistant", content: "x", meta: meta as never }] })]))) as StoredChat[];
   assert.deepEqual(back[0].messages[0].meta?.found, [{ id, name: "Raporlar/2025.pdf", label: "Sayfa 3" }, { id: `s-${"c".repeat(40)}`, name: "Bütçe.xlsx" }]);
 });
+
+test("backup meta: a workbook's sheets and a document's pages are kept, bounded and typed", () => {
+  const meta = { mode: "full", sources: [], unverified: [], uncertain: [], doc: "b.xlsx", sheets: ["İl Bazlı", 7, "x".repeat(500)], pages: [1, 2, -1, 2.5, "3"] };
+  const back = parseBackup(JSON.stringify(makeBackup([chat("a", 1, { messages: [{ role: "assistant", content: "x", meta: meta as never }] })]))) as StoredChat[];
+  const m = back[0].messages[0].meta!;
+  assert.deepEqual(m.sheets, ["İl Bazlı", "x".repeat(120)]);
+  assert.deepEqual(m.pages, [1, 2]);
+});

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx";
 import { readCsv, readXlsx, sheetText } from "./sheet-text.ts";
-import { runQuery, SHEET_TR, tablesOf } from "./table.ts";
+import { rowLineOf, runQuery, SHEET_TR, tablesOf } from "./table.ts";
 import { checkTotals } from "./checks.ts";
 
 /** A workbook written and read back the way an upload is (xlsx bytes, cellNF). */
@@ -323,4 +323,18 @@ test("isTotalRow: the label is the whole cell, first or after a row number or co
   const { isTotalRow } = await import("./table.ts");
   for (const r of [["Toplam", "5"], ["GENEL TOPLAM", "", "9"], ["Ara Toplam:", "3"], ["Genel Toplam (Bin TL)", "1"], ["12", "Toplam", "4"], ["IV.", "Genel Toplam", "4"], ["Yekûn", "2"], ["Total", "1"], ["Genel", "7"]]) assert.ok(isTotalRow(r), r.join("|"));
   for (const r of [["Toplam kalite yönetimi", "5"], ["Uşak", "Genel", "2"], ["", "Genel", "200"], ["Uşak", "Toplam", "2"], ["Toplamda 5 il", "1"], ["Kütahya", "4"]]) assert.ok(!isTotalRow(r), r.join("|"));
+});
+
+test("rowLineOf: an Excel row's line in the sheet's own section text, as the source panel shows it", async () => {
+  const { docSections } = await import("./context.ts");
+  const wb = workbook([{ name: "S", rows: [["Başlık", null], ["İl", "Tutar"], ["Kütahya", 1], [null, null], ["Uşak", 2]] }]);
+  const [section] = docSections(sheetText(wb, { csv: false }).text);
+  const lines = section.text.split("\n");
+  const at = rowLineOf(section.text, 5)!;
+  assert.match(lines[at - 1], /^\| Uşak \| 2 \|$/u, "row 5 (after the blank row 4)");
+  assert.match(lines[rowLineOf(section.text, 3)! - 1], /^\| Kütahya \| 1 \|$/u);
+  assert.equal(rowLineOf(section.text, 4), null, "a blank row isn't in the table");
+  assert.equal(rowLineOf(section.text, 99), null);
+  const csv = docSections(sheetText(readCsv("A;B\nx;1\n"), { csv: true }).text)[0];
+  assert.equal(rowLineOf(csv.text, 2), null, "a CSV says no Excel rows");
 });

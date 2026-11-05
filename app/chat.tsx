@@ -15,6 +15,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
 import { useChats } from "./use-chats";
 import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, plainNumbering, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
+import { rowLineOf } from "@/lib/table";
 import { keepMessages, searchChats, titleFrom, type GalleryPhoto, type Message, type StoredChat } from "@/lib/local-store";
 import { asksMorePhotos, asksPhotos, clarifies, namesPhotos } from "@/lib/gallery-intent";
 import { countOf } from "@/lib/gallery-search";
@@ -121,7 +122,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [backupNote, setBackupNote] = useState<string | null>(null);
-  const [source, setSource] = useState<{ serverId: string; label?: string } | null>(null);
+  const [source, setSource] = useState<{ serverId: string; label?: string; row?: number } | null>(null);
   const mobile = useMedia("(max-width: 767px)");
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -562,10 +563,10 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const current = chatId ? local.chats.find((c) => c.id === chatId) : undefined;
 
   /** A source chip from an answer → open that doc at that page/sheet in the side panel. */
-  const openSource = (chip: string, docName?: string) => {
+  const openSource = (chip: string, docName?: string, row?: number) => {
     const hit = parseSource(chip, ready.map((f) => f.name), docName);
     const doc = hit && ready.find((f) => f.name === hit.doc);
-    if (hit && doc?.serverId) setSource({ serverId: doc.serverId, label: hit.label });
+    if (hit && doc?.serverId) setSource({ serverId: doc.serverId, label: hit.label, ...(row ? { row } : {}) });
   };
 
   // Typing re-renders this component on every key. The answers (Markdown, tables) and the document panel are memo()ed
@@ -577,7 +578,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     latest.current = { send, openSource, toggleDocs, deleteDoc, moveDoc };
   });
   const editAt = useCallback((i: number, text: string) => void latest.current.send(text, undefined, i), []);
-  const sourceOf = useCallback((chip: string, docName?: string) => latest.current.openSource(chip, docName), []);
+  const sourceOf = useCallback((chip: string, docName?: string, row?: number) => latest.current.openSource(chip, docName, row), []);
   const toggleStable = useCallback((items: LibItem[], on: boolean) => latest.current.toggleDocs(items, on), []);
   const deleteStable = useCallback((id: string) => latest.current.deleteDoc(id), []);
   const moveStable = useCallback((id: string, folder: string) => latest.current.moveDoc(id, folder), []);
@@ -935,7 +936,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         )}
       </main>
 
-      {source && <SourcePanel key={`${source.serverId}:${source.label ?? ""}`} serverId={source.serverId} label={source.label} onClose={closeSource} />}
+      {source && <SourcePanel key={`${source.serverId}:${source.label ?? ""}:${source.row ?? ""}`} serverId={source.serverId} label={source.label} row={source.row} onClose={closeSource} />}
     </div>
   );
 }
@@ -1029,10 +1030,19 @@ const GFM = [remarkGfm];
  * One section of the source panel, its Markdown rendered once (memo) and, when long, only its start until asked: a whole
  * workbook drawn as tables at once froze the page, and drawn again on every key typed in the chat box (seen live).
  */
-const SourceSection = memo(function SourceSection({ s, hit, target }: { s: DocSection; hit: boolean; target?: React.Ref<HTMLElement> }) {
+const SourceSection = memo(function SourceSection({ s, hit, row, target }: { s: DocSection; hit: boolean; row?: number; target?: React.Ref<HTMLElement> }) {
   const [all, setAll] = useState(hit);
   const content = useRef<HTMLDivElement>(null);
   const text = useMemo(() => plainNumbering(s.text), [s.text]);
+  // An Excel row asked for: its table line marked and scrolled to (its line in this section's own text, lib/table).
+  const rowLine = useMemo(() => (row ? rowLineOf(text, row) : null), [text, row]);
+  const rowRef = useRef<HTMLTableRowElement>(null);
+  useEffect(() => {
+    if (rowLine) rowRef.current?.scrollIntoView({ block: "center" });
+  }, [rowLine]);
+  const components = useMemo<Components>(() => (rowLine
+    ? { ...mdComponents, tr: ({ node, ...p }) => (node?.position?.start.line === rowLine ? <tr ref={rowRef} {...p} className="bg-accent-soft outline outline-2 outline-accent" aria-current="true" /> : <tr {...p} />) }
+    : mdComponents), [rowLine]);
   let cut = !all && text.length > SECTION_PREVIEW ? text.lastIndexOf("\n", SECTION_PREVIEW) : -1;
   // Not between a table's header row and its |---| row: the preview's table keeps its header.
   if (cut > 0 && /^\s*\|?\s*:?-{3,}/u.test(text.slice(cut + 1, text.indexOf("\n", cut + 1) >>> 0))) cut = text.lastIndexOf("\n", cut - 1);
@@ -1047,7 +1057,7 @@ const SourceSection = memo(function SourceSection({ s, hit, target }: { s: DocSe
       {s.label && <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">{s.label}</h3>}
       {/* pre-line: plain-text documents keep their line breaks */}
       <div ref={content} tabIndex={-1} className="md whitespace-pre-line text-sm outline-none">
-        <ReactMarkdown remarkPlugins={GFM} components={mdComponents}>{shown}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={GFM} components={components}>{shown}</ReactMarkdown>
       </div>
       {cut > 0 && (
         <button type="button" onClick={more} className="mt-2 text-xs text-accent underline underline-offset-2">
@@ -1059,7 +1069,7 @@ const SourceSection = memo(function SourceSection({ s, hit, target }: { s: DocSe
 });
 
 /** memo: the panel isn't drawn again on every key typed in the chat box. */
-const SourcePanel = memo(function SourcePanel({ serverId, label, onClose }: { serverId: string; label?: string; onClose: () => void }) {
+const SourcePanel = memo(function SourcePanel({ serverId, label, row, onClose }: { serverId: string; label?: string; row?: number; onClose: () => void }) {
   const [doc, setDoc] = useState<{ name: string; sections: DocSection[] } | "error" | null>(null);
   const target = useRef<HTMLElement>(null);
   const close = useRef<HTMLButtonElement>(null);
@@ -1103,7 +1113,7 @@ const SourcePanel = memo(function SourcePanel({ serverId, label, onClose }: { se
             <p className="text-xs text-muted">Belgeden çıkarılan metin. Tablolar ve taranmış sayfalar orijinalinden farklı görünebilir; kesin değer için asıl belgeye bakın.</p>
             {doc.sections.map((s, i) => {
               const hit = !!label && s.label === label;
-              return <SourceSection key={i} s={s} hit={hit} target={hit ? target : undefined} />;
+              return <SourceSection key={i} s={s} hit={hit} row={hit ? row : undefined} target={hit ? target : undefined} />;
             })}
           </div>
         )}
@@ -1238,7 +1248,7 @@ const chatDoc = (messages: Message[], title?: string): ExportDoc =>
   );
 
 /** memo: re-rendered only when its own message or state changes, not on every key typed in the box. */
-const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt, onSource, onOpen, answer, asked, title }: { m: Message; index: number; fileReady: boolean; live: boolean; busy: boolean; onEditAt: (i: number, text: string) => void; onSource: (chip: string, doc?: string) => void; onOpen: (id: string, label?: string) => void; answer?: Message; asked?: Message; title?: string }) {
+const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt, onSource, onOpen, answer, asked, title }: { m: Message; index: number; fileReady: boolean; live: boolean; busy: boolean; onEditAt: (i: number, text: string) => void; onSource: (chip: string, doc?: string, row?: number) => void; onOpen: (id: string, label?: string) => void; answer?: Message; asked?: Message; title?: string }) {
   const onEdit = useCallback((text: string) => onEditAt(index, text), [onEditAt, index]);
   // One answer as a document, from this render's props (the file card's name is made from it while rendering).
   const doc = useCallback((): ExportDoc => exportDoc([turnForAnswer(answer, asked)], title), [answer, asked, title]);
@@ -1248,6 +1258,15 @@ const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt,
   const components = useMemo<Components>(() => ({
     ...mdComponents,
     a: (props) => {
+      // "İl Bazlı › Excel satırı 247" (linkPages): that sheet of this answer's document, at that row.
+      const rowRef = props.href?.startsWith(`#satir-${nonce}-`) ? /^(\d+)-(\d+)$/u.exec(props.href.slice(`#satir-${nonce}-`.length)) : null;
+      const sheet = rowRef ? m.meta?.sheets?.[Number(rowRef[1])] : undefined;
+      if (rowRef && sheet)
+        return (
+          <button type="button" onClick={() => onSource(`Sheet: ${sheet}`, m.meta?.doc, Number(rowRef[2]))} className="text-accent underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Kaynak panelinde o satırda aç">
+            {props.children}
+          </button>
+        );
       const page = props.href?.startsWith(`#sayfa-${nonce}-`) ? props.href.slice(`#sayfa-${nonce}-`.length) : undefined;
       // A page this answer read (listed under it) opens like the list's own links; any other address stays text.
       if (!page && props.href && m.meta?.web?.some((w) => w.url === props.href))

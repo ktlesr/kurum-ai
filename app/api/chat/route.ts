@@ -374,6 +374,8 @@ export async function POST(req: Request) {
         if (selected.length === 1) {
           meta.doc = selected[0].name;
           meta.pages = pageNumbers(selected[0].text);
+          const sheetNames = [...new Set(tablesFor(selected[0]).map((t) => t.sheet))];
+          if (sheetNames.length) meta.sheets = sheetNames.slice(0, 200);
         }
         // Linked pages first: they count toward what fits in the context, and the user sees them being read.
         const pages: Page[] = [];
