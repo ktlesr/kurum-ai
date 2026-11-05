@@ -53,6 +53,39 @@ test("ollama: gpt-oss gets an effort instead of on/off", async () => {
   assert.equal((seen.at(-1)!.body as { think: unknown }).think, "low");
 });
 
+test("ollama: tools offered, calls read back with ids, the exchange sent in Ollama's form; none leaves them off", async () => {
+  routes["/api/chat"] = send([
+    '{"message":{"content":"","tool_calls":[{"function":{"name":"tablo_sorgula","arguments":{"dosya":"A.xlsx"}}}]}}\n',
+    '{"done":true,"done_reason":"stop"}',
+  ]);
+  const p = makeProvider("ollama", base, { numCtx: 1 });
+  const tools = [{ name: "tablo_sorgula", description: "d", parameters: { type: "object" } }];
+  const r = await p.chat({
+    model: "gpt-oss:120b", maxTokens: 9, signal, tools,
+    messages: [
+      { role: "user", content: "x" },
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "dosya_ara", arguments: '{"ad":"yazışma"}' }] },
+      { role: "tool", content: "[]", toolCallId: "c1" },
+      { role: "assistant", content: "", toolCalls: [{ id: "c2", name: "bolum_oku", arguments: "{}" }] },
+      { role: "tool", content: "metin", toolCallId: "c2" },
+    ],
+  });
+  assert.deepEqual(r.toolCalls?.map(({ name, arguments: a }) => ({ name, a })), [{ name: "tablo_sorgula", a: '{"dosya":"A.xlsx"}' }]);
+  const body = seen.at(-1)!.body as { tools: unknown; messages: unknown[] };
+  assert.deepEqual(body.tools, [{ type: "function", function: tools[0] }]);
+  assert.deepEqual(body.messages.slice(1), [
+    { role: "assistant", content: "", tool_calls: [{ function: { name: "dosya_ara", arguments: { ad: "yazışma" } } }] },
+    { role: "tool", content: "[]", tool_name: "dosya_ara" },
+    { role: "assistant", content: "", tool_calls: [{ function: { name: "bolum_oku", arguments: {} } }] },
+    { role: "tool", content: "metin", tool_name: "bolum_oku" },
+  ]);
+  // Ids unique across turns: a second turn's call never takes the first one's name for its answer.
+  const again = await p.chat({ model: "m", messages: [], maxTokens: 1, signal, tools });
+  assert.notEqual(again.toolCalls![0].id, r.toolCalls![0].id);
+  await p.chat({ model: "m", messages: [], maxTokens: 1, signal, tools, toolChoice: "none" });
+  assert.equal((seen.at(-1)!.body as { tools?: unknown }).tools, undefined);
+});
+
 test("abort reaches the request", async () => {
   routes["/api/chat"] = () => {}; // never answers
   const ac = new AbortController();

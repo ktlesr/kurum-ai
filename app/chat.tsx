@@ -32,6 +32,8 @@ import { BetaBadge, Logo } from "./logo";
 type Card = Partial<DocMeta> & {
   id: string; name: string; size: number; kind: DocKind; status: "uploading" | "ready" | "error"; error?: string;
   serverId?: string;
+  /** Found by the app for a message, not picked by hand: the server keeps it for follow-ups or lets it go. */
+  auto?: boolean;
   progress?: { stage: string; done: number; total: number };
 };
 type UploadEvent =
@@ -91,11 +93,14 @@ const greeting = () => {
 // A shared document's name on the server is its path (lib/library): source links match cards by name.
 const cardOf = (it: Pick<LibItem, "id" | "name" | "size" | "kind"> & Partial<LibItem>): Card => ({ id: it.id, serverId: it.id, name: it.path && it.id.startsWith("s-") ? it.path.replace(/["<>]/g, "") : it.name, size: it.size, kind: it.kind as DocKind, status: "ready", warning: it.warning, verify: it.verify });
 /** The documents a saved chat used, those still in the library. */
-const cardsOf = (docIds: string[] | undefined, lib: LibItem[]) =>
+const cardsOf = (docIds: string[] | undefined, lib: LibItem[], autoIds: string[] = []) =>
   (docIds ?? []).flatMap((id) => {
     const it = lib.find((x) => x.id === id);
-    return it ? [cardOf(it)] : [];
+    return it ? [{ ...cardOf(it), ...(autoIds.includes(id) ? { auto: true } : {}) }] : [];
   });
+/** The chat's documents as sent and saved: picked by hand, and found by the app. */
+const handIds = (fs: Card[]) => fs.flatMap((f) => (f.serverId && !f.auto ? [f.serverId] : []));
+const autoIdsOf = (fs: Card[]) => fs.flatMap((f) => (f.serverId && f.auto ? [f.serverId] : []));
 
 export default function Chat({ username, isAdmin }: { username: string; isAdmin: boolean }) {
   const [files, setFiles] = useState<Card[]>([]);
@@ -130,6 +135,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const chatIdRef = useRef<string | null>(null);
   const libRef = useRef<LibItem[]>([]);
   const [pendingDocs, setPendingDocs] = useState<string[]>([]); // a saved chat's documents the library hasn't listed
+  const pendingAuto = useRef<string[]>([]); // of those, the ones the app found (they stay marked when the library arrives)
   const [libOk, setLibOk] = useState(false); // the library was listed once
   const docsWait = pendingDocs.length > 0 && !libOk; // sending now would lose that chat's documents
   useEffect(() => { streamingRef.current = streaming; chatIdRef.current = chatId; libRef.current = [...shared, ...personal]; });
@@ -139,7 +145,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     const c = await local.get(id);
     if (c) {
       setMessages(c.messages);
-      setFiles((fs) => [...fs.filter((f) => !f.serverId), ...cardsOf(c.docIds, libRef.current)]);
+      setFiles((fs) => [...fs.filter((f) => !f.serverId), ...cardsOf(c.docIds, libRef.current, c.autoIds)]);
+      pendingAuto.current = c.autoIds ?? [];
       setPendingDocs((c.docIds ?? []).filter((d) => !libRef.current.some((x) => x.id === d)));
     } else { setChatId(null); setMessages([]); }
   });
@@ -173,7 +180,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   // The library (side menu): listed only. `files` holds what this chat uses; a chat starts with nothing.
   useEffect(() => {
     const lib = [...shared, ...personal];
-    const found = cardsOf(pendingDocs, lib);
+    const found = cardsOf(pendingDocs, lib, pendingAuto.current);
     if (!found.length) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the library arrived after the chat was opened
     setPendingDocs((p) => p.filter((d) => !lib.some((x) => x.id === d)));
@@ -297,7 +304,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         return fs.filter((f) => !f.serverId || !out.has(f.serverId));
       }
       const have = new Set(fs.map((f) => f.serverId));
-      return [...fs, ...items.filter((i) => !have.has(i.id)).map(cardOf)].slice(0, MAX_CHAT_DOCS);
+      const chosen = new Set(items.map((i) => i.id));
+      return [...fs.map((f) => (f.auto && f.serverId && chosen.has(f.serverId) ? { ...f, auto: false } : f)), ...items.filter((i) => !have.has(i.id)).map(cardOf)].slice(0, MAX_CHAT_DOCS);
     });
   const deleteDoc = (id: string) => {
     setFiles((fs) => fs.filter((f) => f.serverId !== id));
@@ -344,7 +352,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         setMessages(all);
         local.upsert(id, (cur) => ({
           ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
-          updatedAt: Date.now(), model, docIds: ready.map((f) => f.serverId!).filter(Boolean),
+          updatedAt: Date.now(), model, docIds: ready.map((f) => f.serverId!).filter(Boolean), autoIds: autoIdsOf(ready),
           messages: all.map(stored),
         }));
       };
@@ -398,7 +406,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       setMessages(all);
       local.upsert(id, (cur) => ({
         ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
-        updatedAt: Date.now(), model, docIds: ready.map((f) => f.serverId!).filter(Boolean),
+        updatedAt: Date.now(), model, docIds: ready.map((f) => f.serverId!).filter(Boolean), autoIds: autoIdsOf(ready),
         messages: all.map(stored),
       }));
       return;
@@ -421,10 +429,11 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     // Read-modify-write: a rename or pin made while the answer streams (or in another tab) is kept.
     const id = chatId ?? crypto.randomUUID();
     let docIds = ready.map((f) => f.serverId!).filter(Boolean);
+    let autoIds = autoIdsOf(ready);
     const persist = (msgs: Message[]) =>
       local.upsert(id, (cur) => ({
         ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
-        updatedAt: Date.now(), model, docIds,
+        updatedAt: Date.now(), model, docIds, autoIds,
         messages: keepMessages(msgs, (m) => !!(m.content || m.error)).map(stored),
       }));
     setChatId(id);
@@ -439,7 +448,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           model,
           think: false,
           scope: scope ?? (profile === "deep" ? "all" : profile === "fast" ? "part" : undefined),
-          fileIds: ready.map((f) => f.serverId),
+          fileIds: handIds(ready),
+          autoIds: autoIdsOf(ready),
           // Without the words about the file (the search and the documents go by the question), and without turns that were only that.
           messages: history.filter((m) => !m.local).slice(-HISTORY).map(({ role, content }, i, all) => ({ role, content: wish && i === all.length - 1 ? wish.rest : content })),
           ...(wish ? { fileFormats: wish.formats } : {}),
@@ -503,11 +513,14 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       if (metaJson) {
         const parsedMeta = JSON.parse(metaJson) as ChatMeta;
         setLast((m) => ({ ...m, meta: parsedMeta }));
-        // Documents the message asked for stay with this chat for the follow-up questions.
-        if (parsedMeta.used?.length) {
-          // Added to what the chat already had (a file named mid-chat joins the attached ones), within the same limit.
-          docIds = [...new Set([...docIds, ...parsedMeta.used.map((u) => u.id)])].slice(0, MAX_CHAT_DOCS);
-          setFiles((fs) => [...fs, ...parsedMeta.used!.filter((u) => !fs.some((f) => f.serverId === u.id)).map(cardOf)].slice(0, MAX_CHAT_DOCS));
+        // The documents the app found for this message replace those it found before (the hand-picked ones stay): a
+        // follow-up gets them again, another subject lets them go.
+        if (parsedMeta.used) {
+          const used = parsedMeta.used;
+          const hand = handIds(ready);
+          autoIds = used.map((u) => u.id).filter((u) => !hand.includes(u));
+          docIds = [...new Set([...hand, ...autoIds])].slice(0, MAX_CHAT_DOCS);
+          setFiles((fs) => [...fs.filter((f) => !f.auto), ...used.filter((u) => !fs.some((f) => !f.auto && f.serverId === u.id)).map((u) => ({ ...cardOf(u), auto: true }))].slice(0, MAX_CHAT_DOCS));
         }
       }
     } catch (e) {
@@ -527,7 +540,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
     if (streaming) return;
     setChatId(c.id);
     setMessages(c.messages);
-    setFiles(cardsOf(c.docIds, [...shared, ...personal]));
+    setFiles(cardsOf(c.docIds, [...shared, ...personal], c.autoIds));
+    pendingAuto.current = c.autoIds ?? [];
     setPendingDocs((c.docIds ?? []).filter((d) => !shared.some((x) => x.id === d) && !personal.some((x) => x.id === d)));
     setDrawer(false);
   };
@@ -959,9 +973,10 @@ function FileChip({ f, onOpen, onRemove }: { f: Card; onOpen: () => void; onRemo
   return (
     <span className={`flex max-w-56 items-center gap-1.5 rounded-lg border py-1 pl-2 pr-1 text-xs ${f.status === "error" ? "border-danger/40 text-danger" : "border-line bg-subtle"}`}>
       {f.status === "uploading" ? <span className="size-3 shrink-0 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-label="Okunuyor" /> : <Icon size={13} className="shrink-0 text-accent" />}
-      <button onClick={onOpen} disabled={f.status !== "ready"} className="truncate disabled:cursor-default" title={f.status === "ready" ? `${f.name} — kaynak panelinde aç` : f.error ?? f.name}>
+      <button onClick={onOpen} disabled={f.status !== "ready"} className="truncate disabled:cursor-default" title={f.status === "ready" ? `${f.name} — kaynak panelinde aç${f.auto ? " (soruya göre otomatik bulundu; konu değişince bırakılır)" : ""}` : f.error ?? f.name}>
         {f.name}
       </button>
+      {f.auto && <span className="shrink-0 text-[10px] text-muted">otomatik</span>}
       <button onClick={onRemove} className="rounded p-0.5 text-muted hover:text-fg" aria-label={`${f.name} kaldır`}>
         <X size={12} />
       </button>

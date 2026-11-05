@@ -75,9 +75,24 @@ async function eachLine(body: ReadableStream<Uint8Array>, onLine: (l: string) =>
 
 function ollama(base: string, numCtx: number): Provider {
   const post = (path: string, body: object, signal: AbortSignal) => fetch(`${base}${path}`, { method: "POST", signal, body: JSON.stringify(body) });
+  // Ollama's own form of a tool exchange: arguments as an object, the answer under the tool's name.
+  const parse = (a: string) => {
+    try {
+      return JSON.parse(a) as unknown;
+    } catch {
+      return {};
+    }
+  };
+  const toWire = (m: Msg, names: Map<string, string>) =>
+    m.role === "tool"
+      ? { role: "tool", content: m.content, tool_name: names.get(m.toolCallId ?? "") }
+      : m.toolCalls?.length
+      ? { role: "assistant", content: m.content, tool_calls: m.toolCalls.map((c) => ({ function: { name: c.name, arguments: parse(c.arguments) } })) }
+      : m;
   return {
     kind: "ollama",
-    async chat({ model, messages, think = false, maxTokens, signal, onText, onThinking, json }) {
+    async chat({ model, messages, think = false, maxTokens, signal, onText, onThinking, json, tools, toolChoice = "auto" }) {
+      const names = new Map(messages.flatMap((m) => (m.toolCalls ?? []).map((c) => [c.id, c.name] as const)));
       const res = await post("/api/chat", {
         model,
         stream: true,
@@ -87,19 +102,28 @@ function ollama(base: string, numCtx: number): Provider {
         // Always capped: at temperature 0 a model can fall into a repetition loop and generate until num_ctx
         // (seen: 58k tokens, ~15 min), blocking the server for every later request.
         options: { num_ctx: numCtx, temperature: 0, num_predict: maxTokens },
-        messages,
+        messages: messages.map((m) => toWire(m, names)),
+        // Ollama has no tool_choice: "none" is the tools left off.
+        ...(tools?.length && toolChoice !== "none" ? { tools: tools.map((t) => ({ type: "function", function: t })) } : {}),
       }, signal);
       if (!res.ok || !res.body) throw new Error(`model_http_${res.status}`);
       const out: ChatResult = { text: "", truncated: false };
       let thought = 0;
       await eachLine(res.body, (line) => {
         if (!line.trim()) return;
-        const j = JSON.parse(line) as { message?: { content?: string; thinking?: string }; error?: string; done?: boolean; done_reason?: string; prompt_eval_count?: number; eval_count?: number };
+        const j = JSON.parse(line) as { message?: { content?: string; thinking?: string; tool_calls?: { function?: { name?: string; arguments?: unknown } }[] }; error?: string; done?: boolean; done_reason?: string; prompt_eval_count?: number; eval_count?: number };
         if (j.error) throw new Error("model_stream_error");
         if (j.message?.thinking) onThinking?.(++thought);
         if (j.message?.content) {
           out.text += j.message.content;
           onText?.(j.message.content);
+        }
+        // Ollama sends each call whole, without ids.
+        for (const t of j.message?.tool_calls ?? []) {
+          if (!t.function?.name) continue;
+          const a = t.function.arguments;
+          // Unique across the turns of one exchange: answers are paired with calls by id.
+          (out.toolCalls ??= []).push({ id: `call_${crypto.randomUUID()}`, name: t.function.name, arguments: typeof a === "string" ? a : JSON.stringify(a ?? {}) });
         }
         if (j.done_reason === "length") out.truncated = true;
         if (j.done && j.prompt_eval_count) out.promptTokens = j.prompt_eval_count;

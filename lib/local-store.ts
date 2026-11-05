@@ -74,6 +74,8 @@ export interface StoredChat {
   model?: string;
   /** Server doc ids that were in context, for the record. */
   docIds: string[];
+  /** Of docIds, those the app found (not picked by hand). */
+  autoIds?: string[];
   messages: Message[];
 }
 
@@ -182,6 +184,7 @@ export function parseBackup(text: string): StoredChat[] | string {
       pinned: !!c.pinned,
       model: typeof c.model === "string" ? c.model : undefined,
       docIds: Array.isArray(c.docIds) ? c.docIds.filter((d): d is string => typeof d === "string") : [],
+      ...(Array.isArray(c.autoIds) ? { autoIds: c.autoIds.filter((d): d is string => typeof d === "string") } : {}),
       // Drop transient fields (status) and keep meta only as stored.
       messages: c.messages.map(({ role, content, at, error, meta, timing, files, fileOf, local, gallery }) => {
         const m = cleanMeta(meta);

@@ -4,6 +4,8 @@ import { isFileFormat } from "./export-doc.ts";
 export interface ChatRequest {
   model: string;
   fileIds: string[];
+  /** Documents the app found for earlier messages: the server keeps them for a follow-up or lets them go. */
+  autoIds?: string[];
   messages: { role: "user" | "assistant"; content: string }[];
   think: boolean;
   /** "all": the whole document is needed; "part": a search is enough (Hızlı profile, no classifier call). */
@@ -26,6 +28,10 @@ export function parseChatRequest(body: unknown, allowedModels: ReadonlySet<strin
     return `fileIds en fazla ${LIMITS.files} kimlikten oluşan bir liste olmalı.`;
   }
 
+  if (b.autoIds !== undefined && (!Array.isArray(b.autoIds) || b.autoIds.length > LIMITS.files || !b.autoIds.every((id) => typeof id === "string" && id.length <= 64))) {
+    return `autoIds en fazla ${LIMITS.files} kimlikten oluşan bir liste olmalı.`;
+  }
+
   if (!Array.isArray(b.messages) || b.messages.length === 0 || b.messages.length > LIMITS.messages) {
     return `messages 1–${LIMITS.messages} mesajlık bir liste olmalı.`;
   }
@@ -43,6 +49,7 @@ export function parseChatRequest(body: unknown, allowedModels: ReadonlySet<strin
   return {
     model: b.model,
     fileIds: b.fileIds as string[],
+    ...(b.autoIds !== undefined ? { autoIds: b.autoIds as string[] } : {}),
     // Rebuilt, so extra keys smuggled into a message never reach Ollama.
     messages: (b.messages as ChatRequest["messages"]).map(({ role, content }) => ({ role, content })),
     think: b.think === true,

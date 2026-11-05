@@ -5,7 +5,7 @@ import { asksForOutline, docOutline, outlineMarkdown } from "@/lib/outline";
 import { cptFor, docsOf, getDoc, recordTokens, type Doc } from "@/lib/server";
 import { isSharedId, sharedDoc, sharedFilesFor, sharedFor, type SharedEntry } from "@/lib/library";
 import { filesCall, FILES_RULE, FILES_TOOL, type FileEntry } from "@/lib/file-search";
-import { PICK_PROMPT, matchByName, mergePicks, namedScan, parsePicked, wantsSources, type SourceEntry } from "@/lib/sources";
+import { PICK_PROMPT, pickFrom, pickerInput, planSources, type SourceEntry } from "@/lib/sources";
 import { parseFile, parsePdf, UserError } from "@/lib/parse";
 import { withJobDir } from "@/lib/workspace";
 import type { Msg, Provider, ToolCall, ToolDef } from "@/lib/provider";
@@ -188,7 +188,9 @@ class TooLong extends Error {}
  * TOOL_CALLING=off turns it off. A server that refuses tools turns it off until the app restarts.
  */
 let toolsRefused = false;
-const toolsOn = (chat: Provider) => chat.kind === "openai" && process.env.TOOL_CALLING !== "off" && !toolsRefused;
+// Both servers take tools (vLLM with --enable-auto-tool-choice, Ollama natively): without them a workbook is read by
+// its shape alone and files aren't found (seen on Ollama: "Tablo sorgusu yapılamadı").
+const toolsOn = (_chat: Provider) => process.env.TOOL_CALLING !== "off" && !toolsRefused;
 /** Found text the second look may add, at most (a long look delays the answer). */
 const MAX_LOOKUP_CHARS = 40_000;
 /** A workbook beyond this many tokens goes to the model as its shape, its rows by query (lib/table). */
@@ -265,6 +267,8 @@ export async function POST(req: Request) {
   if (typeof parsed === "string") return fail(parsed, 400);
   // scope "all" = question needs the whole document (suggestion buttons know this); otherwise classified.
   const { model, fileIds, messages, think, scope, fileFormats } = parsed;
+  // Documents the app found for earlier messages (not picked by hand): kept only while they serve the conversation.
+  const autoIds = (parsed.autoIds ?? []).filter((id) => !fileIds.includes(id));
 
   // Another user's doc is indistinguishable from a missing one.
   let selected = fileIds.filter((id) => !isSharedId(id)).map((id) => getDoc(user.id, id)) as Doc[];
@@ -321,33 +325,32 @@ export async function POST(req: Request) {
         // Those already attached are left out first, so they can't fill the limit and keep a newly named one out.
         // Every named file (no cut of its own): the chat's capacity alone limits them, and what it leaves out is said.
         // Scanned over all files, attached ones too, so a file named with its extension shuts out its namesakes everywhere.
-        const scan = namedScan(asked0, entries);
-        const namedAll = scan.hits.filter((e) => !fileIds.includes(e.id));
-        // A chat holds at most LIMITS.files documents (the page keeps no more): named files beyond that aren't read, and
-        // the person is told which, rather than one being read now and lost from the chat after.
-        const named = namedAll.slice(0, Math.max(0, LIMITS.files - fileIds.length));
-        const left = namedAll.slice(named.length);
-        if (left.length) meta.note = [meta.note, `Sohbette en çok ${LIMITS.files} belge olabilir; şunlar okunmadı: ${left.map((e) => e.path.split("/").pop()).join(", ")}. Yan menüden bir belgeyi çıkarıp yeniden deneyin.`].filter(Boolean).join(" ");
-        if (fileIds.length && named.length) {
-          shared = [...shared, ...named.flatMap((p) => (isSharedId(p.id) ? (sharedEntry(p.id) ?? []) : []))];
-          selected = [...selected, ...named.flatMap((p) => (isSharedId(p.id) ? [] : (getDoc(user.id, p.id) ?? [])))];
-        } else if (!fileIds.length && (named.length || wantsSources(asked0))) {
-          // Named files first, and what else the message asks for ("… ve KOSGEB klasöründeki belgeler") beside them.
-          const others = wantsSources(asked0) ? matchByName(asked0, entries).filter((e) => !scan.namesakes.has(e.id)) : [];
-          let picks = mergePicks(named, others, Math.max(8, named.length));
-          if (!picks.length && entries.length) {
-            status("Kaynaklar taranıyor…");
-            const list = entries.filter((e) => !scan.namesakes.has(e.id)).slice(0, 400);
-            const answer0 = await chatOnce(chat, model, [{ role: "system", content: PICK_PROMPT }, { role: "user", content: `İstek: ${asked0}\n\n<liste>\n${list.map((e, i) => `${i + 1}. ${e.path.replace(/[<>]/g, "")}`).join("\n")}\n</liste>` }], signal, 60).catch((e) => {
-              if (signal.aborted) throw e;
-              return "";
-            });
-            picks = parsePicked(answer0, list);
+        // Which documents beside the hand-picked ones (lib/sources planSources): a file named, the earlier finds for a
+        // follow-up, or what the picker chooses when the message may look elsewhere (only file paths, never contents).
+        const autoKnown = autoIds.filter((x) => entries.some((e) => e.id === x));
+        const plan = planSources(asked0, entries, { hand: fileIds, auto: autoKnown, room: Math.max(0, LIMITS.files - fileIds.length) });
+        if (plan.left.length) meta.note = [meta.note, `Sohbette en çok ${LIMITS.files} belge olabilir; şunlar okunmadı: ${plan.left.map((e) => e.path.split("/").pop()).join(", ")}. Yan menüden bir belgeyi çıkarıp yeniden deneyin.`].filter(Boolean).join(" ");
+        let picks = plan.picks;
+        if (plan.askPicker) {
+          status("Kaynaklar taranıyor…");
+          // What the chat reads now: the hand-picked documents and the earlier finds.
+          const current = [...entries.filter((e) => fileIds.includes(e.id)), ...picks].map((e) => e.path);
+          const recent = messages.filter((m) => m.role === "user").slice(-4, -1).map((m) => m.content);
+          const pick = (paths: string[]) => chatOnce(chat, model, [{ role: "system", content: PICK_PROMPT }, { role: "user", content: pickerInput(paths, current, recent, asked0) }], signal, 60).catch((e) => {
+            if (signal.aborted) throw e;
+            logError("picker", e);
+            return null; // failed: the chat keeps what it had
+          });
+          const list = entries.filter((e) => !plan.namesakes.has(e.id) && !fileIds.includes(e.id));
+          const r = list.length ? await pickFrom(list, asked0, pick) : [];
+          if (r !== "keep") {
+            picks = r;
+            if (!picks.length && /kaynak|klasör|belge|dosya/i.test(asked0)) meta.note = "Bu istekle eşleşen belge bulunamadı; cevap belge kullanılmadan yazıldı. Yan menüden belge seçebilirsiniz.";
           }
-          shared = picks.flatMap((p) => (isSharedId(p.id) ? (sharedEntry(p.id) ?? []) : []));
-          selected = picks.flatMap((p) => (isSharedId(p.id) ? [] : (getDoc(user.id, p.id) ?? [])));
-          if (!picks.length && /kaynak|klasör/i.test(asked0)) meta.note = "Bu istekle eşleşen belge bulunamadı; cevap belge kullanılmadan yazıldı. Yan menüden belge seçebilirsiniz.";
         }
+        picks = picks.slice(0, Math.max(0, LIMITS.files - fileIds.length));
+        shared = [...shared, ...picks.flatMap((p) => (isSharedId(p.id) ? (sharedEntry(p.id) ?? []) : []))];
+        selected = [...selected, ...picks.flatMap((p) => (isSharedId(p.id) ? [] : (getDoc(user.id, p.id) ?? [])))];
         for (const e of shared) {
           status(`Belge okunuyor: ${e.name}`);
           try {
@@ -360,7 +363,8 @@ export async function POST(req: Request) {
         }
         // The documents this message brought in (not those already attached): the chat keeps them for follow-ups.
         const added = selected.filter((d) => !fileIds.includes(d.id));
-        if (added.length) meta.used = added.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind }));
+        // Always sent: the page replaces the documents it found before with these (none: it let them go).
+        meta.used = added.map((d) => ({ id: d.id, name: d.name, size: d.size, kind: d.kind }));
         // Attached personal documents show their warnings on their cards; these have no card yet.
         // A shared document, or one this message brought in, has no card with its warning yet: the warning goes in the note.
         for (const d of selected) if (d.warning && (isSharedId(d.id) || !fileIds.includes(d.id))) meta.note = [meta.note, `${d.name}: ${d.warning}`].filter(Boolean).join(" ");
@@ -550,7 +554,8 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           });
           answer = r.text;
           // Only what a page, a refused link or an unread document has to say; a plain answer gets no notes.
-          if (pages.length || meta.note) send(META_SEP + JSON.stringify({ ...meta, sources: [] }));
+          // Sent too when the chat had documents the app found: the page lets them go (meta.used is empty).
+          if (pages.length || meta.note || autoIds.length) send(META_SEP + JSON.stringify({ ...meta, sources: [] }));
           return void ctrl.close();
         }
         // The list of headings has an exact answer in the text: code writes it, no model reorders or invents, nothing goes out.
