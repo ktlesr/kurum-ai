@@ -22,6 +22,7 @@ export async function contentProblem(ext: string, buf: Uint8Array): Promise<stri
       return indexOf(buf.subarray(0, 1024), PDF) >= 0 ? null : bad;
     case "docx":
     case "xlsx":
+    case "pptx":
       return startsWith(buf, ZIP) ? zipProblem(buf) : bad;
     case "xls":
       // Some tools save xlsx content as .xls: then it gets the same zip-bomb check.

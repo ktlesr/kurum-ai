@@ -4,6 +4,7 @@ import mammoth from "mammoth";
 import type { DocKind } from "./server";
 import { extractWithDocling, MAX_PAGES, readImage, tooManyPages, type Extracted, type Progress } from "./extract";
 import { readCsv, readXlsx, sheetText } from "./sheet-text";
+import { pptxText, SlidesError } from "./pptx";
 
 export interface Parsed {
   kind: DocKind;
@@ -50,6 +51,18 @@ async function parseRaw(name: string, buf: Buffer, onProgress: (p: Progress) => 
     }
     case "doc":
       throw new UserError("Eski .doc biçimi desteklenmiyor. Dosyayı Word'de açıp .docx olarak kaydedin.");
+    case "pptx": {
+      onProgress({ stage: "Sunum okunuyor", done: 0, total: 1 });
+      try {
+        const s = await pptxText(buf, MAX_PAGES);
+        return { kind: "text", text: s.text, pages: s.pages, rows: s.text.split("\n").length, ...(s.warning ? { warning: s.warning } : {}), ...(s.text.trim() ? {} : { warning: "Sunumda okunacak metin bulunamadı." }) };
+      } catch (e) {
+        if (e instanceof SlidesError) throw new UserError(e.message);
+        throw e;
+      }
+    }
+    case "ppt":
+      throw new UserError("Eski .ppt biçimi desteklenmiyor. Dosyayı PowerPoint'te açıp .pptx olarak kaydedin.");
     case "xlsx":
     case "xls":
       return { kind: "sheet", ...sheetText(readXlsx(buf), { csv: false }) };
@@ -76,7 +89,7 @@ async function parseRaw(name: string, buf: Buffer, onProgress: (p: Progress) => 
       return { kind: "text", text, rows: text.split("\n").length };
     }
     default:
-      throw new UserError(`"${ext || name}" türü desteklenmiyor. PDF, DOCX, XLSX, XLS, CSV, TXT, MD, HTML ya da PNG/JPG görsel yükleyin.`);
+      throw new UserError(`"${ext || name}" türü desteklenmiyor. PDF, DOCX, PPTX, XLSX, XLS, CSV, TXT, MD, HTML ya da PNG/JPG görsel yükleyin.`);
   }
 }
 

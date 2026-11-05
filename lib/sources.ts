@@ -4,7 +4,7 @@
 export interface SourceEntry { id: string; path: string }
 
 const low = (s: string) => s.toLocaleLowerCase("tr");
-const STOP = new Set(["belge", "belgeler", "belgeleri", "belgelerden", "belgeye", "belgesi", "kaynak", "kaynaklar", "kaynakları", "kaynaklardan", "doküman", "döküman", "dokümanlar", "dökümanlar", "klasör", "klasörü", "klasörden", "klasöründeki", "dosya", "dosyası", "dosyalar", "kullanarak", "göre", "hazırla", "için", "olan", "ile", "bir", "ve", "pdf", "docx", "xlsx"]);
+const STOP = new Set(["belge", "belgeler", "belgeleri", "belgelerden", "belgeye", "belgesi", "kaynak", "kaynaklar", "kaynakları", "kaynaklardan", "doküman", "döküman", "dokümanlar", "dökümanlar", "klasör", "klasörü", "klasörden", "klasöründeki", "dosya", "dosyası", "dosyalar", "kullanarak", "göre", "hazırla", "için", "olan", "ile", "bir", "ve", "pdf", "docx", "pptx", "xlsx"]);
 const words = (s: string) => low(s).split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !STOP.has(w));
 
 /** The message refers to documents ("şu kaynakları kullanarak", "belgelerden", "… klasöründeki"). */

@@ -23,15 +23,15 @@ const CACHE = path.join(process.cwd(), ".cache", "shared");
 const SHEET_EXTS = new Set(["xlsx", "xls", "csv"]);
 const CACHE_INDEX = path.join(CACHE, "index.json");
 const CACHE_GONE = path.join(CACHE, "gone.json"); // cache file → since when no file has pointed to it
-const EXT = new Set(["pdf", "docx", "xlsx", "xls", "csv", "txt", "md", "html", "htm"]);
+const EXT = new Set(["pdf", "docx", "pptx", "xlsx", "xls", "csv", "txt", "md", "html", "htm"]);
 const TEMPLATE_EXT = new Set(["xlsx", "docx", "pdf", "json"]);
 const MAX_DEPTH = 8;
 const MAX_FILES = Number(process.env.SOURCES_MAX_FILES) || 20_000;
 /**
- * Listed, never read: presentations, old Word and other office files (lib/file-search finds them by name, folder and
- * date: "the latest presentation in Sunum/2025" is most often a .pptx). A readable type over MAX_BYTES is listed too.
+ * Listed, never read: old PowerPoint and Word, and other office files (lib/file-search finds them by name, folder and
+ * date). A .pptx is read (lib/pptx). A readable type over MAX_BYTES is listed too.
  */
-const LIST_ONLY = new Set(["pptx", "ppt", "pps", "ppsx", "potx", "doc", "rtf", "odt", "odp", "ods", "key", "pages", "numbers", "vsd", "vsdx", "mpp"]);
+const LIST_ONLY = new Set(["ppt", "pps", "ppsx", "potx", "doc", "rtf", "odt", "odp", "ods", "key", "pages", "numbers", "vsd", "vsdx", "mpp"]);
 /** A file the finder names but no chat reads. */
 export interface ListedFile { path: string; size: number; mtime: number }
 const SCAN_MS = 15_000; // new files appear within this long
