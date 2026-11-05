@@ -109,3 +109,38 @@ test("pptx: a shape inside mc:AlternateContent is read from its fallback; shapes
   zip.file(name, deep);
   await assert.rejects(pptxText(new Uint8Array(await zip.generateAsync({ type: "uint8array" })), 10), SlidesError);
 });
+
+test("pptx: a slide part pointed at many times is read once; a table's width is bounded", async () => {
+  const JSZip = (await import("jszip")).default;
+  const buf = await deck((p) => {
+    p.addSlide().addTable([[{ text: "a" }, { text: "b" }], [{ text: "c" }, { text: "d" }]], { x: 1, y: 1, w: 5 });
+  });
+  const zip = await JSZip.loadAsync(buf);
+  const pres = "ppt/presentation.xml";
+  const xml = await zip.file(pres)!.async("string");
+  const one = /<p:sldId [^>]*\/>/u.exec(xml)![0];
+  let n = 1000;
+  zip.file(pres, xml.replace(one, one.repeat(300).replace(/ id="\d+"/gu, () => ` id="${n++}"`)));
+  const name = "ppt/slides/slide1.xml";
+  const slide = await zip.file(name)!.async("string");
+  // One row of 5000 cells: the others are not padded to it.
+  const wide = slide.replace(/<a:tr [^>]*>/u, (tr) => tr + "<a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:t>x</a:t></a:r></a:p></a:txBody></a:tc>".repeat(5000));
+  zip.file(name, wide);
+  const r = await pptxText(new Uint8Array(await zip.generateAsync({ type: "uint8array" })), 500);
+  assert.equal((r.text.match(/^--- Sayfa \d+ ---$/gmu) ?? []).length, 1, "the same slide once");
+  assert.ok(r.text.length < 10_000, `${r.text.length} chars`);
+});
+
+test("pptx: a table of millions of empty rows is refused before its lines are made", async () => {
+  const JSZip = (await import("jszip")).default;
+  const buf = await deck((p) => {
+    p.addSlide().addTable([[{ text: "a" }, { text: "b" }]], { x: 1, y: 1, w: 5 });
+  });
+  const zip = await JSZip.loadAsync(buf);
+  const name = "ppt/slides/slide1.xml";
+  const slide = await zip.file(name)!.async("string");
+  zip.file(name, slide.replace("</a:tbl>", `${"<a:tr/>".repeat(1_100_000)}</a:tbl>`));
+  const started = Date.now();
+  await assert.rejects(pptxText(new Uint8Array(await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" })), 10), SlidesError);
+  assert.ok(Date.now() - started < 20_000);
+});

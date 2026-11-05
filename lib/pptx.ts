@@ -7,6 +7,12 @@ import { all, kid, kids, parseXml, type El } from "./template-xml.ts";
 
 export class SlidesError extends Error {}
 
+/** A deck's text at most (a long real deck is well under a million characters), and a table's columns. */
+const MAX_TEXT = 20_000_000;
+const MAX_COLS = 200;
+const MAX_CELLS = 2_000_000;
+const MAX_PART = 30_000_000;
+
 const REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
 const unreadable = "Sunum dosyası okunamadı: bozuk ya da desteklenmeyen bir yapı. Dosyayı PowerPoint'te açıp .pptx olarak yeniden kaydedin.";
@@ -14,8 +20,11 @@ const unreadable = "Sunum dosyası okunamadı: bozuk ya da desteklenmeyen bir ya
 async function xmlOf(zip: JSZip, name: string): Promise<Document | null> {
   const f = zip.file(name);
   if (!f) return null;
+  const text = await f.async("string");
+  // A parsed part holds about a hundred times its size in memory: a part past this is refused before it is parsed.
+  if (text.length > MAX_PART) throw new SlidesError("Sunumun bir parçası okunamayacak kadar büyük. Dosyayı bölerek yükleyin.");
   try {
-    return parseXml(await f.async("string"));
+    return parseXml(text);
   } catch {
     throw new SlidesError(unreadable);
   }
@@ -85,8 +94,13 @@ function shapes(tree: El, out: Shape[], skipped: { media: number }) {
         continue;
       }
       const rows = kids(tbl, "tr").map((tr) => kids(tr, "tc").map((tc) => cell(kids(kid(tc, "txBody") ?? tc, "p").map(para).filter(Boolean).join(" "))));
-      const width = Math.max(0, ...rows.map((r) => r.length));
+      // Padded to its widest row, bounded: one row of thousands of cells can't make every other row as long.
+      let width = 0;
+      for (const r of rows) width = Math.max(width, r.length);
+      width = Math.min(width, MAX_COLS);
       if (!width) continue;
+      // Measured before its lines are made: rows × columns, not what the file's few bytes say.
+      if (rows.length * width > MAX_CELLS) throw new SlidesError("Sunumdaki bir tablo okunamayacak kadar büyük. Dosyayı bölerek yükleyin.");
       const line = (r: string[]) => `| ${Array.from({ length: width }, (_, i) => r[i] ?? "").join(" | ")} |`;
       out.push({ lines: ["", line(rows[0]), `|${" --- |".repeat(width)}`, ...rows.slice(1).map(line), ""] });
     } else if (name === "pic") skipped.media++;
@@ -122,7 +136,12 @@ async function read(buf: Uint8Array, maxSlides: number): Promise<{ text: string;
   const parts: string[] = [];
   const skipped = { media: 0 };
   let hidden = 0;
+  // A part is read once: a deck can point at the same slide or notes part hundreds of times (each read inflates it again).
+  const seen = new Set<string>();
+  let size = 0;
   for (const [i, slidePath] of order.entries()) {
+    if (seen.has(slidePath)) continue;
+    seen.add(slidePath);
     const slide = await xmlOf(zip, slidePath);
     if (!slide) continue;
     const root = slide.documentElement;
@@ -135,18 +154,22 @@ async function read(buf: Uint8Array, maxSlides: number): Promise<{ text: string;
     const body = found.flatMap((s) => s.lines);
     // Speaker notes: the notes page's body placeholder (its slide image and number left out).
     const notesPath = [...(await relsOf(zip, slidePath)).values()].find((r) => r.type.endsWith("/notesSlide"))?.target;
-    const notesDoc = notesPath ? await xmlOf(zip, notesPath) : null;
+    const notesDoc = notesPath && !seen.has(notesPath) ? (seen.add(notesPath), await xmlOf(zip, notesPath)) : null;
     const notes: Shape[] = [];
     const notesTree = notesDoc && all(notesDoc.documentElement, "spTree")[0];
     if (notesTree) shapes(notesTree, notes, { media: 0 });
     // The slide number placeholder is left out by its kind (shapes()); a note that is a number ("2026") is a note.
     const noteLines = notes.filter((s) => !s.title).flatMap((s) => s.lines).filter(Boolean);
-    parts.push([
+    const part = [
       `--- Sayfa ${i + 1} ---`,
       `Slayt ${i + 1}${title ? `: ${title}` : ""}${isHidden ? " (gizli slayt)" : ""}`,
       ...body,
       ...(noteLines.length ? ["", "Konuşmacı notları:", ...noteLines] : []),
-    ].join("\n").replace(/\n{3,}/gu, "\n\n"));
+    ].join("\n").replace(/\n{3,}/gu, "\n\n");
+    // A deck's words have a ceiling: past it the file is refused, never read on into memory.
+    size += part.length;
+    if (size > MAX_TEXT) throw new SlidesError("Sunumdaki metin okunamayacak kadar büyük. Dosyayı bölerek yükleyin.");
+    parts.push(part);
   }
   const warning = [
     skipped.media ? `Sunumdaki ${skipped.media} görsel, grafik ya da diyagramın içi okunmadı; yalnızca metinler okundu.` : "",
