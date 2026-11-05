@@ -6,6 +6,7 @@ import { parseRules, ruleFindsFolder, ruleFrom, withRule, withoutRule } from "@/
 import type { Skipped } from "@/lib/folder-scan";
 import { galleryStatus } from "@/lib/gallery";
 import { dropRulesCache, libraryStatus } from "@/lib/library";
+import { IndexProgress } from "./index-progress";
 
 export const metadata = { title: "Kütüphane · Zafer AI" };
 
@@ -103,6 +104,7 @@ export default async function LibraryAdmin() {
     <>
       <h1 className="mb-5 text-lg font-semibold tracking-tight">Kütüphane</h1>
       <div className="grid gap-3 lg:grid-cols-2">
+        <IndexProgress />
         <section className="rounded-xl border border-line bg-panel p-4 text-sm">
           <h2 className="flex items-center gap-1.5 font-medium"><Library size={15} /> Ortak belgeler</h2>
           <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{num(lib.count)} <span className="text-sm font-normal text-muted">belge, {num(lib.templates)} şablon</span></p>

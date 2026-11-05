@@ -84,6 +84,18 @@ export function snippet(body: string, st: string[], size = 420): string {
 
 export interface Coverage { indexed: number; total: number; failed: number }
 
+export type IndexState = "off" | "down" | "working" | "paused_fail" | "paused_yield" | "waiting_idle" | "done";
+/** Why the indexer is or isn't reading right now, for the admin page: the first that holds, in this order. */
+export function indexStateOf(o: { off: boolean; down: boolean; working: boolean; pending: number; now: number; failUntil: number; yieldUntil: number }): IndexState {
+  if (o.off) return "off";
+  if (o.down) return "down";
+  if (o.working) return "working";
+  if (!o.pending) return "done";
+  if (o.now < o.failUntil) return "paused_fail";
+  if (o.now < o.yieldUntil) return "paused_yield";
+  return "waiting_idle";
+}
+
 /**
  * How well the best file found answers the asked words: "none" (nothing found), "weak" (its best section and path hold
  * fewer than half of the stems), else "good". Counted, never stored with the words (lib/usage).

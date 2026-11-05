@@ -100,3 +100,15 @@ test("strengthOf: nothing found, fewer than half the stems in the best section, 
   assert.equal(strengthOf(files, ["kutah", "uretim", "2026", "manisa"]), "weak");
   assert.equal(strengthOf([], ["kutah"]), "none");
 });
+
+test("indexStateOf: off, the share down, reading, all done, a pause after a failure or for a person, else waiting for idle", async () => {
+  const { indexStateOf } = await import("./doc-index.ts");
+  const base = { off: false, down: false, working: false, pending: 5, now: 1000, failUntil: 0, yieldUntil: 0 };
+  assert.equal(indexStateOf({ ...base, off: true, down: true }), "off");
+  assert.equal(indexStateOf({ ...base, down: true, working: true }), "down");
+  assert.equal(indexStateOf({ ...base, working: true }), "working");
+  assert.equal(indexStateOf({ ...base, pending: 0 }), "done");
+  assert.equal(indexStateOf({ ...base, failUntil: 2000 }), "paused_fail");
+  assert.equal(indexStateOf({ ...base, yieldUntil: 2000 }), "paused_yield");
+  assert.equal(indexStateOf(base), "waiting_idle");
+});

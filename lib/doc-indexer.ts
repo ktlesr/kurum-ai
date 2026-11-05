@@ -8,7 +8,7 @@ import "server-only";
 import { stat } from "node:fs/promises";
 import { admission } from "./admission";
 import { db } from "./db";
-import { CONTENT_TOOL, contentArgs, forgetGone, indexRows, INDEXING, searchFiles, someoneWaits, storeFile } from "./doc-index";
+import { CONTENT_TOOL, contentArgs, forgetGone, indexRows, INDEXING, indexStateOf, searchFiles, someoneWaits, storeFile } from "./doc-index";
 import { cleanScanIds, filePathOf, libraryDown, sharedDoc, sharedFor, type SharedEntry, type Viewer } from "./library";
 import { asBackground } from "./limits";
 import { logError } from "./log";
@@ -26,7 +26,13 @@ const HEAVY = new Set(["pdf", "docx", "doc", "ppt"]); // Docling or LibreOffice:
 const ADMIN: Viewer = { username: "", role: "admin" };
 
 type Mark = { v: string; status: "ok" | "failed" | "retry"; fails: number };
-interface State { marks?: Promise<Map<string, Mark>>; worker?: NodeJS.Timeout; working: boolean; lastFail: number; pauseUntil?: number; swept?: number }
+interface State {
+  marks?: Promise<Map<string, Mark>>; worker?: NodeJS.Timeout; working: boolean; lastFail: number; pauseUntil?: number; swept?: number;
+  /** For the admin page (indexStatus): the file being read now, and when the last ones were done. */
+  current?: { path: string; since: number };
+  doneAt?: number[];
+  last?: { path: string; at: number; ok: boolean };
+}
 const g = globalThis as typeof globalThis & { __docIndex?: State };
 const state: State = (g.__docIndex ??= { working: false, lastFail: 0 });
 
@@ -50,6 +56,7 @@ async function indexOne(e: SharedEntry, done: Map<string, Mark>) {
   const sql = await db();
   const v = versionOf(e);
   const stop = new AbortController();
+  state.current = { path: e.path, since: Date.now() };
   const watch = setInterval(() => {
     if (someoneWaits(admission.docling, admission.model)) stop.abort(new Error("yielded"));
   }, 500);
@@ -58,6 +65,9 @@ async function indexOne(e: SharedEntry, done: Map<string, Mark>) {
     const doc = await asBackground(() => sharedDoc(e, () => {}, stop.signal, false));
     await storeFile(sql, e.id, v, indexRows(e.path, doc.text));
     done.set(e.id, { v, status: "ok", fails: 0 });
+    const now = Date.now();
+    state.doneAt = [...(state.doneAt ?? []).filter((t) => now - t < 3_600_000), now].slice(-5_000);
+    state.last = { path: e.path, at: now, ok: true };
   } catch (err) {
     // Stepped aside: not the file's fault, nothing counted.
     if (stop.signal.aborted) {
@@ -74,9 +84,11 @@ async function indexOne(e: SharedEntry, done: Map<string, Mark>) {
       INSERT INTO doc_files (file_id, version, status, error, fails) VALUES (${e.id}, ${v}, ${status}, ${msg}, ${fails})
       ON CONFLICT (file_id) DO UPDATE SET version = EXCLUDED.version, status = EXCLUDED.status, error = EXCLUDED.error, fails = EXCLUDED.fails, at = now()`;
     done.set(e.id, { v, status, fails });
+    state.last = { path: e.path, at: Date.now(), ok: false };
     if (status === "failed") logError("doc-index", err);
   } finally {
     clearInterval(watch);
+    state.current = undefined;
   }
 }
 
@@ -109,6 +121,45 @@ async function tick() {
   } finally {
     state.working = false;
   }
+}
+
+
+/**
+ * The content index as the admin page shows it, live: how much of the shared folder is in, what is read now or why
+ * nothing is, how fast, and the files that couldn't be read (their paths and why: the admin sees every folder).
+ */
+export async function indexStatus() {
+  const done = await marks();
+  const all = await sharedFor(ADMIN);
+  let indexed = 0, failed = 0, retrying = 0;
+  for (const e of all) {
+    const m = done.get(e.id);
+    if (m?.v !== versionOf(e)) continue;
+    if (m.status === "ok") indexed++;
+    else if (m.status === "failed") failed++;
+    else retrying++;
+  }
+  const pending = all.length - indexed - failed;
+  const now = Date.now();
+  const lastHour = (state.doneAt ?? []).filter((t) => now - t < 3_600_000).length;
+  const until = Math.max(state.lastFail + PAUSE_AFTER_FAIL_MS, state.pauseUntil ?? 0);
+  const why = indexStateOf({ off: process.env.DOC_INDEX === "off", down: libraryDown(), working: !!state.current, pending, now, failUntil: state.lastFail + PAUSE_AFTER_FAIL_MS, yieldUntil: state.pauseUntil ?? 0 });
+  const byId = new Map(all.map((e) => [e.id, e]));
+  const sql = await db();
+  const rows = await sql<{ file_id: string; version: string; error: string | null; at: Date }[]>`
+    SELECT file_id, version, error, at FROM doc_files WHERE status = 'failed' ORDER BY at DESC LIMIT 50`;
+  // Only a failure of the file as it is now: one changed since is waiting to be read again, not failed.
+  const failures = rows.flatMap((r) => {
+    const e = byId.get(r.file_id);
+    return e && r.version === versionOf(e) ? [{ path: e.path, error: r.error ?? "", at: r.at.getTime() }] : [];
+  }).slice(0, 10);
+  return {
+    state: why, total: all.length, indexed, failed, retrying, pending, lastHour,
+    ...(state.current ? { current: state.current } : {}),
+    ...(state.last ? { last: state.last } : {}),
+    ...(why === "paused_fail" || why === "paused_yield" ? { until } : {}),
+    failures,
+  };
 }
 
 export function startDocIndexer() {
