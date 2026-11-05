@@ -161,9 +161,44 @@ export function schemaOf(tables: Table[]): string {
 }
 
 export interface Filter { sutun: string; esit?: string[]; icerir?: string[] }
-export interface Query { sayfa: string; filtreler?: Filter[]; topla?: string[]; grupla?: string[]; sutunlar?: string[] }
+export interface Query {
+  sayfa: string; filtreler?: Filter[]; topla?: string[]; grupla?: string[]; sutunlar?: string[];
+  /** Rows ordered by this column: dates as dates, numbers as numbers, else as text (empty cells last). */
+  sirala?: string;
+  /** Newest, largest or last first. */
+  azalan?: boolean;
+  /** At most this many rows (1–MAX_ROWS). */
+  adet?: number;
+  /** Without `sirala`: the sheet's last rows (its latest entries) first. */
+  sondan?: boolean;
+}
 
 const MAX_ROWS = 200;
+
+const MONTHS = ["ocak", "şubat", "mart", "nisan", "mayıs", "haziran", "temmuz", "ağustos", "eylül", "ekim", "kasım", "aralık"];
+const DAY_FIRST = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?:[ t]+(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?)?$/u;
+const YEAR_FIRST = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ t]+(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?)?$/u;
+const NAMED = /^(\d{1,2}) (\p{L}+) (\d{4})(?:[ t]+(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?)?$/u;
+/**
+ * A cell's date as a sortable number (yyyymmddhhmmss), or null: 12.03.2024, 12/03/2024, 12-03-2024 (day first, as
+ * Turkish sheets write), 2024-03-12, "12 Mart 2024", the first two maybe with a time ("2024-03-12 14:30").
+ */
+export function dateKey(raw: string): number | null {
+  const s = low(raw.trim());
+  const at = (y: string, mo: number, d: string, h = "0", mi = "0", se = "0") => {
+    const [Y, D, H, MI, SE] = [y, d, h, mi, se].map(Number);
+    // A day the calendar has: 31.02 or 29.02.2025 is no date (it would sort as one).
+    const days = new Date(Date.UTC(Y, mo, 0)).getUTCDate();
+    if (mo < 1 || mo > 12 || D < 1 || D > days || H > 23 || MI > 59 || SE > 59) return null;
+    return ((((Y * 100 + mo) * 100 + D) * 100 + H) * 100 + MI) * 100 + SE;
+  };
+  let m = DAY_FIRST.exec(s);
+  if (m) return at(m[3], +m[2], m[1], m[4], m[5], m[6]);
+  m = YEAR_FIRST.exec(s);
+  if (m) return at(m[1], +m[2], m[3], m[4], m[5], m[6]);
+  m = NAMED.exec(s);
+  return m && MONTHS.includes(m[2]) ? at(m[3], MONTHS.indexOf(m[2]) + 1, m[1], m[4], m[5], m[6]) : null;
+}
 
 export interface QueryResult {
   /** What the model reads: the request echoed, then the result. */
@@ -217,18 +252,52 @@ export function runQuery(tables: Table[], q: Query): QueryResult | { error: stri
     const has = (f.icerir ?? []).map(low).filter(Boolean);
     return (f.esit ?? []).some((v) => v.trim() && same(k, cell, v)) || has.some((h) => low(cell).includes(h));
   });
-  const hits = t.rows.filter(passes);
+  let hits = t.rows.filter(passes);
+  if (q.sirala !== undefined && col(q.sirala) < 0) return { error: `Bu sütun "${t.sheet}" sayfasında yok: ${q.sirala}. Sütunlar: ${t.columns.join(", ")}` };
+  if (q.adet !== undefined && !(Number.isInteger(q.adet) && q.adet >= 1 && q.adet <= MAX_ROWS)) return { error: `adet 1 ile ${MAX_ROWS} arasında bir tam sayı olmalı.` };
+  // Ordered by a column the way its cells read: all dates by date, all numbers by number, else Turkish text order.
+  // Empty cells last either way.
+  let order = "";
+  if (q.sirala !== undefined) {
+    const k = col(q.sirala);
+    const full = hits.map((r) => r[k]).filter((v) => v.trim() !== "");
+    const dates = full.length > 0 && full.every((v) => dateKey(v) !== null);
+    const nums = !dates && full.length > 0 && full.every((v) => numberIn(t, v));
+    const dir = q.azalan ? -1 : 1;
+    const cmp = (a: string, b: string) => {
+      if (dates) return Math.sign(dateKey(a)! - dateKey(b)!);
+      if (nums) {
+        const x = numberIn(t, a)!;
+        const y = numberIn(t, b)!;
+        const d = x.n * y.d - y.n * x.d;
+        return d < 0 ? -1 : d > 0 ? 1 : 0;
+      }
+      return a.localeCompare(b, "tr");
+    };
+    hits = hits.map((r, i) => ({ r, i })).sort((a, b) => {
+      const ea = a.r[k].trim() === "";
+      const eb = b.r[k].trim() === "";
+      if (ea || eb) return ea === eb ? a.i - b.i : ea ? 1 : -1;
+      // Equal ones by their place in the sheet, the same way round: newest first puts the later entry of a day first.
+      return dir * (cmp(a.r[k], b.r[k]) || a.i - b.i);
+    }).map((x) => x.r);
+    order = `; sıralama: ${t.columns[k]} ${q.azalan ? "azalan" : "artan"} (${dates ? "tarih" : nums ? "sayı" : "metin"} olarak)`;
+  } else if (q.sondan) {
+    hits = [...hits].reverse();
+    order = "; sayfanın son satırından başlayarak";
+  }
   const asked = [
     `sayfa ${t.sheet}`,
     ...(q.filtreler ?? []).map((f) => `${f.sutun} ${[...(f.esit ?? []).map((v) => `= ${v}`), ...(f.icerir ?? []).map((v) => `içerir ${v}`)].join(" ya da ")}`),
   ].join("; ");
-  const head = `Tablo sorgusu (kodla, belgedeki hücrelerden): ${asked}. Eşleşen satır: ${hits.length}.`;
+  const head = `Tablo sorgusu (kodla, belgedeki hücrelerden): ${asked}${order}. Eşleşen satır: ${hits.length}.`;
   const md = (cols: string[], rows: string[][]) =>
     [`| ${cols.join(" | ")} |`, `| ${cols.map(() => "---").join(" | ")} |`, ...rows.map((r) => `| ${r.map((c) => c.replace(/\|/gu, "\\|")).join(" | ")} |`)].join("\n");
   if (!q.topla?.length) {
     const show = q.sutunlar?.length ? q.sutunlar.map(col) : t.columns.map((_, k) => k);
-    const rows = hits.slice(0, MAX_ROWS).map((r) => show.map((k) => r[k]));
-    const cut = hits.length > MAX_ROWS ? `\n…(ilk ${MAX_ROWS} satır; daha dar bir filtre ya da topla kullanın)` : "";
+    const n = Math.min(q.adet ?? MAX_ROWS, MAX_ROWS);
+    const rows = hits.slice(0, n).map((r) => show.map((k) => r[k]));
+    const cut = hits.length > n && q.adet === undefined ? `\n…(ilk ${MAX_ROWS} satır; daha dar bir filtre, sirala ve adet ya da topla kullanın)` : "";
     const table = md(show.map((k) => t.columns[k]), rows);
     return { text: `${head}\n\n${table}${cut}`, table, sheet: t.sheet, numbers: [], counts: [String(hits.length)] };
   }

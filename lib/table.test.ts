@@ -1,7 +1,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isWorkbook, runQuery, schemaOf, SHEET_TR, tablesFor, tablesOf, trDigits } from "./table.ts";
+import { dateKey, isWorkbook, runQuery, schemaOf, SHEET_TR, tablesFor, tablesOf, trDigits } from "./table.ts";
 
 const book = [
   "## Sheet: İller",
@@ -138,4 +138,68 @@ test("review 4: digit codes with a leading zero stay distinct even in a numeric 
   const [t] = tablesOf(["## Sheet: K", SHEET_TR, "| Kod | Ton |", "| --- | --- |", "| 01 | 1 |", "| 1 | 2 |"].join("\n"));
   const r = runQuery([t], { sayfa: "K", filtreler: [{ sutun: "Kod", esit: ["1"] }], topla: ["Ton"] });
   assert.ok("text" in r && r.numbers[0] === "2" && r.counts[0] === "1");
+});
+
+test("dateKey: Turkish day-first dates, ISO dates, month names, with a time; anything else is no date", () => {
+  assert.ok(dateKey("12.03.2024")! < dateKey("13.03.2024")!);
+  assert.equal(dateKey("12.03.2024"), dateKey("12/03/2024"));
+  assert.equal(dateKey("2024-03-12"), dateKey("12-03-2024"));
+  assert.equal(dateKey("12 Mart 2024"), dateKey("12.03.2024"));
+  assert.ok(dateKey("12.03.2024 09:05")! < dateKey("12.03.2024 14:30:00")!);
+  assert.ok(dateKey("31.12.2025")! < dateKey("01.01.2026")!, "year first in the key");
+  for (const v of ["2024", "1.234", "32.01.2024", "12.13.2024", "12 Mars 2024", "Ankara", "12.03.24", "31.02.2024", "29.02.2025", "31.04.2024", "12.03.2024 25:00"]) assert.equal(dateKey(v), null, v);
+  assert.ok(dateKey("29.02.2024"), "a leap day is a date");
+  // A month written by name, with a time.
+  assert.ok(dateKey("12 Mart 2024 14:30")! > dateKey("31 Ocak 2024 09:00")!);
+  assert.ok(dateKey("12 Mart 2024 14:30")! > dateKey("12 Mart 2024")!);
+});
+
+// A letters list longer than the rows a query returns at most: its last entry is past them.
+const letters = [
+  "## Sheet: Giden-2026",
+  SHEET_TR,
+  "| Sayı | Tarih | Konu | Tutar |",
+  "| --- | --- | --- | --- |",
+  ...Array.from({ length: 450 }, (_, i) => {
+    const day = new Date(Date.UTC(2026, 0, 1) + i * 12 * 3600_000);
+    const d = `${String(day.getUTCDate()).padStart(2, "0")}.${String(day.getUTCMonth() + 1).padStart(2, "0")}.${day.getUTCFullYear()}`;
+    return `| ${1000 + i} | ${d} | Konu ${i} | ${(i % 7) * 1000},5 |`;
+  }),
+  "| 9999 |  | Tarihsiz kayıt | 1 |",
+].join("\n");
+
+test("runQuery sirala/azalan/adet: the latest entry of a long list, by its dates, past the first rows", () => {
+  const t = tablesOf(letters);
+  const r = runQuery(t, { sayfa: "giden-2026", sirala: "Tarih", azalan: true, adet: 1, sutunlar: ["Sayı", "Tarih", "Konu"] });
+  assert.ok(!("error" in r));
+  if ("error" in r) return;
+  assert.match(r.table, /\| 1449 \| 13\.08\.2026 \| Konu 449 \|/u, "the newest by date (of a day's two, the later entry), not the undated last row");
+  assert.equal(r.table.split("\n").length, 3, "one row");
+  assert.match(r.text, /sıralama: Tarih azalan \(tarih olarak\)/u);
+  const old = runQuery(t, { sayfa: "Giden-2026", sirala: "Tarih", adet: 2, sutunlar: ["Sayı"] });
+  assert.ok(!("error" in old) && /\| 1000 \|\n\| 1001 \|/u.test(old.table), "oldest first, the same day's entries in the sheet's order");
+});
+
+test("runQuery sirala: numbers as numbers (Turkish writing), text in Turkish order, empty cells last", () => {
+  const tx = runQuery(tablesOf(book), { sayfa: "İller", sirala: "İl Adı", sutunlar: ["İl Adı"] });
+  assert.ok(!("error" in tx));
+  if ("error" in tx) return;
+  const order = tx.table.split("\n").slice(2).map((l) => l.replace(/\|/gu, "").trim());
+  assert.deepEqual([...new Set(order)], ["Afyonkarahisar-3", "İzmir-35", "Kütahya-43", "Manisa-45", "Uşak-64"]);
+  const nums = runQuery(tablesOf(letters), { sayfa: "Giden-2026", sirala: "Tutar", azalan: true, adet: 1, sutunlar: ["Tutar"] });
+  assert.ok(!("error" in nums) && /\| 6000,5 \|/u.test(nums.table), "6000,5 above 1000,5: by value, not by text");
+  const empty = runQuery(tablesOf(letters), { sayfa: "Giden-2026", sirala: "Tarih", azalan: true, sutunlar: ["Sayı"] });
+  assert.ok(!("error" in empty) && !/9999/u.test(empty.table), "an undated entry is never 'the newest' (and here past the 200 rows)");
+});
+
+test("runQuery sondan: without a date to order by, the sheet's last rows first", () => {
+  const r = runQuery(tablesOf(letters), { sayfa: "Giden-2026", sondan: true, adet: 2, sutunlar: ["Sayı"] });
+  assert.ok(!("error" in r) && /\| 9999 \|\n\| 1449 \|/u.test(r.table));
+  assert.match((r as { text: string }).text, /son satırından başlayarak/u);
+});
+
+test("runQuery: an unknown order column or a bad count is an error naming what there is", () => {
+  const a = runQuery(tablesOf(letters), { sayfa: "Giden-2026", sirala: "Gönderim" });
+  assert.ok("error" in a && /Sütunlar: Sayı, Tarih, Konu, Tutar/u.test(a.error));
+  for (const adet of [0, -1, 1.5, 201]) assert.ok("error" in runQuery(tablesOf(letters), { sayfa: "Giden-2026", adet }), String(adet));
 });

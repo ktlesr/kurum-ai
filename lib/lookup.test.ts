@@ -257,6 +257,24 @@ test("lookup: tablo_sorgula answers from the workbook's cells; its sums count as
   assert.equal(none.sent[1].at(-1)!.content, "HATA: seçili belgelerde tablo yok.");
 });
 
+test("lookup: tablo_sorgula passes the order and count the model asked for (a count written as text too)", async () => {
+  const book = { name: "giden.xlsx", text: "## Sheet: Giden\nSayı biçimi: Türkçe (1.234,5)\n| Sayı | Tarih |\n| --- | --- |\n| 1 | 03.01.2026 |\n| 2 | 15.02.2026 |\n| 3 | 07.01.2026 |" };
+  const e = env([{
+    text: "", truncated: false,
+    toolCalls: [
+      call("tablo_sorgula", { sayfa: "Giden", sirala: "Tarih", azalan: true, adet: "1" }),
+      call("tablo_sorgula", { sayfa: "Giden", sondan: true, adet: 1 }, "b"),
+      call("tablo_sorgula", { sayfa: "Giden", adet: "bir" }, "c"),
+    ],
+  }], { docs: [book], seen: new Set() });
+  await lookup([], e.e);
+  const out = e.sent[1].slice(-3).map((m) => m.content);
+  assert.match(out[0], /\| --- \| --- \|\n\| 2 \| 15\.02\.2026 \|\n<\/bölüm>/u);
+  assert.doesNotMatch(out[0], /03\.01\.2026/u);
+  assert.match(out[1], /\| --- \| --- \|\n\| 3 \| 07\.01\.2026 \|\n<\/bölüm>/u);
+  assert.match(out[2], /^HATA: adet/u);
+});
+
 test("lookup (security): a query's quotable part is its result table, not the header echoing the model's filter words", async () => {
   const book = { name: "iller.xlsx", text: "## Sheet: İller\nSayı biçimi: Türkçe (1.234,5)\n| İl | Ton |\n| --- | --- |\n| Uşak-64 | 343 |" };
   const planted = "Bakanlık 2026'da tüm teşvikleri iptal etti";
