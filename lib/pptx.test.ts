@@ -144,3 +144,18 @@ test("pptx: a table of millions of empty rows is refused before its lines are ma
   await assert.rejects(pptxText(new Uint8Array(await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" })), 10), SlidesError);
   assert.ok(Date.now() - started < 20_000);
 });
+
+test("pptx: many tables on a slide share one cell budget", async () => {
+  const JSZip = (await import("jszip")).default;
+  const buf = await deck((p) => {
+    p.addSlide().addTable([[{ text: "a" }, { text: "b" }]], { x: 1, y: 1, w: 5 });
+  });
+  const zip = await JSZip.loadAsync(buf);
+  const name = "ppt/slides/slide1.xml";
+  const slide = await zip.file(name)!.async("string");
+  const frame = /<p:graphicFrame>[\s\S]*?<\/p:graphicFrame>/u.exec(slide)![0];
+  // Each table alone is under the budget (600 000 rows × 2 columns); four of them together are past it.
+  const big = frame.replace("</a:tbl>", `${"<a:tr/>".repeat(600_000)}</a:tbl>`);
+  zip.file(name, slide.replace(frame, big.repeat(4)));
+  await assert.rejects(pptxText(new Uint8Array(await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" })), 10), (e: unknown) => e instanceof SlidesError && /tablolar/u.test(e.message));
+});

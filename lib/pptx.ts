@@ -20,6 +20,10 @@ const unreadable = "Sunum dosyası okunamadı: bozuk ya da desteklenmeyen bir ya
 async function xmlOf(zip: JSZip, name: string): Promise<Document | null> {
   const f = zip.file(name);
   if (!f) return null;
+  // The size the archive declares, checked before inflating (the real total is capped earlier, lib/filetype zipProblem;
+  // the length check below holds whatever the declaration says).
+  const declared = (f as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize;
+  if (typeof declared === "number" && declared > MAX_PART * 4) throw new SlidesError("Sunumun bir parçası okunamayacak kadar büyük. Dosyayı bölerek yükleyin.");
   const text = await f.async("string");
   // A parsed part holds about a hundred times its size in memory: a part past this is refused before it is parsed.
   if (text.length > MAX_PART) throw new SlidesError("Sunumun bir parçası okunamayacak kadar büyük. Dosyayı bölerek yükleyin.");
@@ -71,7 +75,8 @@ const placeholder = (sp: El) => {
 interface Shape { title?: string; lines: string[] }
 
 /** The shapes of a tree in their order: text boxes, tables as Markdown, groups opened; pictures and charts counted. */
-function shapes(tree: El, out: Shape[], skipped: { media: number }) {
+/** `skipped.cells`: the table cells made so far in the whole deck, against MAX_CELLS (one budget, not one per table). */
+function shapes(tree: El, out: Shape[], skipped: { media: number; cells: number }) {
   for (const k of kids(tree)) {
     const name = k.localName;
     if (name === "sp") {
@@ -100,7 +105,8 @@ function shapes(tree: El, out: Shape[], skipped: { media: number }) {
       width = Math.min(width, MAX_COLS);
       if (!width) continue;
       // Measured before its lines are made: rows × columns, not what the file's few bytes say.
-      if (rows.length * width > MAX_CELLS) throw new SlidesError("Sunumdaki bir tablo okunamayacak kadar büyük. Dosyayı bölerek yükleyin.");
+      skipped.cells += rows.length * width;
+      if (skipped.cells > MAX_CELLS) throw new SlidesError("Sunumdaki tablolar okunamayacak kadar büyük. Dosyayı bölerek yükleyin.");
       const line = (r: string[]) => `| ${Array.from({ length: width }, (_, i) => r[i] ?? "").join(" | ")} |`;
       out.push({ lines: ["", line(rows[0]), `|${" --- |".repeat(width)}`, ...rows.slice(1).map(line), ""] });
     } else if (name === "pic") skipped.media++;
@@ -134,7 +140,7 @@ async function read(buf: Uint8Array, maxSlides: number): Promise<{ text: string;
   const order = (list ? kids(list, "sldId") : []).map((s) => rels.get(relId(s))?.target).filter((t): t is string => !!t);
   if (order.length > maxSlides) throw new SlidesError(`Sunumda çok fazla slayt var (en fazla ${maxSlides}). Dosyayı bölerek yükleyin.`);
   const parts: string[] = [];
-  const skipped = { media: 0 };
+  const skipped = { media: 0, cells: 0 };
   let hidden = 0;
   // A part is read once: a deck can point at the same slide or notes part hundreds of times (each read inflates it again).
   const seen = new Set<string>();
@@ -157,7 +163,10 @@ async function read(buf: Uint8Array, maxSlides: number): Promise<{ text: string;
     const notesDoc = notesPath && !seen.has(notesPath) ? (seen.add(notesPath), await xmlOf(zip, notesPath)) : null;
     const notes: Shape[] = [];
     const notesTree = notesDoc && all(notesDoc.documentElement, "spTree")[0];
-    if (notesTree) shapes(notesTree, notes, { media: 0 });
+    // The notes' tables count against the deck's cells too; a notes page's pictures are not the slide's.
+    const media = skipped.media;
+    if (notesTree) shapes(notesTree, notes, skipped);
+    skipped.media = media;
     // The slide number placeholder is left out by its kind (shapes()); a note that is a number ("2026") is a note.
     const noteLines = notes.filter((s) => !s.title).flatMap((s) => s.lines).filter(Boolean);
     const part = [
