@@ -92,3 +92,15 @@ test("a file card follows its answer when messages before it go", () => {
   assert.equal(kept[5].files, undefined);
 });
 
+
+test("backup meta: found files keep a shared id, their path and section; anything else is dropped", () => {
+  const id = `s-${"a".repeat(40)}`;
+  const meta = { mode: "full", sources: [], unverified: [], uncertain: [], found: [
+    { id, name: "Raporlar/2025.pdf", label: "Sayfa 3" },
+    { id: "../../etc", name: "x" }, // not a shared id: never opened from a backup
+    { id: `s-${"b".repeat(40)}`, name: 5 },
+    { id: `s-${"c".repeat(40)}`, name: "Bütçe.xlsx" },
+  ] };
+  const back = parseBackup(JSON.stringify(makeBackup([chat("a", 1, { messages: [{ role: "assistant", content: "x", meta: meta as never }] })]))) as StoredChat[];
+  assert.deepEqual(back[0].messages[0].meta?.found, [{ id, name: "Raporlar/2025.pdf", label: "Sayfa 3" }, { id: `s-${"c".repeat(40)}`, name: "Bütçe.xlsx" }]);
+});

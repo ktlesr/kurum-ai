@@ -582,6 +582,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
   const deleteStable = useCallback((id: string) => latest.current.deleteDoc(id), []);
   const moveStable = useCallback((id: string, folder: string) => latest.current.moveDoc(id, folder), []);
   const openDoc = useCallback((id: string) => setSource({ serverId: id }), []);
+  const openFound = useCallback((id: string, label?: string) => setSource({ serverId: id, label }), []);
   const closeSource = useCallback(() => setSource(null), []);
   // For each position, the question asked last before it: one pass per message list, not one search per bubble per key.
   const askedAt = useMemo(() => {
@@ -907,7 +908,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             }}>
               <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-8">
                 {messages.map((m, i) => (
-                  <Bubble key={i} index={i} m={m} fileReady={m.fileOf === undefined || messages[m.fileOf]?.role === "assistant"} live={streaming && i === messages.length - 1} busy={streaming || docsWait} onEditAt={editAt} onSource={sourceOf}
+                  <Bubble key={i} index={i} m={m} fileReady={m.fileOf === undefined || messages[m.fileOf]?.role === "assistant"} live={streaming && i === messages.length - 1} busy={streaming || docsWait} onEditAt={editAt} onSource={sourceOf} onOpen={openFound}
                     // What its file is made of, as props (the messages keep their identity, so memo still holds).
                     answer={messages[m.fileOf ?? i]} asked={askedAt[m.fileOf ?? i]} title={current?.title} />
                 ))}
@@ -1237,7 +1238,7 @@ const chatDoc = (messages: Message[], title?: string): ExportDoc =>
   );
 
 /** memo: re-rendered only when its own message or state changes, not on every key typed in the box. */
-const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt, onSource, answer, asked, title }: { m: Message; index: number; fileReady: boolean; live: boolean; busy: boolean; onEditAt: (i: number, text: string) => void; onSource: (chip: string, doc?: string) => void; answer?: Message; asked?: Message; title?: string }) {
+const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt, onSource, onOpen, answer, asked, title }: { m: Message; index: number; fileReady: boolean; live: boolean; busy: boolean; onEditAt: (i: number, text: string) => void; onSource: (chip: string, doc?: string) => void; onOpen: (id: string, label?: string) => void; answer?: Message; asked?: Message; title?: string }) {
   const onEdit = useCallback((text: string) => onEditAt(index, text), [onEditAt, index]);
   // One answer as a document, from this render's props (the file card's name is made from it while rendering).
   const doc = useCallback((): ExportDoc => exportDoc([turnForAnswer(answer, asked)], title), [answer, asked, title]);
@@ -1288,7 +1289,7 @@ const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt,
           {m.status}
         </p>
       )}
-      {!live && m.meta && <MetaNotes meta={m.meta} onSource={onSource} />}
+      {!live && m.meta && <MetaNotes meta={m.meta} onSource={onSource} onOpen={onOpen} />}
       {!live && !!m.files?.length && fileReady && <FileCards doc={doc} formats={m.files} />}
       {!!m.gallery?.items.length && <GalleryGrid items={m.gallery.items} />}
       {!live && m.content && !m.local && (
@@ -1306,9 +1307,20 @@ const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt,
   );
 });
 
-function MetaNotes({ meta, onSource }: { meta: ChatMeta; onSource: (chip: string, doc?: string) => void }) {
+function MetaNotes({ meta, onSource, onOpen }: { meta: ChatMeta; onSource: (chip: string, doc?: string) => void; onOpen: (id: string, label?: string) => void }) {
   return (
     <div className="mt-3 flex flex-col gap-2 text-xs">
+      {meta.found && meta.found.length > 0 && (
+        // The content search's files: each opens at the section it was found in (the server checks access again).
+        <div className="flex flex-wrap items-center gap-1.5 text-muted">
+          <span>Bulunan belgeler:</span>
+          {meta.found.map((f) => (
+            <button key={f.id} onClick={() => onOpen(f.id, f.label)} className="max-w-full truncate rounded-md border border-line bg-panel px-1.5 py-0.5 hover:border-accent hover:text-fg" title={`${f.name}${f.label ? ` · ${f.label}` : ""} — kaynak panelinde aç`}>
+              {f.name.split("/").pop()}{f.label ? ` · ${f.label.replace(/^Sheet: /u, "")}` : ""}
+            </button>
+          ))}
+        </div>
+      )}
       {meta.web && meta.web.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 text-muted">
           <span>Okunan sayfalar:</span>

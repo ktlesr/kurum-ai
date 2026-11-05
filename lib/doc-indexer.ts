@@ -163,14 +163,22 @@ export async function searchContent(who: Viewer, question: string, max = 8) {
 
 /** The tool as a chat runs it. */
 export async function contentCall(who: Viewer, args: string): Promise<string> {
+  return (await contentSearch(who, args)).out;
+}
+
+/** The tool as a chat runs it, with what it found: each file and the section it was best found in, for the answer's links. */
+export async function contentSearch(who: Viewer, args: string): Promise<{ out: string; found: { id: string; name: string; label?: string }[] }> {
   const q = contentArgs(args);
-  if (typeof q !== "string") return q.error;
+  if (typeof q !== "string") return { out: q.error, found: [] };
   try {
-    return (await searchContent(who, q)).text;
+    const r = await searchContent(who, q);
+    // Only a label the source panel has a section for (a page, a sheet, the front matter); "Bölüm N" of unmarked text isn't one.
+    const opens = (l: string | undefined) => !!l && /^(Sayfa \d+|Sheet: .+|Başlangıç)$/u.test(l);
+    return { out: r.text, found: r.files.map((f) => ({ id: f.fileId, name: f.path, ...(opens(f.sections[0]?.label) ? { label: f.sections[0].label } : {}) })) };
   } catch (e) {
-    if (e instanceof ShareDown) return "HATA: ortak klasöre şu an ulaşılamıyor; içerik araması yapılamadı. Kullanıcıya bunu söyle, eski bilgiyi güncelmiş gibi verme.";
+    if (e instanceof ShareDown) return { out: "HATA: ortak klasöre şu an ulaşılamıyor; içerik araması yapılamadı. Kullanıcıya bunu söyle, eski bilgiyi güncelmiş gibi verme.", found: [] };
     logError("doc-index", e);
-    return "HATA: içerik dizinine şu an ulaşılamıyor; dosya_ara ile dosya adına göre aranabilir.";
+    return { out: "HATA: içerik dizinine şu an ulaşılamıyor; dosya_ara ile dosya adına göre aranabilir.", found: [] };
   }
 }
 

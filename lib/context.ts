@@ -99,6 +99,11 @@ export const STATUS_SEP = "\u001d";
 export const ERROR_SEP = "\u001f";
 
 export interface ChatMeta {
+  /**
+   * Shared-folder files the content search (belge_ara) found for this answer, each with the section it was found in:
+   * a click opens that section in the source panel (the server checks again that this person may see the file).
+   */
+  found?: { id: string; name: string; label?: string }[];
   /** Library documents this answer read because the message asked for them: the chat keeps them for follow-ups. */
   used?: { id: string; name: string; size: number; kind: string }[];
   mode: "full" | "rag" | "scan" | "truncated";

@@ -6,7 +6,7 @@ import { cptFor, docsOf, getDoc, recordTokens, type Doc } from "@/lib/server";
 import { isSharedId, sharedDoc, sharedFilesFor, sharedFor, type SharedEntry } from "@/lib/library";
 import { filesCall, FILES_RULE, FILES_TOOL, type FileEntry } from "@/lib/file-search";
 import { CONTENT_RULE } from "@/lib/doc-index";
-import { CONTENT_TOOL, contentCall } from "@/lib/doc-indexer";
+import { CONTENT_TOOL, contentSearch } from "@/lib/doc-indexer";
 import { PICK_PROMPT, pickFrom, pickerInput, planSources, type SourceEntry } from "@/lib/sources";
 import { parseFile, parsePdf, UserError } from "@/lib/parse";
 import { withJobDir } from "@/lib/workspace";
@@ -549,8 +549,12 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
               busy: "Dosyalar aranıyor…",
               run: async (c) => {
                 if (c.name === CONTENT_TOOL.name) {
-                  const out = await contentCall(user, c.arguments);
-                  return { out, line: out };
+                  const r = await contentSearch(user, c.arguments);
+                  // Under the answer, each file found opens at its section (once each, the first search's section).
+                  const had = new Set((meta.found ?? []).map((f) => f.id));
+                  const more = r.found.filter((f) => !had.has(f.id));
+                  if (more.length) meta.found = [...(meta.found ?? []), ...more].slice(0, 20);
+                  return { out: r.out, line: r.out };
                 }
                 if (c.name !== FILES_TOOL.name) return { out: `HATA: bilinmeyen araç "${c.name}".` };
                 const out = filesCall(c.arguments, await filesFor());
@@ -561,7 +565,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           answer = r.text;
           // Only what a page, a refused link or an unread document has to say; a plain answer gets no notes.
           // Sent too when the chat had documents the app found: the page lets them go (meta.used is empty).
-          if (pages.length || meta.note || autoIds.length) send(META_SEP + JSON.stringify({ ...meta, sources: [] }));
+          if (pages.length || meta.note || autoIds.length || meta.found?.length) send(META_SEP + JSON.stringify({ ...meta, sources: [] }));
           return void ctrl.close();
         }
         // The list of headings has an exact answer in the text: code writes it, no model reorders or invents, nothing goes out.

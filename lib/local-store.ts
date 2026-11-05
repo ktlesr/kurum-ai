@@ -140,6 +140,15 @@ function cleanMeta(m: unknown): ChatMeta | undefined {
     uncertain: strings(x.uncertain),
     ...(typeof x.note === "string" ? { note: x.note } : {}),
     ...(Array.isArray(x.web) ? { web: x.web.filter((w) => webUrl(w?.url)).map((w) => ({ url: w.url, title: typeof w.title === "string" ? w.title : "" })) } : {}),
+    // Found by the content search: a shared file's id (the only kind the panel opens from here), its path, its section.
+    ...(Array.isArray(x.found)
+      ? {
+          found: x.found
+            .filter((f) => f && typeof f.id === "string" && /^s-[0-9a-f]{40}$/u.test(f.id) && typeof f.name === "string")
+            .slice(0, 20)
+            .map((f) => ({ id: f.id, name: f.name.slice(0, 300), ...(typeof f.label === "string" ? { label: f.label.slice(0, 120) } : {}) })),
+        }
+      : {}),
     // The document of a single-document answer: a bare "Sayfa N" chip resolves against it, never another one.
     ...(typeof x.doc === "string" ? { doc: x.doc.slice(0, 300) } : {}),
     ...(Array.isArray(x.claims)
