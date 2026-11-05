@@ -12,6 +12,7 @@ import { CONTENT_TOOL, contentArgs, forgetGone, indexRows, INDEXING, searchFiles
 import { cleanScanIds, filePathOf, libraryDown, sharedDoc, sharedFor, type SharedEntry, type Viewer } from "./library";
 import { asBackground } from "./limits";
 import { logError } from "./log";
+import { countUsage } from "./usage";
 
 const TICK_MS = 5_000;
 /** Nobody on the model or Docling for this long: a chat answer is several calls in a row, an index read between them slows it. */
@@ -172,6 +173,8 @@ export async function contentSearch(who: Viewer, args: string): Promise<{ out: s
   if (typeof q !== "string") return { out: q.error, found: [] };
   try {
     const r = await searchContent(who, q);
+    countUsage("content_search");
+    if (r.strength !== "good") countUsage(r.strength === "none" ? "content_empty" : "content_weak");
     // Only a label the source panel has a section for (a page, a sheet, the front matter); "Bölüm N" of unmarked text isn't one.
     const opens = (l: string | undefined) => !!l && /^(Sayfa \d+|Sheet: .+|Başlangıç)$/u.test(l);
     return { out: r.text, found: r.files.map((f) => ({ id: f.fileId, name: f.path, ...(opens(f.sections[0]?.label) ? { label: f.sections[0].label } : {}) })) };

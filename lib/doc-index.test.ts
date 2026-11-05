@@ -92,3 +92,11 @@ test("someoneWaits: a background read steps aside for a person waiting on Doclin
   (await chat)();
   assert.equal(someoneWaits(docling, model), false);
 });
+
+test("strengthOf: nothing found, fewer than half the stems in the best section, or good", async () => {
+  const { strengthOf } = await import("./doc-index.ts");
+  const files = rankFiles([hit("a", "Sayfa 1", "kutahya istihdam", 1)], ["kutah", "istihdam", "2026"]);
+  assert.equal(strengthOf(files, ["kutah", "istihdam", "2026"]), "good");
+  assert.equal(strengthOf(files, ["kutah", "uretim", "2026", "manisa"]), "weak");
+  assert.equal(strengthOf([], ["kutah"]), "none");
+});

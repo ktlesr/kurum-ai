@@ -10,6 +10,11 @@ export const USAGE_LABELS = {
   reels: "Reels / video",
   social: "Sosyal medya görseli",
   template: "Doldurulan şablon",
+  // The shared folder's content search (lib/doc-indexer): how often it finds nothing, or only a weak match. Whether a
+  // meaning-based search is worth adding is read off these two against the first.
+  content_search: "İçerik araması",
+  content_empty: "Sonuçsuz içerik araması",
+  content_weak: "Zayıf içerik araması (aranan kelimelerin yarısından azı)",
 } as const;
 export type UsageKind = keyof typeof USAGE_LABELS;
 /** What only the browser knows happened (the studio works there): anything else is counted by the server itself. */

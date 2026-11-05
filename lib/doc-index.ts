@@ -84,6 +84,17 @@ export function snippet(body: string, st: string[], size = 420): string {
 
 export interface Coverage { indexed: number; total: number; failed: number }
 
+/**
+ * How well the best file found answers the asked words: "none" (nothing found), "weak" (its best section and path hold
+ * fewer than half of the stems), else "good". Counted, never stored with the words (lib/usage).
+ */
+export function strengthOf(files: { path: string; sections: Hit[] }[], st: string[]): "none" | "weak" | "good" {
+  const best = files[0]?.sections[0];
+  if (!best) return "none";
+  const n = st.filter((s) => has(best.bodyFold, s) || has(best.pathFold, s)).length;
+  return n * 2 < st.length ? "weak" : "good";
+}
+
 /** What the model reads back: where each file was found and the words around it, and how much of the folder is in. */
 export function hitsText(question: string, files: ReturnType<typeof rankFiles>, st: string[], cov: Coverage): string {
   const scope =
@@ -178,7 +189,7 @@ export async function searchFiles(sql: postgres.Sql, files: Map<string, string>,
   const best = rankFiles(hits, st, verify ? max * 2 : max);
   const ok = verify && best.length ? await verify(best.map((f) => f.fileId)) : null;
   const found = (ok ? best.filter((f) => ok.has(f.fileId)) : best).slice(0, max);
-  return { files: found, text: hitsText(question, found, st, cov) };
+  return { files: found, text: hitsText(question, found, st, cov), strength: strengthOf(found, st) };
 }
 
 /**
