@@ -258,3 +258,23 @@ test("destekAnswers: the tool's refusals all start with HATA, its results don't"
   assert.equal(destekAnswers("SONUÇ: 0 proje. Kapsamda proje yok."), true);
   assert.equal(destekAnswers("Kullanıcıya şu soruyu sor, tahmin etme: hangi yıl?"), true);
 });
+
+test("support and budget bring their ratio; amounts named on one basis set the table's basis", () => {
+  const c = compileAggregate(PLAN.parse({ type: "aggregate", group_by: ["yil"], metrics: ["destek", "butce"] }), "def", 1) as { columns: { key: string; label: string }[] };
+  assert.deepEqual(c.columns.map((x) => x.key), ["yil", "destek_def", "butce_def", "destek_orani_def"]);
+  assert.equal(c.columns[3].label, "Nihai fiili destek oranı (Def-%)");
+  const one = compileAggregate(PLAN.parse({ type: "aggregate", metrics: ["destek_sozlesme"] }), "def", 1) as { columns: { key: string }[] };
+  assert.deepEqual(one.columns.map((x) => x.key), ["destek_sozlesme"]);
+});
+
+test("basisOf: one named basis wins, anything mixed keeps the plan's", async () => {
+  const { basisOf } = await import("./tool.ts");
+  const b = (o: object) => basisOf(PLAN.parse({ type: "aggregate", amount_basis: "def", ...o }));
+  assert.equal(b({ metrics: ["butce_nihai", "destek_nihai"] }), "nihai");
+  assert.equal(b({ metrics: ["destek", "butce_nihai"] }), "def");
+  assert.equal(b({ metrics: ["destek_nihai", "butce_sozlesme"] }), "def");
+  assert.equal(b({ metrics: ["gelen_proje"] }), "def");
+  assert.equal(basisOf(PLAN.parse({ type: "list_projects", amount_basis: "def", metrics: ["destek_nihai"] })), "def");
+  const c = compileAggregate(PLAN.parse({ type: "aggregate", metrics: ["destek", "butce", "gelen_proje"] }), "def", 1) as { columns: { key: string }[] };
+  assert.deepEqual(c.columns.map((x) => x.key), ["destek_def", "butce_def", "destek_orani_def", "gelen_proje"]);
+});

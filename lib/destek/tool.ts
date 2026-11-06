@@ -89,7 +89,7 @@ export async function runDestek(sql: postgres.Sql, s: Snapshot | undefined, args
   const resolved = resolve(plan, cat);
   if ("error" in resolved) return { out: `HATA (filtre eşleşmedi, veri yokluğu değil): ${resolved.error}. Kullanıcıya doğru adı sor ya da benzerlerden birini kullan.` };
   const { plan: p, notes } = resolved;
-  const basis: Basis = p.amount_basis === "default" ? DEFAULT_BASIS : p.amount_basis;
+  const basis = basisOf(p);
 
   if (p.type === "metadata") return metadata(s, cat);
   if (p.type === "lookup_project" && !p.filters.metin) return { out: "HATA: lookup_project için filters.metin (başvuru sahibi ya da proje adından kelimeler) gerekli." };
@@ -126,6 +126,16 @@ export async function runDestek(sql: postgres.Sql, s: Snapshot | undefined, args
     return { out: `SONUÇ: 0 proje. ${why}\n${result.footer}`, table: { ...result, warnings: [why, ...result.warnings] }, raw: { rows: data, total: totalRow, matched } };
   }
   return { out: textFor(result), table: result, raw: { rows: data, total: totalRow, matched } };
+}
+
+/**
+ * The plan's basis; amounts named on one basis only ("butce_nihai", no bare "butce") put the table on that basis, so its
+ * title, footer and warnings say so too (not "Def-TL" over nominal columns).
+ */
+export function basisOf(p: Plan): Basis {
+  const asked: Basis = p.amount_basis === "default" ? DEFAULT_BASIS : p.amount_basis;
+  const named = [...new Set(p.metrics.map((m) => METRICS[m]?.basis).filter((b): b is Basis => !!b))];
+  return p.type === "aggregate" && named.length === 1 && !p.metrics.some((m) => resolveMetric(m, asked) !== m) ? named[0] : asked;
 }
 
 /** The model's values matched to the real ones; families named by a word ("sosyal gelişme") too. */

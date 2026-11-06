@@ -1,7 +1,7 @@
 // Plan → one parameterised SQL statement over destek.v_projeler (prompt §5). Deterministic; the user's words and every
 // value go as parameters, the SQL text is only built from the fixed names of lib/destek/semantic. The total row is
 // computed by the same aggregate over all rows (GROUPING SETS), so a ratio in it is weighted too (§0-5).
-import { DIMS, METRICS, resolveMetric, type Basis, type Dim } from "./semantic.ts";
+import { BASES, DIMS, METRICS, resolveMetric, type Basis, type Dim } from "./semantic.ts";
 
 /** An order field as the plan wrote it, on the plan's basis: "destek" → "destek_def"; anything else as it is. */
 const orderName = (field: string, basis: Basis) => resolveMetric(field, basis) ?? field;
@@ -64,6 +64,10 @@ export function compileAggregate(plan: Plan, basis: Basis, snapshotId: number): 
     const r = resolveMetric(m, basis);
     if (!r) return { error: `HATA: "${m}" metriği ${basis} tabanında yok (Def-TL tabanında eş finansman kolonu yok).` };
     if (!metrics.includes(r)) metrics.push(r);
+  }
+  // Support and budget on one basis: their ratio beside them, as in the workbook ("Nihai Fiili Destek Oranı (Def-%)").
+  for (const b of BASES) if (metrics.includes(`destek_${b}`) && metrics.includes(`butce_${b}`) && !metrics.includes(`destek_orani_${b}`)) {
+    metrics.splice(Math.max(metrics.indexOf(`destek_${b}`), metrics.indexOf(`butce_${b}`)) + 1, 0, `destek_orani_${b}`);
   }
   const dims = [...new Set(plan.group_by)] as Dim[];
   const cols: Col[] = [

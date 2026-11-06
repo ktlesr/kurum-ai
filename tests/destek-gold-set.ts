@@ -65,4 +65,8 @@ export const AGG: Agg[] = [
   { id: "kutahya-sogep-2024-2025-def", tip: 1, soru: "Kütahya ilinin 2024-2025 SOGEP projelerinin toplam nihai deflatörlü bütçesi ile deflatörlü destek tutarı",
     plan: { type: "aggregate", filters: { aile: ["SOGEP"], il: ["kutahya"], yil: { in: [2024, 2025] } }, metrics: ["butce", "destek"], amount_basis: "def" },
     keep: (r) => r.aile === "SOGEP" && val(r, "il") === "Kütahya" && ["2024", "2025"].includes(val(r, "yil") ?? ""), group: [], metrics: ["butce_def", "destek_def"] },
+  // Its follow-up (2026-11-06): each year's totals and the ratio, one row a year.
+  { id: "kutahya-sogep-yil-yil-def", tip: 2, soru: "2024 ve 2025 toplamlarını ve oranı yıl yıl ayrı göster",
+    plan: { type: "aggregate", filters: { aile: ["SOGEP"], il: ["kutahya"], yil: { in: [2024, 2025] } }, group_by: ["yil"], metrics: ["destek", "butce"], amount_basis: "def" },
+    keep: (r) => r.aile === "SOGEP" && val(r, "il") === "Kütahya" && ["2024", "2025"].includes(val(r, "yil") ?? ""), group: ["yil"], metrics: ["destek_def", "butce_def", "destek_orani_def"] },
 ];
