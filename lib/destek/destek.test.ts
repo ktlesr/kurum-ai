@@ -245,3 +245,16 @@ test("the support workbook is known by its name across years, not by a bare figu
   assert.notEqual(bookKey("SOGEP Başvuru Rehberi 2026.pdf"), k);
   assert.equal(bookKey("2026.xlsx"), null, "a name of figures alone matches nothing");
 });
+
+test("destekAnswers: the tool's refusals all start with HATA, its results don't", async () => {
+  const { destekAnswers, runDestek } = await import("./tool.ts");
+  const { readPlan } = await import("./plan.ts");
+  const noSql = undefined as never;
+  for (const args of ["{", JSON.stringify({ type: "aggregate", metrics: ["yok_boyle"] })]) {
+    const r = readPlan(args);
+    assert.ok("error" in r && !destekAnswers(r.error), args);
+  }
+  assert.equal(destekAnswers((await runDestek(noSql, undefined, "{}")).out), false, "nothing loaded");
+  assert.equal(destekAnswers("SONUÇ: 0 proje. Kapsamda proje yok."), true);
+  assert.equal(destekAnswers("Kullanıcıya şu soruyu sor, tahmin etme: hangi yıl?"), true);
+});

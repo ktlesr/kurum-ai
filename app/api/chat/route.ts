@@ -10,6 +10,7 @@ import { CONTENT_TOOL, contentSearch } from "@/lib/doc-indexer";
 import { destekFor } from "@/lib/destek/chat";
 import { commentHidden } from "@/lib/destek/format";
 import { MAX_TABLES } from "@/lib/destek/view";
+import { DESTEK_FIRST, DESTEK_IN_DOCS, destekAnswers } from "@/lib/destek/tool";
 import { namedFiles, PICK_PROMPT, pickFrom, pickerInput, planSources, type SourceEntry } from "@/lib/sources";
 import { parseFile, parsePdf, UserError } from "@/lib/parse";
 import { withJobDir } from "@/lib/workspace";
@@ -31,7 +32,7 @@ import { findUrls, MAX_CHARS_TOTAL, onSite, parsePick, siteOf, WebError, webReas
 import { readWeb } from "@/lib/browser";
 import { gatePolicy, parseGate, quoteInDocs } from "@/lib/evidence";
 import { isWorkbook, schemaOf, tablesFor } from "@/lib/table";
-import { answerWithCalc, lookup, LOOKUP, LOOKUP_TOKENS, outline, seenKey, TOOLS } from "@/lib/lookup";
+import { answerWithCalc, lookup, LOOKUP, LOOKUP_TOKENS, MAX_CALLS, outline, seenKey, TOOLS } from "@/lib/lookup";
 import { isClearNo, parseRelevant, parseSearchQuery, passage, aboutTheDocument, safeQuery, saysNotWritten, searchWeb } from "@/lib/websearch";
 
 export const runtime = "nodejs";
@@ -384,10 +385,7 @@ export async function POST(req: Request) {
         // Picked by the app under another name: known by its bytes once read.
         selected = selected.filter((d) => !(isBook(d.name, d.sourceHash) && books.push(d.name)));
         if (books.length) {
-          const alone = !selected.length;
-          meta.note = [meta.note, alone
-            ? `${[...new Set(books)].join(", ")} belge olarak okunmadı: destek verisi soruları yüklü sürümden (${destek!.file}) kesin hesaplarla cevaplanır.`
-            : `${[...new Set(books)].join(", ")} belge olarak okunmadı. Başka belgeler de seçili olduğundan bu soruda destek verisi sorgulanmadı; destek verisi sorusu için o belgeleri sohbetten çıkarın.`].filter(Boolean).join(" ");
+          meta.note = [meta.note, `${[...new Set(books)].join(", ")} belge olarak okunmadı: destek verisi soruları yüklü sürümden (${destek!.file}) kesin hesaplarla cevaplanır.`].filter(Boolean).join(" ");
         }
         // The documents this message brought in (not those already attached): the chat keeps them for follow-ups.
         const added = selected.filter((d) => !fileIds.includes(d.id));
@@ -543,8 +541,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           // The file finder on the plain chat (lib/file-search): the shared folder and the user's own documents by name,
           // folder and date, only what this person may see; nothing read. Same rounds and bounds as the calculation tool.
           // The support workbook's tool (lib/destek): exact numbers from the loaded version, tables the page shows itself.
-          // Phase 1 (prompt §8): the plain chat only. With documents selected the answer stays the documents' own (their
-          // number checks would call the tool's numbers unverified); offering it there too is phase 2's integration.
+          // With documents selected it is asked before them (destekFirst below).
           const destekOuts: string[] = [];
           // After a support-data call the model's text is held, not streamed: it is shown only once its numbers are
           // checked against the tool's results below (a cut-off request shows nothing of it, never an unchecked number).
@@ -644,6 +641,46 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             return void ctrl.close();
           }
         }
+        // The support data beside documents (lib/destek): one short call before the documents are read, the tool alone
+        // offered, decides whether the question needs it and makes its queries. Their tables go to the page; their
+        // results go to the answer as data. The documents' calls keep their own tool list (their shared prefix).
+        // ponytail: one extra call on every document question while a version is loaded; a word filter first if it costs.
+        const destekOuts: string[] = [];
+        /** A query came back with a result (a table, the version's metadata, a question to ask): not only errors. */
+        let destekAnswered = false;
+        if (destek) {
+          status("Destek verisi gerekiyor mu bakılıyor…");
+          const toolText = JSON.stringify(destek.tool);
+          const exchange: Msg[] = [];
+          for (let step = 0; step < 2; step++) {
+            // Budgeted again each round with the results so far; what no longer fits ends the queries, keeping theirs.
+            let h: Msg[];
+            try {
+              h = historyFor([DESTEK_FIRST, toolText, ...exchange.map((m) => m.content + JSON.stringify(m.toolCalls ?? []))], { answer: 600 }).slice(-5);
+            } catch (e) {
+              if (e instanceof TooLong) break;
+              throw e;
+            }
+            let calls: ToolCall[] = [];
+            const text = await chatOnce(chat, model, [{ role: "system", content: DESTEK_FIRST }, ...h, ...exchange], signal, 600, { tools: [destek.tool], onCalls: (c) => (calls = c) }).catch((e) => {
+              if (signal.aborted) throw e;
+              logError("destek", e);
+              return "";
+            });
+            const made = calls.filter((c) => c.name === destek.name).slice(0, MAX_CALLS);
+            if (!made.length) break;
+            exchange.push({ role: "assistant", content: text, toolCalls: made });
+            for (const c of made) {
+              status("Destek verisi hesaplanıyor…");
+              const d = await destek.run(c.arguments);
+              destekOuts.push(d.out);
+              if (destekAnswers(d.out)) destekAnswered = true;
+              if (d.view) meta.destek = [...(meta.destek ?? []), d.view].slice(0, MAX_TABLES);
+              exchange.push({ role: "tool", toolCallId: c.id, content: d.out });
+            }
+          }
+        }
+        const destekData = destekOuts.length ? docBlock("bölüm", { konum: `Destek verisi sorgusu (yüklü sürüm: ${destek!.file})` }, destekOuts.join("\n\n")) : "";
         // The question read the way a person would before looking anything up: codes, abbreviations, regions and groups
         // opened up from general knowledge ("TR33 illeri" → the four provinces), so the document is searched for what
         // it actually holds, not for the user's shorthand. The model sees only the question here; no reading, as before.
@@ -660,7 +697,8 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         const names = [...new Set([...known.names, ...(reading?.names ?? []).filter((n) => !known.names.length || !isProvince(n))])];
         const meaning = names.length && (reading?.meaning || facts) ? `${facts}${reading?.meaning ? `\n\nSorunun yorumu (genel bilgiye göre, belgeden değil): ${reading.meaning}` : ""}\nBelgede bu adlarla ara: ${names.join(", ")}. Kesin tanımları cevapta bir kez "Resmi sınıflandırmaya göre", yorumu "Genel bilgiye göre" diye belirt; sorudaki kısaltma belgede geçmiyor diye "belgede yok" deme.` : "";
         if (meaning) console.info(`question reading: ${names.length} names`);
-        const sizeOf = (docs: Doc[]) => contextRatio(docs.reduce((n, d) => n + d.text.length, 0) + web.length, NUM_CTX, cptOf([...docs.map((d) => d.text), web], cptFor(model)));
+        // The support data's results ride beside the documents: they take their part of the context first, like the pages.
+        const sizeOf = (docs: Doc[]) => contextRatio(docs.reduce((n, d) => n + d.text.length, 0) + web.length + destekData.length, NUM_CTX, cptOf([...docs.map((d) => d.text), web, destekData], cptFor(model)));
         let fits = sizeOf(selected) >= 1;
         /** The search chunks in front of the model (lib/lookup seenKey): the second look (P6) doesn't fetch them again. */
         const seen = new Set<string>();
@@ -759,13 +797,13 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         // In tokens, digits one each (cptOf): what the documents' share of the context still holds beside what is
         // already in it. Found text, the tools' answers and the model's calls all come out of it (lib/lookup size).
         let room = !fits && toolsOn(chat) && selected.some((d) => d.text.trim())
-          ? Math.min(MAX_LOOKUP_CHARS / cpt, NUM_CTX - reservedFor(NUM_CTX) - tok(context) - tok(web))
+          ? Math.min(MAX_LOOKUP_CHARS / cpt, NUM_CTX - reservedFor(NUM_CTX) - tok(context) - tok(web) - tok(destekData))
           : 0;
         if (room < 700) room = 0;
         let common: Msg[] | null = null;
         for (const extra of room ? [room, 0] : [0]) {
           try {
-            common = historyFor([head, context, web], { extraTokens: extra + TASK_TOKENS });
+            common = historyFor([head, context, web, destekData], { extraTokens: extra + TASK_TOKENS });
             room = extra;
             break;
           } catch (e) {
@@ -829,6 +867,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         // by inference; the web part below takes over. Needs the web part to exist. A whole-document request, a named page,
         // or no verdict from the model goes on as usual.
         let unstated = false;
+        let held = "";
         let analysis = false;
         let general = false;
         // A question about the document itself, or asked as a file (Excel, JSON…): the document's own content, never a
@@ -859,6 +898,8 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           // Not about the documents (a translation, an e-mail): answered as a plain request, no document checks after it.
           // The words settle a document request in code; the model's "general" can't take its checks away.
           ({ general, analysis, unstated } = gatePolicy(gate, { ofDoc, factGate, quoted: (q) => quoteInDocs(q, [...selected.map((d) => d.text), ...looked]) }));
+          // The support data has it: not "not in the documents".
+          if (destekAnswered) unstated = false;
           console.info(`evidence gate: ${gate?.kind ?? "unclear"}${gate?.kind === "fact" ? (unstated ? " unstated" : " quoted") : ""}`);
         }
         if (unstated) {
@@ -874,11 +915,12 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           // round is budgeted again: the exchange so far goes beside the documents, the conversation gives way to it.
           let stated: Set<string> | undefined;
           let firstWord = false;
+          const task = `${later}${plain}${destekData ? DESTEK_IN_DOCS : ""}`;
           const r = await answerWithCalc({
             build: (exchange, note) => {
               const spent = exchange.map((m) => m.content + (m.toolCalls ?? []).map((c) => c.name + c.arguments).join(""));
               try {
-                return [...docCall(`${later}${plain}${note}`.trim(), { spent }), ...exchange];
+                return [...docCall(`${task}${note}`.trim(), { spent, data: destekData }), ...exchange];
               } catch (e) {
                 if (e instanceof TooLong) return null;
                 throw e;
@@ -889,7 +931,9 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
               const text = await streamChat(chat, model, m, think, signal, (piece) => {
                 if (!firstWord) console.info(`first word: ${((Date.now() - askedAt) / 1000).toFixed(1)} s`);
                 firstWord = true;
-                send(piece);
+                // With support data the answer is held: shown only once its numbers are checked (below).
+                if (destekOuts.length) held += piece;
+                else send(piece);
               }, (n) => {
                 // Keeps the connection busy and shows the wait isn't stuck.
                 if (n % 50 === 0) status("Düşünüyor…");
@@ -917,7 +961,12 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
 
         // Numbers the user typed count as known too (not earlier answers — they may be the hallucination).
         // The tool's calculations too: worked exactly from figures the documents state (lib/calc calculate).
-        const source = [...selected.map((d) => d.text), ...pages.map((p) => p.text), ...messages.filter((m) => m.role === "user").map((m) => m.content), ...toolCalcs].join("\n");
+        const source = [...selected.map((d) => d.text), ...pages.map((p) => p.text), ...messages.filter((m) => m.role === "user").map((m) => m.content), ...toolCalcs, ...destekOuts].join("\n");
+        // A number in neither the support data's results nor the documents (prompt §6): the answer isn't shown, the tables are.
+        if (held) {
+          if (commentHidden(answer, [source])) meta.destekHidden = true;
+          else send(held);
+        }
         // A request that isn't about the documents (a translation, an e-mail) has nothing to check against them: its
         // figures and sentences would all read "not in the source".
         if (!general) {
@@ -945,7 +994,7 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         // would still call such an answer "interpretation" and a search on its words brings some other document.
         // Asked as a file (Excel, JSON…): the document's own content in another form, the web adds nothing to it (ofDoc).
         // A plain request isn't a document answer to complete: its words ("belirtilmiyor" in a translation) search nothing.
-        if (SEARCH_URL && !pages.length && !urls.length && !unstated && !ofDoc && !analysis) status("Cevap kontrol ediliyor…");
+        if (SEARCH_URL && !pages.length && !urls.length && !unstated && !ofDoc && !analysis && !destekAnswered) status("Cevap kontrol ediliyor…");
         // The answer's own words settle it when they can; otherwise the model. Only its clear no skips the search: a missed
         // search is an answer left wrong, an extra one is a second part under its own heading.
         const judge = async () => {
@@ -957,7 +1006,8 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           console.info(`web search judge: ${JSON.stringify(said.slice(0, 20))}`);
           return !isClearNo(said);
         };
-        if (SEARCH_URL && !pages.length && !urls.length && !general && (unstated || (!ofDoc && (saysNotWritten(answer) || (!analysis && (await judge())))))) {
+        // Answered from the support data: local data, the web adds nothing to it.
+        if (SEARCH_URL && !pages.length && !urls.length && !general && !destekAnswered && (unstated || (!ofDoc && (saysNotWritten(answer) || (!analysis && (await judge())))))) {
           // Only results on the document's subject reach the reader; with none, a document answer that stands needs no
           // second part, and one that found nothing says the web had nothing either.
           const missing = unstated || saysNotWritten(answer);
@@ -989,7 +1039,11 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
         }
         send(META_SEP + JSON.stringify(meta));
       } catch (e) {
-        if (!signal.aborted) {
+        if (!signal.aborted && e instanceof TooLong && meta.destek?.length) {
+          // The support data's tables were made before the answer ran out of room: they are exact and shown all the same.
+          send(`${STATUS_SEP}${RETRACT}${STATUS_SEP}Cevap, belgelerle birlikte modelin bağlamına sığmadı; destek verisinin hesapladığı tablolar yukarıda.`);
+          send(META_SEP + JSON.stringify({ ...meta, destekHidden: false }));
+        } else if (!signal.aborted) {
           // Raw provider text stays in the server log; the user gets a fixed message (audit S10).
           logError("chat", e);
           send(

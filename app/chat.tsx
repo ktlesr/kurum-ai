@@ -1307,7 +1307,7 @@ const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt,
       {/* Support-data tables (lib/destek): the page draws them from the tool's result; the model's text is only a comment. */}
       {!live && !!m.meta?.destek?.length && <DestekTables tables={m.meta.destek} />}
       {!live && m.meta?.destekHidden ? (
-        <p className="text-xs text-muted">{m.meta.destek?.length ? "Modelin yorumu, tabloda olmayan bir sayı içerdiği için gösterilmedi; sayılar yukarıdaki tablodadır." : "Modelin cevabı, destek verisinin hesapladığı sonuçlarda olmayan bir sayı içerdiği için gösterilmedi. Soruyu yeniden ya da daha açık sorun."}</p>
+        <p className="text-xs text-muted">{m.meta.destek?.length ? "Modelin yorumu, tabloda (ya da belgelerde) olmayan bir sayı içerdiği için gösterilmedi; sayılar yukarıdaki tablodadır." : "Modelin cevabı, destek verisinin hesapladığı sonuçlarda olmayan bir sayı içerdiği için gösterilmedi. Soruyu yeniden ya da daha açık sorun."}</p>
       ) : (
         <div className={`md ${live ? "streaming" : ""}`}>
           <ReactMarkdown remarkPlugins={live ? [remarkGfm] : pagePlugins} components={live ? mdComponents : components}>{m.content}</ReactMarkdown>

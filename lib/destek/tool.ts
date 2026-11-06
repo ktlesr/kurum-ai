@@ -55,6 +55,15 @@ export function destekTool(s: Snapshot, c: Catalog): ToolDef {
 
 export const DESTEK_RULE = `\n\nAjansın destek programlarıyla ilgili sayısal sorularda (proje sayısı, destek tutarı, bütçe, oran, il/ilçe/yıl/program dağılımı, en çok destek alanlar, bir projenin durumu, ödemeler, istihdam) destek_sorgula aracını kullan. Sayıları kendin hesaplama, toplama ya da yuvarlama. Araç tabloyu kullanıcıya kendisi gösterir: tabloyu yeniden yazma; yalnızca 2-3 cümle yorum yaz. Yorumda yalnızca tabloda yazan sayıları, tablodaki yazımıyla aynen kullan (yuvarlama, "milyon" gibi kısaltma, sıra sayısı ya da kendi hesabın yok); tabloda olmayan bir sayı yazarsan yorumun gösterilmez. Soru belirsizse ve araç açıklamasında varsayılanı yoksa clarification alanıyla tek bir soru sor.`;
 
+/** The call before the documents (app/api/chat): only the tool, only to decide and query; nothing written for the user. */
+export const DESTEK_FIRST = `Kullanıcının sohbetinde seçili belgeler var; onlar ayrıca okunacak, sen burada görmüyorsun. Tek işin şu: son istek ajansın destek verisinden bir bilgi gerektiriyorsa (destek programları, projeler, proje sayısı, destek tutarı, bütçe, oran, il/ilçe/yıl/program dağılımı, bir projenin durumu, ödemeler, istihdam) destek_sorgula aracını çağır; gerekirse birden çok çağrı yap. İstek yalnızca belgelerle ilgiliyse ya da destek verisi gerektirmiyorsa araç çağırma, yalnızca YOK yaz. Kullanıcıya cevap yazma.`;
+
+/** The answer beside documents when the support data was queried: its results are data, its tables shown by the page. */
+export const DESTEK_IN_DOCS = `\n\n"Destek verisi sorgusu" bölümündeki sonuçlar yazılımın yüklü destek verisinden yaptığı kesin hesaplardır ve tablo olarak kullanıcıya ayrıca gösterilir: tabloyu yeniden yazma. Destek verisine dair sayıları yalnızca o bölümden, yazımıyla aynen al; kendin toplama, yuvarlama, kısaltma. O bölümde ya da belgelerde yazmayan bir sayı yazarsan cevabın gösterilmez.`;
+
+/** Whether a result answers something: every refusal of the tool (a bad plan, no match, not loaded) starts with "HATA". */
+export const destekAnswers = (out: string) => !out.startsWith("HATA");
+
 export interface DestekResult {
   title: string;
   columns: Col[];
