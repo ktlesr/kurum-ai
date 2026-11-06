@@ -1,5 +1,6 @@
 // Shared by server (routing) and client (warning). Keep in sync = import from here.
 import type { Claim } from "./trace";
+import type { DestekView } from "./destek/view.ts";
 
 // Until a model has been measured (see recordTokens in server.ts): conservative for Turkish.
 // Measured: gemma4 ≈ 2.9, gpt-oss ≈ 2.2 chars/token.
@@ -95,6 +96,19 @@ export function contextRatio(totalChars: number, numCtx: number, charsPerToken =
 export const META_SEP = "\u001e";
 /** Progress lines inside the chat stream: STATUS_SEP + text + STATUS_SEP. The client strips them from the answer. */
 export const STATUS_SEP = "\u001d";
+/**
+ * Inside the stream, as a status line of its own (STATUS_SEP + RETRACT + STATUS_SEP): what came before it is not part of
+ * the answer. Sent when text already shown has to be checked first (lib/destek: a number before the tool answered).
+ */
+export const RETRACT = "\u0018";
+/** The answer text of a chat stream body: after the last retraction, without status lines (a half-arrived one cut off). */
+export function streamText(body: string): string {
+  // Found by its first two characters: a marker whose closing STATUS_SEP hasn't arrived yet takes the text back too.
+  const mark = `${STATUS_SEP}${RETRACT}`;
+  const at = body.lastIndexOf(mark);
+  const rest = at < 0 ? body : body.slice(at + mark.length).replace(new RegExp(`^${STATUS_SEP}`), "");
+  return rest.replace(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"), "").split(STATUS_SEP)[0];
+}
 /** A failure after the stream started: ERROR_SEP + message, then the stream ends. The client shows it as an error turn. */
 export const ERROR_SEP = "\u001f";
 
@@ -123,6 +137,10 @@ export interface ChatMeta {
   pages?: number[];
   /** That document's sheets (a workbook): "İl Bazlı › Excel satırı 247" links open the sheet at that row. */
   sheets?: string[];
+  /** Tables the support-data tool computed (lib/destek/tool): the page shows them itself, the model never rewrites them. */
+  destek?: DestekView[];
+  /** The answer's comment had a number none of those tables has (lib/destek/format): the comment is not shown. */
+  destekHidden?: boolean;
   /** Cited pages no selected document has (lib/checks checkPages). Optional: older saved chats lack it. */
   badPages?: string[];
   /** Each factual sentence of the answer with the passage that supports it, or none (lib/trace). */

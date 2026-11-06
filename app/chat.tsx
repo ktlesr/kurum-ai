@@ -14,12 +14,14 @@ import { InstallApp } from "./install-app";
 import { ThemeToggle } from "./theme-toggle";
 import { logout } from "./login/actions";
 import { useChats } from "./use-chats";
-import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, plainNumbering, STATUS_SEP, type ChatMeta, type DocSection } from "@/lib/context";
+import { contextRatio, ERROR_SEP, linkPages, META_SEP, parseSource, plainNumbering, RETRACT, STATUS_SEP, streamText, type ChatMeta, type DocSection } from "@/lib/context";
 import { rowLineOf } from "@/lib/table";
 import { keepMessages, searchChats, titleFrom, type GalleryPhoto, type Message, type StoredChat } from "@/lib/local-store";
 import { asksMorePhotos, asksPhotos, clarifies, namesPhotos } from "@/lib/gallery-intent";
 import { countOf } from "@/lib/gallery-search";
 import { GalleryGrid } from "./gallery-view";
+import { DestekTables } from "./destek-table";
+import { answerText, hasAnswer, historyText } from "@/lib/destek/view";
 import { FILE_FORMATS, exportDoc, turnOf, type ExportDoc } from "@/lib/export-doc";
 import { exportRequest } from "@/lib/export-intent";
 import { asksTemplateFill } from "@/lib/template-intent";
@@ -435,7 +437,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
       local.upsert(id, (cur) => ({
         ...(cur ?? { id, createdAt: Date.now(), title: titleFrom(q) }),
         updatedAt: Date.now(), model, docIds, autoIds,
-        messages: keepMessages(msgs, (m) => !!(m.content || m.error)).map(stored),
+        // A support answer whose comment was held back has no text, only its tables: it is kept all the same.
+        messages: keepMessages(msgs, (m) => !!(m.content || m.error) || hasAnswer(m)).map(stored),
       }));
     setChatId(id);
     persist(history);
@@ -452,7 +455,8 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           fileIds: handIds(ready),
           autoIds: autoIdsOf(ready),
           // Without the words about the file (the search and the documents go by the question), and without turns that were only that.
-          messages: history.filter((m) => !m.local).slice(-HISTORY).map(({ role, content }, i, all) => ({ role, content: wish && i === all.length - 1 ? wish.rest : content })),
+          // An answer's support tables go with it (the page drew them; the model has them only this way).
+          messages: history.filter((m) => !m.local).slice(-HISTORY).map(({ role, content, meta }, i, all) => ({ role, content: wish && i === all.length - 1 ? wish.rest : role === "assistant" ? historyText(content, meta) : content })),
           ...(wish ? { fileFormats: wish.formats } : {}),
         }),
       });
@@ -484,9 +488,10 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
         shownAt = Date.now();
         // Progress lines (STATUS_SEP…STATUS_SEP) are shown while waiting and never become part of the answer.
         const body = raw.split(META_SEP)[0].split(ERROR_SEP)[0];
-        const statuses = body.match(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"));
-        // The split: a status line cut in two by the network, its other half not here yet.
-        const content = body.replace(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"), "").split(STATUS_SEP)[0];
+        const statuses = body.match(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}${RETRACT}]*${STATUS_SEP}`, "g"));
+        // The split: a status line cut in two by the network, its other half not here yet. Text the server took back
+        // (RETRACT) is gone from the answer.
+        const content = streamText(body);
         const status = statuses ? statuses[statuses.length - 1].slice(1, -1) : undefined;
         // After text has begun, a status counts only while nothing has followed it: work between two parts of the answer.
         setLast((m) => ({ ...m, content, status, waiting: body.endsWith(STATUS_SEP) }));
@@ -497,7 +502,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
           const { done, value } = await reader.read();
           if (done) break;
           raw += value;
-          if (first === undefined && /[^\s]/u.test(raw.split(META_SEP)[0].split(ERROR_SEP)[0].replace(new RegExp(`${STATUS_SEP}[^${STATUS_SEP}]*${STATUS_SEP}`, "g"), "").split(STATUS_SEP)[0])) first = secs();
+          if (first === undefined && /[^\s]/u.test(streamText(raw.split(META_SEP)[0].split(ERROR_SEP)[0]))) first = secs();
           schedule();
         }
       } finally {
@@ -863,7 +868,7 @@ export default function Chat({ username, isAdmin }: { username: string; isAdmin:
             {!models.length && <option>{model || "Model yok"}</option>}
             {models.map((m) => <option key={m}>{m}</option>)}
           </select>
-          {messages.some((m) => m.role === "assistant" && !m.local && !m.error && m.content.trim()) && !streaming && <DownloadMenu compact title="Tüm sohbeti dosya olarak indir" doc={() => chatDoc(messages, current?.title)} />}
+          {messages.some((m) => m.role === "assistant" && !m.local && !m.error && hasAnswer(m)) && !streaming && <DownloadMenu compact title="Tüm sohbeti dosya olarak indir" doc={() => chatDoc(messages, current?.title)} />}
           <ThemeToggle />
         </header>
 
@@ -1237,12 +1242,12 @@ const stored = ({ role, content, at, error, meta, timing, files, fileOf, local, 
 const askedBefore = (messages: Message[], i: number) => messages.slice(0, i).findLast((x) => x.role === "user" && !x.local);
 const turnForAnswer = (m: Message | undefined, question: Message | undefined) =>
   // What was asked, without the words about the file.
-  turnOf({ question: question && (exportRequest(question.content)?.rest || question.content), answer: m?.content ?? "", sources: m?.meta?.sources, web: m?.meta?.web, at: question?.at });
+  turnOf({ question: question && (exportRequest(question.content)?.rest || question.content), answer: m ? answerText(m.content, m.meta) : "", sources: m?.meta?.sources, web: m?.meta?.web, at: question?.at });
 const turnFrom = (messages: Message[], i: number) => turnForAnswer(messages[i], askedBefore(messages, i));
 /** The whole chat as a document: only what was asked and answered. */
 const chatDoc = (messages: Message[], title?: string): ExportDoc =>
   exportDoc(
-    messages.flatMap((m, i) => (m.role === "assistant" && !m.local && !m.error && m.content.trim() ? [turnFrom(messages, i)] : [])),
+    messages.flatMap((m, i) => (m.role === "assistant" && !m.local && !m.error && hasAnswer(m) ? [turnFrom(messages, i)] : [])),
     // A chat begun with a request for a file is named after that; the document after what it is about.
     messages.find((m) => m.role === "user")?.local ? titleFrom(messages.find((m) => m.role === "user" && !m.local)?.content ?? "Sohbet") : (title ?? "Sohbet"),
   );
@@ -1299,9 +1304,15 @@ const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt,
           {m.startedAt && <Elapsed since={m.startedAt} />}
         </p>
       )}
-      <div className={`md ${live ? "streaming" : ""}`}>
-        <ReactMarkdown remarkPlugins={live ? [remarkGfm] : pagePlugins} components={live ? mdComponents : components}>{m.content}</ReactMarkdown>
-      </div>
+      {/* Support-data tables (lib/destek): the page draws them from the tool's result; the model's text is only a comment. */}
+      {!live && !!m.meta?.destek?.length && <DestekTables tables={m.meta.destek} />}
+      {!live && m.meta?.destekHidden ? (
+        <p className="text-xs text-muted">{m.meta.destek?.length ? "Modelin yorumu, tabloda olmayan bir sayı içerdiği için gösterilmedi; sayılar yukarıdaki tablodadır." : "Modelin cevabı, destek verisinin hesapladığı sonuçlarda olmayan bir sayı içerdiği için gösterilmedi. Soruyu yeniden ya da daha açık sorun."}</p>
+      ) : (
+        <div className={`md ${live ? "streaming" : ""}`}>
+          <ReactMarkdown remarkPlugins={live ? [remarkGfm] : pagePlugins} components={live ? mdComponents : components}>{m.content}</ReactMarkdown>
+        </div>
+      )}
       {live && m.content.trim() && m.waiting && m.status && (
         <p className="mt-2 flex items-center gap-2 text-sm text-muted" role="status">
           <span className="size-3 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-hidden />
@@ -1311,9 +1322,9 @@ const Bubble = memo(function Bubble({ m, index, fileReady, live, busy, onEditAt,
       {!live && m.meta && <MetaNotes meta={m.meta} onSource={onSource} onOpen={onOpen} />}
       {!live && !!m.files?.length && fileReady && <FileCards doc={doc} formats={m.files} />}
       {!!m.gallery?.items.length && <GalleryGrid items={m.gallery.items} />}
-      {!live && m.content && !m.local && (
+      {!live && hasAnswer(m) && !m.local && (
         <div className="mt-2 flex items-center gap-3">
-          <CopyButton text={m.content} />
+          <CopyButton text={answerText(m.content, m.meta)} />
           <DownloadMenu doc={doc} />
           {m.timing && (
             <span className="text-xs tabular-nums text-muted" title="Soru gönderildikten sonra ilk kelimenin geldiği ve cevabın bittiği süre">

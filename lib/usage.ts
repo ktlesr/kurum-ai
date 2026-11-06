@@ -15,6 +15,8 @@ export const USAGE_LABELS = {
   content_search: "İçerik araması",
   content_empty: "Sonuçsuz içerik araması",
   content_weak: "Zayıf içerik araması (aranan kelimelerin yarısından azı)",
+  // The support workbook's tool (lib/destek): one per query the model sent it.
+  destek_query: "Destek verisi sorgusu",
 } as const;
 export type UsageKind = keyof typeof USAGE_LABELS;
 /** What only the browser knows happened (the studio works there): anything else is counted by the server itself. */

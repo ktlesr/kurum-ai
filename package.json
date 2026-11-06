@@ -7,15 +7,18 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test lib/*.test.ts",
+    "test": "node --test lib/*.test.ts lib/destek/*.test.ts",
     "test:isolation": "node --env-file-if-exists=.env.local --test tests/isolation.test.ts",
-    "test:restart": "node --env-file-if-exists=.env.local --test tests/restart.test.ts"
+    "test:restart": "node --env-file-if-exists=.env.local --test tests/restart.test.ts",
+    "destek:ingest": "node --env-file-if-exists=.env.local scripts/destek-ingest.ts",
+    "test:destek": "node --test tests/destek-store.test.ts tests/destek-gold.test.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.9",
     "@pdf-lib/fontkit": "1.1.1",
     "@xmldom/xmldom": "0.8.15",
     "docx": "9.5.1",
+    "exceljs": "4.4.0",
     "geist": "^1.7.2",
     "jszip": "3.10.2",
     "lucide-react": "^1.48.0",
@@ -34,7 +37,8 @@
     "remark-parse": "11.0.0",
     "unified": "11.0.5",
     "unpdf": "^1.8.1",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

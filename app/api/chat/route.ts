@@ -7,6 +7,9 @@ import { isSharedId, sharedDoc, sharedFilesFor, sharedFor, type SharedEntry } fr
 import { filesCall, FILES_RULE, FILES_TOOL, type FileEntry } from "@/lib/file-search";
 import { CONTENT_RULE } from "@/lib/doc-index";
 import { CONTENT_TOOL, contentSearch } from "@/lib/doc-indexer";
+import { destekFor } from "@/lib/destek/chat";
+import { commentHidden } from "@/lib/destek/format";
+import { MAX_TABLES } from "@/lib/destek/view";
 import { PICK_PROMPT, pickFrom, pickerInput, planSources, type SourceEntry } from "@/lib/sources";
 import { parseFile, parsePdf, UserError } from "@/lib/parse";
 import { withJobDir } from "@/lib/workspace";
@@ -16,7 +19,7 @@ import { LIMITS, parseChatRequest } from "@/lib/validate";
 import { logError } from "@/lib/log";
 import { admission, busy, tooMany } from "@/lib/admission";
 import { Busy } from "@/lib/limits";
-import { answerFor, askedWith, promptFor, TASK_RULE, questionFits, reservedFor, contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, historyWithin, META_SEP, STATUS_SEP, type ChatMeta } from "@/lib/context";
+import { answerFor, askedWith, promptFor, TASK_RULE, questionFits, reservedFor, contextBudget, contextRatio, cptOf, docBlock, ERROR_SEP, historyWithin, META_SEP, RETRACT, STATUS_SEP, type ChatMeta } from "@/lib/context";
 import { checkColumns, checkPages, isLooping, pageNumbers, verifyNumbers } from "@/lib/checks";
 import { traceClaims } from "@/lib/trace";
 import { findCalcs, sourceNumbers, stillUnverified } from "@/lib/calc";
@@ -515,6 +518,24 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           if (think) status("Düşünüyor…");
           // The file finder on the plain chat (lib/file-search): the shared folder and the user's own documents by name,
           // folder and date, only what this person may see; nothing read. Same rounds and bounds as the calculation tool.
+          // The support workbook's tool (lib/destek): exact numbers from the loaded version, tables the page shows itself.
+          // Phase 1 (prompt §8): the plain chat only. With documents selected the answer stays the documents' own (their
+          // number checks would call the tool's numbers unverified); offering it there too is phase 2's integration.
+          const destek = await destekFor(user);
+          const destekOuts: string[] = [];
+          // After a support-data call the model's text is held, not streamed: it is shown only once its numbers are
+          // checked against the tool's results below (a cut-off request shows nothing of it, never an unchecked number).
+          // Text the model wrote before its first support-data call was already on the page: at that call it is taken
+          // back (RETRACT) and held with the rest, so no number reaches the page unchecked, nor stays there if cut off.
+          let held = "";
+          let shown = "";
+          const out = (piece: string) => {
+            if (destekOuts.length) held += piece;
+            else {
+              shown += piece;
+              send(piece);
+            }
+          };
           const sys = GENERAL + (web ? "" : NO_WEB) + rule;
           const r = await answerWithCalc({
             build: (exchange, note) => {
@@ -528,9 +549,9 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             },
             call: async (m, offered) => {
               let calls: ToolCall[] = [];
-              const text = await streamChat(chat, model, m, think, signal, send, (n) => {
+              const text = await streamChat(chat, model, m, think, signal, out, (n) => {
                 if (n % 50 === 0) status("Düşünüyor…");
-              }, undefined, offered ? { tools: [FILES_TOOL, CONTENT_TOOL], onCalls: (c) => (calls = c) } : {});
+              }, undefined, offered ? { tools: [FILES_TOOL, CONTENT_TOOL, ...(destek ? [destek.tool] : [])], onCalls: (c) => (calls = c) } : {});
               return { text, calls };
             },
             toolsOn: () => toolsOn(chat),
@@ -546,10 +567,22 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             },
             status,
             tools: {
-              rule: FILES_RULE + CONTENT_RULE,
+              rule: FILES_RULE + CONTENT_RULE + (destek?.rule ?? ""),
               folded: "dosya_ara ve belge_ara araçlarının bulduğu dosyalar (bunlara dayanarak cevap ver):",
               busy: "Dosyalar aranıyor…",
               run: async (c) => {
+                if (destek && c.name === destek.name) {
+                  if (!destekOuts.length && shown) {
+                    send(`${STATUS_SEP}${RETRACT}${STATUS_SEP}`);
+                    held = shown + held;
+                    shown = "";
+                  }
+                  status("Destek verisi hesaplanıyor…");
+                  const d = await destek.run(c.arguments);
+                  destekOuts.push(d.out);
+                  if (d.view) meta.destek = [...(meta.destek ?? []), d.view].slice(0, MAX_TABLES);
+                  return { out: d.out, line: d.out };
+                }
                 if (c.name === CONTENT_TOOL.name) {
                   const r = await contentSearch(user, c.arguments);
                   // Under the answer, each file found opens at its section (once each, the first search's section).
@@ -565,9 +598,14 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             },
           });
           answer = r.text;
+          // The tables are the answer; the model's words are a comment on them. A comment with a number none of the tool's
+          // results has is not shown (prompt §6): the page shows the tables alone.
+          // Checked whenever the tool was called, a table or not (a refused plan's answer has no table to lean on).
+          if (commentHidden(answer, destekOuts)) meta.destekHidden = true;
+          if (held && !meta.destekHidden) send(held);
           // Only what a page, a refused link or an unread document has to say; a plain answer gets no notes.
           // Sent too when the chat had documents the app found: the page lets them go (meta.used is empty).
-          if (pages.length || meta.note || autoIds.length || meta.found?.length) send(META_SEP + JSON.stringify({ ...meta, sources: [] }));
+          if (pages.length || meta.note || autoIds.length || meta.found?.length || meta.destek?.length || meta.destekHidden) send(META_SEP + JSON.stringify({ ...meta, sources: [] }));
           return void ctrl.close();
         }
         // The list of headings has an exact answer in the text: code writes it, no model reorders or invents, nothing goes out.
