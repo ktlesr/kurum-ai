@@ -6,7 +6,7 @@ import type { ProjectRow } from "../lib/destek/load.ts";
 const SCALE = BigInt(20);
 const ONE = BigInt(10) ** SCALE;
 
-/** "12220320.5" → scaled BigInt (12 decimals). */
+/** "4567890.5" → scaled BigInt (SCALE decimals). */
 export function dec(s: string | null | undefined): bigint {
   if (s === null || s === undefined || s === "") return BigInt(0);
   let t = s.trim();

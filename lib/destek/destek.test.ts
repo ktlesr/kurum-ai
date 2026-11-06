@@ -165,31 +165,31 @@ test("reconcile: a family with projects but no usable İcmal fails the gate", ()
 });
 
 test("format: Turkish numbers from decimal strings; the comment check", () => {
-  assert.equal(formatCell("12220320", "amount"), "12.220.320,00");
-  assert.equal(formatCell("8375657.06", "amount"), "8.375.657,06");
-  assert.equal(formatCell("0.6276381640302067", "ratio"), "%62,76");
+  assert.equal(formatCell("4567890", "amount"), "4.567.890,00");
+  assert.equal(formatCell("3141592.65", "amount"), "3.141.592,65");
+  assert.equal(formatCell("0.4136912345678901", "ratio"), "%41,37");
   assert.equal(formatCell("13", "count"), "13");
   assert.equal(formatCell("2025", "int"), "2025");
   assert.equal(formatCell("2025-03-01", "date"), "01.03.2025");
   assert.equal(formatCell(null, "amount"), "");
   assert.equal(formatCell("123456789012345678.125", "amount"), "123.456.789.012.345.678,13", "no float on the way");
-  assert.deepEqual(numbersIn("Afyon %62,76 ile 12.220.320,00 TL aldı; 13 proje, 2025."), ["62.76", "12220320", "13", "2025"]);
-  const tool = ["| Afyonkarahisar | 3 | 12.220.320,00 | %62,76 |", "Kapsam: Yılı=2025 · 13 proje satırı"];
-  assert.deepEqual(unsupportedNumbers("Afyonkarahisar %62,76 oranla öne çıkıyor; 2025'te 13 proje.", tool), []);
-  assert.deepEqual(unsupportedNumbers("Afyon yaklaşık 12,2 milyon TL aldı.", tool), ["12200000"], "a rounded number is not in the table");
+  assert.deepEqual(numbersIn("Bir il %41,37 ile 4.567.890,00 TL aldı; 13 proje, 2025."), ["41.37", "4567890", "13", "2025"]);
+  const tool = ["| Bir il | 3 | 4.567.890,00 | %41,37 |", "Kapsam: Yılı=2025 · 13 proje satırı"];
+  assert.deepEqual(unsupportedNumbers("Bir il %41,37 oranla öne çıkıyor; 2025'te 13 proje.", tool), []);
+  assert.deepEqual(unsupportedNumbers("Bir il yaklaşık 4,6 milyon TL aldı.", tool), ["4600000"], "a rounded number is not in the table");
   assert.deepEqual(unsupportedNumbers("9 proje desteklendi.", tool), ["9"], "a small number not in the table is not let through either");
-  assert.deepEqual(unsupportedNumbers("Afyonkarahisar 3 projeyle öne çıkıyor.", tool), [], "one that is, is");
-  assert.deepEqual(unsupportedNumbers("Fark -12.220.320,00 TL.", tool), ["-12220320"], "a sign makes another number");
+  assert.deepEqual(unsupportedNumbers("Bir il 3 projeyle öne çıkıyor.", tool), [], "one that is, is");
+  assert.deepEqual(unsupportedNumbers("Fark -4.567.890,00 TL.", tool), ["-4567890"], "a sign makes another number");
   assert.deepEqual(unsupportedNumbers("Yaklaşık 3e9 TL.", tool), ["3e9"], "so does an exponent");
   assert.deepEqual(numbersIn("2-3 cümle, −5 ve -0"), ["2", "3", "-5", "0"]);
-  assert.deepEqual(numbersIn("%3.9 ve 1.234 ve 1.2345 ve 12.220.320,00"), ["3.9", "1234", "1.2345", "12220320"], "a dot not in groups of three is a decimal point");
+  assert.deepEqual(numbersIn("%3.9 ve 1.234 ve 1.2345 ve 4.567.890,00"), ["3.9", "1234", "1.2345", "4567890"], "a dot not in groups of three is a decimal point");
   assert.deepEqual(unsupportedNumbers("Oran %3.9.", ["| 3 | 9 |"]), ["3.9"], "a dot decimal can't pass as two numbers of the table");
-  assert.deepEqual(unsupportedNumbers("Oran %62.76.", tool), [], "the table's %62,76 written with a dot is the same number");
+  assert.deepEqual(unsupportedNumbers("Oran %41.37.", tool), [], "the table's %41,37 written with a dot is the same number");
   assert.deepEqual(numbersIn("Oran %.9, destek .5 milyon, ,25 pay"), ["0.9", "500000", "0.25"], "a decimal without its 0 (and its scale word)");
   assert.deepEqual(unsupportedNumbers("Destek .5 milyon TL.", tool), ["500000"]);
   assert.deepEqual(numbersIn("3 milyon, 12,2 milyar, 5 bin, 1.5 Milyon, 2 milyonluk"), ["3000000", "12200000000", "5000", "1500000", "2000000"]);
   assert.deepEqual(unsupportedNumbers("Destek 3 milyon TL.", ["| 3 | 100,00 |"]), ["3000000"], "a scale word makes another number than the table's 3");
-  assert.deepEqual(unsupportedNumbers("Afyonkarahisar 12.220.320,00 TL aldı.", tool), [], "the table's own number, as written, passes");
+  assert.deepEqual(unsupportedNumbers("Bir il 4.567.890,00 TL aldı.", tool), [], "the table's own number, as written, passes");
   // The tool refused the plan (no table): the model's answer after it is still checked against what the tool said.
   assert.equal(commentHidden("9 proje desteklendi.", ["HATA (filtre eşleşmedi, veri yokluğu değil): Çanakkale bu dosyada yok"]), true);
   assert.equal(commentHidden("Çanakkale bu dosyada yok; doğru ili yazar mısınız?", ["HATA: ..."]), false);
@@ -205,7 +205,7 @@ test("view: a chat backup's tables are bounded and checked; copy text has the ta
   assert.deepEqual(t[0].warnings, ["u"]);
   const meta = { destek: t };
   assert.match(answerText("Yorum.", meta), /\| İl \| Destek \| x \|\n\| --- \| ---: \| --- \|\n\| Uşak \| 1,00 \| a \|\n\| \*\*Toplam\*\* \| \*\*1,00\*\* \|  \|[\s\S]*Yorum\.$/u);
-  assert.doesNotMatch(answerText("Gizli 12,2 milyon.", { ...meta, destekHidden: true }), /Gizli/u);
+  assert.doesNotMatch(answerText("Gizli 4,6 milyon.", { ...meta, destekHidden: true }), /Gizli/u);
   assert.equal(answerText("Düz cevap", undefined), "Düz cevap");
   const { historyText, HISTORY_CHARS, MAX_ROWS, MAX_TABLES } = await import("./view.ts");
   const { MAX_CALLS, MAX_STEPS } = await import("../lookup.ts");

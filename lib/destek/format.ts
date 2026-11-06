@@ -1,4 +1,4 @@
-// Turkish number formats (prompt §6): 12.220.320,00 · %62,76 · 13. Numbers arrive as Postgres numeric strings and are
+// Turkish number formats (prompt §6): 4.567.890,00 · %41,37 · 13. Numbers arrive as Postgres numeric strings and are
 // formatted from the string itself (Intl formats a decimal string exactly; no float on the way). And the check that
 // keeps the model's comment honest: every number in it must be one the tool returned.
 import type { Col } from "./compile.ts";
@@ -26,9 +26,9 @@ export function formatCell(v: unknown, kind: Col["kind"]): string {
 }
 
 /**
- * Numbers as written in Turkish text: "12.220.320,00", "%62,76", "62,76", "13", "2025", each as a canonical decimal.
+ * Numbers as written in Turkish text: "4.567.890,00", "%41,37", "41,37", "13", "2025", each as a canonical decimal.
  * A sign belongs to the number ("-100,00" is not "100,00"; "2-3" is two numbers), and so does an exponent ("1e9").
- * A dot is a thousands separator only in groups of three ("12.220.320"); any other dot is a decimal point and the
+ * A dot is a thousands separator only in groups of three ("4.567.890"); any other dot is a decimal point and the
  * number stays whole ("3.9" is 3.9, never "3" and "9"), so it can't pass as two numbers the table happens to have.
  */
 export function numbersIn(text: string): string[] {
@@ -53,7 +53,7 @@ export function numbersIn(text: string): string[] {
 
 const SCALE: Record<string, number> = { bin: 3, milyon: 6, milyar: 9, trilyon: 12 };
 
-/** int.frac × 10^shift as a canonical decimal string ("12", "2", 6 → "12200000"). */
+/** int.frac × 10^shift as a canonical decimal string ("4", "6", 6 → "4600000"). */
 function scaled(int: string, frac: string, shift: number): string {
   const point = int.length + shift;
   const whole = (int + frac).padEnd(point, "0");
