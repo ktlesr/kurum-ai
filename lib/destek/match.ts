@@ -46,3 +46,12 @@ export const FAMILY_SPELLINGS: Record<string, string> = Object.fromEntries(
   Object.entries(FAMILY_WORDS).flatMap(([fam, ws]) => ws.map((w) => [key(w), fam])),
 );
 export const PLACE_SPELLINGS: Record<string, string> = Object.fromEntries(Object.entries(PLACE_WORDS).map(([w, p]) => [key(w), p]));
+
+/**
+ * A file name with its figures and punctuation dropped: the support workbook keeps it from version to version while
+ * its year changes ("… (Deflatörlü - 2026)-YK.xlsx" → "… 2027 …"). Null for a name with too little of its own to tell.
+ */
+export function bookKey(name: string): string | null {
+  const k = foldTr(name.replace(/\.[^.]+$/u, "")).replace(/[^\p{L}]+/gu, "");
+  return k.length >= 8 ? k : null;
+}

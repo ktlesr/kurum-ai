@@ -207,10 +207,11 @@ async function stillThere(entries: Map<string, SharedEntry>, ids: string[]): Pro
  * belge_ara over what this person may see, each file found checked on the share (stillThere). Not while the share is
  * known to be down either.
  */
-export async function searchContent(who: Viewer, question: string, max = 8) {
+export async function searchContent(who: Viewer, question: string, max = 8, skip?: (path: string) => boolean) {
   if (libraryDown()) throw new ShareDown();
   const { entries, cov } = await scope(who);
-  return searchFiles(await db(), new Map([...entries].map(([id, e]) => [id, e.path])), question, cov, max, (ids) => stillThere(entries, ids));
+  const paths = [...entries].flatMap(([id, e]) => (skip?.(e.path) ? [] : [[id, e.path] as [string, string]]));
+  return searchFiles(await db(), new Map(paths), question, cov, max, (ids) => stillThere(entries, ids));
 }
 
 /** The tool as a chat runs it. */
@@ -219,11 +220,11 @@ export async function contentCall(who: Viewer, args: string): Promise<string> {
 }
 
 /** The tool as a chat runs it, with what it found: each file and the section it was best found in, for the answer's links. */
-export async function contentSearch(who: Viewer, args: string): Promise<{ out: string; found: { id: string; name: string; label?: string }[] }> {
+export async function contentSearch(who: Viewer, args: string, skip?: (path: string) => boolean): Promise<{ out: string; found: { id: string; name: string; label?: string }[] }> {
   const q = contentArgs(args);
   if (typeof q !== "string") return { out: q.error, found: [] };
   try {
-    const r = await searchContent(who, q);
+    const r = await searchContent(who, q, 8, skip);
     countUsage("content_search");
     if (r.strength !== "good") countUsage(r.strength === "none" ? "content_empty" : "content_weak");
     // Only a label the source panel has a section for (a page, a sheet, the front matter); "Bölüm N" of unmarked text isn't one.

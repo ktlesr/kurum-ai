@@ -61,4 +61,8 @@ export const AGG: Agg[] = [
   { id: "sogep-nihai-def", tip: 11, soru: "SOGEP yıllara göre nihai ve reel destek",
     plan: { type: "aggregate", filters: { aile: ["SOGEP"] }, group_by: ["yil"], metrics: ["destek_nihai", "destek_def", "butce_def", "destek_orani_def"] },
     keep: (r) => r.aile === "SOGEP", group: ["yil"], metrics: ["destek_nihai", "destek_def", "butce_def", "destek_orani_def"] },
+  // Asked in the app with the workbook attached as a document (2026-11-06): the model summed rows itself and was wrong.
+  { id: "kutahya-sogep-2024-2025-def", tip: 1, soru: "Kütahya ilinin 2024-2025 SOGEP projelerinin toplam nihai deflatörlü bütçesi ile deflatörlü destek tutarı",
+    plan: { type: "aggregate", filters: { aile: ["SOGEP"], il: ["kutahya"], yil: { in: [2024, 2025] } }, metrics: ["butce", "destek"], amount_basis: "def" },
+    keep: (r) => r.aile === "SOGEP" && val(r, "il") === "Kütahya" && ["2024", "2025"].includes(val(r, "yil") ?? ""), group: [], metrics: ["butce_def", "destek_def"] },
 ];

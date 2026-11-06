@@ -487,3 +487,20 @@ test("namedScan review 8: a format twin stays out when the name also has a spell
   const picks = route("faaliyet_raporu_2024.pdf belgesini özetle", ["R/Faaliyet Raporu 2024.pdf", "R/Faaliyet_Raporu_2024.pdf", "R/Faaliyet_Raporu_2024.docx"]);
   assert.ok(picks.includes("R/Faaliyet_Raporu_2024.pdf") && !picks.includes("R/Faaliyet_Raporu_2024.docx"), String(picks));
 });
+
+test("planSources skip: the support workbook is never read, and naming it picks no namesake or other file", async () => {
+  const { planSources } = await import("./sources.ts");
+  const files = [
+    { id: "b", path: "Veri/ZAFER Destekler - Veriler (Deflatörlü - 2026)-YK.xlsx" },
+    { id: "s", path: "Veri/Veriler (Deflatörlü - 2026)-YK.xlsx" },
+    { id: "r", path: "Rehber/SOGEP Rehberi.pdf" },
+  ];
+  const skip = new Set(["b"]);
+  const named = planSources("ZAFER Destekler - Veriler (Deflatörlü - 2026)-YK.xlsx dosyasına göre Kütahya'nın desteği", files, { hand: [], auto: [], room: 20, skip });
+  assert.deepEqual(named.picks, [], "the shorter name inside it is not read in its place");
+  const after = planSources("ZAFER Destekler - Veriler (Deflatörlü - 2026)-YK.xlsx dosyasına göre Kütahya'nın desteği", files, { hand: [], auto: ["r"], room: 20, skip });
+  assert.deepEqual([after.picks, after.askPicker], [[], false], "naming it drops the earlier finds and asks no picker (which could keep them)");
+  const words = planSources("destekler veriler deflatörlü Kütahya toplamı", files.slice(0, 1).concat(files[2]), { hand: [], auto: [], room: 20, skip });
+  assert.equal(words.askPicker, false, "the workbook's own words send no picker after other files");
+  assert.deepEqual(planSources("SOGEP Rehberi.pdf özetle", files, { hand: [], auto: [], room: 20, skip }).picks.map((e) => e.id), ["r"], "other files as before");
+});

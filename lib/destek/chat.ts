@@ -6,6 +6,7 @@ import { logError } from "../log";
 import { countUsage } from "../usage";
 import type { User } from "../auth";
 import type { ToolDef } from "../provider";
+import { bookKey } from "./match";
 import { activeSnapshot } from "./store";
 import { cachedCatalog, DESTEK_RULE, DESTEK_TOOL_NAME, destekTool, runDestek } from "./tool";
 import type { DestekView } from "./view";
@@ -18,6 +19,13 @@ export interface DestekChat {
   tool: ToolDef;
   rule: string;
   name: string;
+  /** The loaded version's file name. */
+  file: string;
+  /**
+   * A document that is the support workbook itself (its bytes, or its name with the year left out): the chat answers
+   * from the loaded version through the tool, never by reading the workbook as a document.
+   */
+  isBook: (name: string, hash?: string) => boolean;
   run: (args: string) => Promise<{ out: string; view?: DestekView }>;
 }
 
@@ -33,6 +41,8 @@ export async function destekFor(user: User): Promise<DestekChat | null> {
       tool: destekTool(snap, cat),
       rule: DESTEK_RULE,
       name: DESTEK_TOOL_NAME,
+      file: snap.file_name,
+      isBook: (name, hash) => hash === snap.sha256 || (bookKey(snap.file_name) !== null && bookKey(name) === bookKey(snap.file_name)),
       run: async (args) => {
         try {
           const r = await runDestek(sql, snap, args);

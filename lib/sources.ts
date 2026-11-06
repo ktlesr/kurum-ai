@@ -339,25 +339,28 @@ export interface SourcePlan {
  *   message ("merhaba", "rapor yaz") reads nothing and makes no extra call.
  * `room`: how many documents the chat may still take beside the hand-picked ones.
  */
-export function planSources(asked: string, entries: SourceEntry[], o: { hand: string[]; auto: string[]; room: number }): SourcePlan {
+export function planSources(asked: string, entries: SourceEntry[], o: { hand: string[]; auto: string[]; room: number; skip?: Set<string> }): SourcePlan {
+  // `skip`: files never read (the support workbook, lib/destek). Still scanned, so naming one picks no namesake of it.
   const scan = namedScan(asked, entries);
-  const namedAll = scan.hits.filter((e) => !o.hand.includes(e.id));
+  const out = (e: SourceEntry) => o.hand.includes(e.id) || !!o.skip?.has(e.id);
+  const namedAll = scan.hits.filter((e) => !out(e));
   const named = namedAll.slice(0, Math.max(0, o.room));
   const left = namedAll.slice(named.length);
   const base = { left, namesakes: scan.namesakes };
   // A file named: that is what the message is about. Beside the hand-picked ones, or instead of the earlier finds.
   // What else the message asks for beside it ("… ve KOSGEB klasöründeki belgeler") joins it.
-  if (named.length) {
-    const others = wantsSources(asked) ? matchByName(asked, entries).filter((e) => !scan.namesakes.has(e.id) && !o.hand.includes(e.id)) : [];
+  // A skipped file named counts too: the message is about it, not about the earlier finds or what a picker would add.
+  if (named.length || scan.hits.some((e) => o.skip?.has(e.id))) {
+    const others = wantsSources(asked) ? matchByName(asked, entries).filter((e) => !scan.namesakes.has(e.id) && !out(e)) : [];
     return { ...base, picks: mergePicks(named, others, Math.min(Math.max(0, o.room), Math.max(8, named.length))), askPicker: false };
   }
   // Documents asked for, or two of a path's words written ("bakanlığa gönderilen yazışma listesi"); one word that is a
   // folder's name ("2024 yılında ne oldu") is prose.
   const said = words(asked);
-  const looksFor = wantsSources(asked) || entries.some((e) => new Set(words(e.path).filter((w) => said.some((a) => a === w || (w.length >= 4 && a.startsWith(w))))).size >= 2);
+  const looksFor = wantsSources(asked) || entries.some((e) => !o.skip?.has(e.id) && new Set(words(e.path).filter((w) => said.some((a) => a === w || (w.length >= 4 && a.startsWith(w))))).size >= 2);
   // A chat with only hand-picked documents keeps to them unless documents are asked for.
   if (!o.auto.length && (o.hand.length || !looksFor)) return { ...base, picks: [], askPicker: o.hand.length > 0 && wantsSources(asked) && looksElsewhere(asked) };
-  return { ...base, picks: entries.filter((e) => o.auto.includes(e.id)), askPicker: entries.length > 0 };
+  return { ...base, picks: entries.filter((e) => o.auto.includes(e.id) && !o.skip?.has(e.id)), askPicker: entries.some((e) => !o.skip?.has(e.id)) };
 }
 
 /** Pointing away from the chat's documents ("ortak belgelerde de bak", "başka klasörde ara"). */

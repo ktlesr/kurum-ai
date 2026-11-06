@@ -235,3 +235,13 @@ test("stream: text taken back (RETRACT) is not part of the answer; status lines 
   assert.equal(hasAnswer({ content: "", meta: { destekHidden: true } }), true, "the held-back note alone: kept");
   assert.equal(hasAnswer({ content: "  " }), false);
 });
+
+test("the support workbook is known by its name across years, not by a bare figure", async () => {
+  const { bookKey } = await import("./match.ts");
+  const k = bookKey("ZAFER Destekler - Veriler (Deflatörlü - 2026)-YK.xlsx");
+  assert.ok(k);
+  assert.equal(bookKey("ZAFER Destekler - Veriler (Deflatörlü - 2027)-YK.xlsx"), k, "next year's file is the same workbook");
+  assert.equal(bookKey("zafer destekler veriler deflatorlu 2027 yk.XLSX"), k, "case, Turkish letters and separators don't matter");
+  assert.notEqual(bookKey("SOGEP Başvuru Rehberi 2026.pdf"), k);
+  assert.equal(bookKey("2026.xlsx"), null, "a name of figures alone matches nothing");
+});

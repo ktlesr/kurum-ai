@@ -10,7 +10,7 @@ import { CONTENT_TOOL, contentSearch } from "@/lib/doc-indexer";
 import { destekFor } from "@/lib/destek/chat";
 import { commentHidden } from "@/lib/destek/format";
 import { MAX_TABLES } from "@/lib/destek/view";
-import { PICK_PROMPT, pickFrom, pickerInput, planSources, type SourceEntry } from "@/lib/sources";
+import { namedFiles, PICK_PROMPT, pickFrom, pickerInput, planSources, type SourceEntry } from "@/lib/sources";
 import { parseFile, parsePdf, UserError } from "@/lib/parse";
 import { withJobDir } from "@/lib/workspace";
 import type { Msg, Provider, ToolCall, ToolDef } from "@/lib/provider";
@@ -322,9 +322,24 @@ export async function POST(req: Request) {
         const asked0 = messages.findLast((m) => m.role === "user")?.content ?? "";
         // Before any model call: a message that can't fit on its own is never sent (helper calls included).
         if (!questionFits(messages.at(-1)?.content ?? "", NUM_CTX, cptFor(model))) throw new TooLong();
-        let shared = sharedAsked as SharedEntry[];
-        const mine = docsOf(user.id);
-        const entries: SourceEntry[] = [...visibleShared.map((e) => ({ id: e.id, path: e.path })), ...mine.map((d) => ({ id: d.id, path: `Belgelerim/${d.folder ? `${d.folder}/` : ""}${d.name}` }))];
+        // The support workbook (lib/destek): with a version loaded, its questions go to the tool, which has its exact
+        // numbers. Read as a document its rows would be summed by the model (a wrong table with checks that "pass"): it
+        // is never picked as a source, and when it is attached the chat answers without it as a document.
+        // Only with tool calling on: without the tool the workbook stays a document, as before this module.
+        const destek = toolsOn(chat) ? await destekFor(user) : null;
+        const isBook = (name: string, hash?: string) => !!destek?.isBook(name, hash);
+        const books: string[] = [];
+        // Attached by hand: out before anything is planned, so it takes no place among the chat's documents either.
+        selected = selected.filter((d) => !(isBook(d.name, d.sourceHash) && books.push(d.name)));
+        let shared = (sharedAsked as SharedEntry[]).filter((e) => !(isBook(e.name) && books.push(e.name)));
+        const hand = [...selected.map((d) => d.id), ...shared.map((e) => e.id)];
+        // Own documents by name or bytes (both known here); a shared file by name only until it is read.
+        const own = docsOf(user.id);
+        const all: SourceEntry[] = [...visibleShared.map((e) => ({ id: e.id, path: e.path })), ...own.map((d) => ({ id: d.id, path: `Belgelerim/${d.folder ? `${d.folder}/` : ""}${d.name}` }))];
+        const bookIds = new Set([...visibleShared.filter((e) => isBook(e.name)), ...own.filter((d) => isBook(d.name, d.sourceHash))].map((e) => e.id));
+        const entries = all.filter((e) => !bookIds.has(e.id));
+        // Named in the message, or found for an earlier one: the question is about the workbook, as when it is attached.
+        for (const e of [...namedFiles(asked0, all, LIMITS.files), ...all.filter((x) => autoIds.includes(x.id))]) if (bookIds.has(e.id)) books.push(e.path.split("/").pop() ?? "");
         // A file whose name the message writes is read as it is, without the word "belge" and beside the documents the
         // chat already has (only what this person may see: entries are their visible files).
         // Those already attached are left out first, so they can't fill the limit and keep a newly named one out.
@@ -333,27 +348,27 @@ export async function POST(req: Request) {
         // Which documents beside the hand-picked ones (lib/sources planSources): a file named, the earlier finds for a
         // follow-up, or what the picker chooses when the message may look elsewhere (only file paths, never contents).
         const autoKnown = autoIds.filter((x) => entries.some((e) => e.id === x));
-        const plan = planSources(asked0, entries, { hand: fileIds, auto: autoKnown, room: Math.max(0, LIMITS.files - fileIds.length) });
+        const plan = planSources(asked0, all, { hand, auto: autoKnown, room: Math.max(0, LIMITS.files - hand.length), skip: bookIds });
         if (plan.left.length) meta.note = [meta.note, `Sohbette en çok ${LIMITS.files} belge olabilir; şunlar okunmadı: ${plan.left.map((e) => e.path.split("/").pop()).join(", ")}. Yan menüden bir belgeyi çıkarıp yeniden deneyin.`].filter(Boolean).join(" ");
         let picks = plan.picks;
         if (plan.askPicker) {
           status("Kaynaklar taranıyor…");
           // What the chat reads now: the hand-picked documents and the earlier finds.
-          const current = [...entries.filter((e) => fileIds.includes(e.id)), ...picks].map((e) => e.path);
+          const current = [...entries.filter((e) => hand.includes(e.id)), ...picks].map((e) => e.path);
           const recent = messages.filter((m) => m.role === "user").slice(-4, -1).map((m) => m.content);
           const pick = (paths: string[]) => chatOnce(chat, model, [{ role: "system", content: PICK_PROMPT }, { role: "user", content: pickerInput(paths, current, recent, asked0) }], signal, 60).catch((e) => {
             if (signal.aborted) throw e;
             logError("picker", e);
             return null; // failed: the chat keeps what it had
           });
-          const list = entries.filter((e) => !plan.namesakes.has(e.id) && !fileIds.includes(e.id));
+          const list = entries.filter((e) => !plan.namesakes.has(e.id) && !hand.includes(e.id));
           const r = list.length ? await pickFrom(list, asked0, pick) : [];
           if (r !== "keep") {
             picks = r;
             if (!picks.length && /kaynak|klasör|belge|dosya/i.test(asked0)) meta.note = "Bu istekle eşleşen belge bulunamadı; cevap belge kullanılmadan yazıldı. Yan menüden belge seçebilirsiniz.";
           }
         }
-        picks = picks.slice(0, Math.max(0, LIMITS.files - fileIds.length));
+        picks = picks.slice(0, Math.max(0, LIMITS.files - hand.length));
         shared = [...shared, ...picks.flatMap((p) => (isSharedId(p.id) ? (sharedEntry(p.id) ?? []) : []))];
         selected = [...selected, ...picks.flatMap((p) => (isSharedId(p.id) ? [] : (getDoc(user.id, p.id) ?? [])))];
         for (const e of shared) {
@@ -365,6 +380,14 @@ export async function POST(req: Request) {
             if (!(err instanceof UserError)) logError("library", err);
             meta.note = [meta.note, `${e.name} okunamadı.`].filter(Boolean).join(" ");
           }
+        }
+        // Picked by the app under another name: known by its bytes once read.
+        selected = selected.filter((d) => !(isBook(d.name, d.sourceHash) && books.push(d.name)));
+        if (books.length) {
+          const alone = !selected.length;
+          meta.note = [meta.note, alone
+            ? `${[...new Set(books)].join(", ")} belge olarak okunmadı: destek verisi soruları yüklü sürümden (${destek!.file}) kesin hesaplarla cevaplanır.`
+            : `${[...new Set(books)].join(", ")} belge olarak okunmadı. Başka belgeler de seçili olduğundan bu soruda destek verisi sorgulanmadı; destek verisi sorusu için o belgeleri sohbetten çıkarın.`].filter(Boolean).join(" ");
         }
         // The documents this message brought in (not those already attached): the chat keeps them for follow-ups.
         const added = selected.filter((d) => !fileIds.includes(d.id));
@@ -490,7 +513,8 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
             return [];
           }
         };
-        if (SEARCH_URL && !selected.length && !urls.length) pages.push(...(await search(SEARCH_DECIDE)));
+        // Not when the support workbook was attached: the question is about local data, which the tool answers.
+        if (SEARCH_URL && !selected.length && !urls.length && !books.length) pages.push(...(await search(SEARCH_DECIDE)));
         const attr = (s: string) => s.replace(/["<>]/g, "");
         // Each page gets an equal share of what may go to the model: at most 40 % of the context (documents and
         // the answer need the rest), at most MAX_CHARS_TOTAL. A page can't close its own block ("</web").
@@ -521,7 +545,6 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
           // The support workbook's tool (lib/destek): exact numbers from the loaded version, tables the page shows itself.
           // Phase 1 (prompt §8): the plain chat only. With documents selected the answer stays the documents' own (their
           // number checks would call the tool's numbers unverified); offering it there too is phase 2's integration.
-          const destek = await destekFor(user);
           const destekOuts: string[] = [];
           // After a support-data call the model's text is held, not streamed: it is shown only once its numbers are
           // checked against the tool's results below (a cut-off request shows nothing of it, never an unchecked number).
@@ -584,7 +607,9 @@ ${doc.slice(0, RELEVANT_CHARS * 3)}
                   return { out: d.out, line: d.out };
                 }
                 if (c.name === CONTENT_TOOL.name) {
-                  const r = await contentSearch(user, c.arguments);
+                  // Never the support workbook's rows: its numbers come from destek_sorgula.
+                  // ponytail: by name; a copy under another name in the shared folder isn't known until read (no hash in the index).
+                  const r = await contentSearch(user, c.arguments, (path) => isBook(path.split("/").pop() ?? ""));
                   // Under the answer, each file found opens at its section (once each, the first search's section).
                   const had = new Set((meta.found ?? []).map((f) => f.id));
                   const more = r.found.filter((f) => !had.has(f.id));
