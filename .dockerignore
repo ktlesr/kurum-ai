@@ -11,3 +11,5 @@ docs
 tests
 *.log
 graphify-out
+# Dev-only: runs on a workstation against the app, imports tests/ (not in the image).
+scripts/eval-destek.ts
