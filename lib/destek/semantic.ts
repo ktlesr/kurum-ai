@@ -53,15 +53,23 @@ const FIXED: Record<string, Metric> = {
   destek_alma_orani: { label: "Destek alma oranı", kind: "ratio", sql: ratio(C.nihai, C.gelen) },
 };
 
-const unit = (b: Basis) => (b === "def" ? "Def-TL" : "TL");
-const basisWord: Record<Basis, string> = { sozlesme: "Sözleşme", nihai: "Nihai", def: "Def" };
+/**
+ * Each basis by the workbook's own column names (lib/db v_projeler), so a table says where its figures come from. On
+ * Def-TL: "Nihai Uygun Ajans Destek Miktarı (Def-TL)" and "Nihai Fiili Toplam Bütçe (Def-TL)"; the ratio of their sums is
+ * "Nihai Fiili Destek Oranı (Def-%)" weighted (each row's own value is exactly that quotient, checked on the 2026 file).
+ */
+const LABELS: Record<Basis, { destek: string; butce: string; es?: string; oran: string }> = {
+  sozlesme: { destek: "Sözleşme ajans destek miktarı (TL)", butce: "Sözleşme toplam bütçe (TL)", es: "Sözleşme eş finansman miktarı (TL)", oran: "Sözleşme destek oranı" },
+  nihai: { destek: "Nihai uygun ajans destek miktarı (TL)", butce: "Nihai fiili toplam bütçe (TL)", es: "Nihai fiili eş finansman miktarı (TL)", oran: "Nihai fiili destek oranı" },
+  def: { destek: "Nihai uygun ajans destek miktarı (Def-TL)", butce: "Nihai fiili toplam bütçe (Def-TL)", oran: "Nihai fiili destek oranı (Def-%)" },
+};
 /** destek / es_finansman / butce / destek_orani on each basis: "destek_sozlesme", …; the bare names take the plan's basis. */
 const BY_BASIS: Record<string, Metric> = Object.fromEntries(BASES.flatMap((b) => [
-  [`destek_${b}`, { label: `${basisWord[b]} ajans desteği (${unit(b)})`, kind: "amount", basis: b, sql: sum(`m_destek_${b}`) }],
-  [`butce_${b}`, { label: `${basisWord[b]} toplam bütçe (${unit(b)})`, kind: "amount", basis: b, sql: sum(`m_butce_${b}`) }],
-  ...(b === "def" ? [] : [[`es_finansman_${b}`, { label: `${basisWord[b]} eş finansman (${unit(b)})`, kind: "amount", basis: b, sql: sum(`m_es_finansman_${b}`) }]]),
+  [`destek_${b}`, { label: LABELS[b].destek, kind: "amount", basis: b, sql: sum(`m_destek_${b}`) }],
+  [`butce_${b}`, { label: LABELS[b].butce, kind: "amount", basis: b, sql: sum(`m_butce_${b}`) }],
+  ...(LABELS[b].es ? [[`es_finansman_${b}`, { label: LABELS[b].es, kind: "amount", basis: b, sql: sum(`m_es_finansman_${b}`) }]] : []),
   // Weighted (§0-5): Σ support / Σ budget, over the rows that have a budget at all (TD has none on sözleşme/nihai).
-  [`destek_orani_${b}`, { label: `${basisWord[b]} destek oranı`, kind: "ratio", basis: b, sql: ratio(sum(`m_destek_${b}`, `m_butce_${b} IS NOT NULL`), sum(`m_butce_${b}`)) }],
+  [`destek_orani_${b}`, { label: LABELS[b].oran, kind: "ratio", basis: b, sql: ratio(sum(`m_destek_${b}`, `m_butce_${b} IS NOT NULL`), sum(`m_butce_${b}`)) }],
 ] as [string, Metric][]));
 
 export const METRICS: Record<string, Metric> = { ...FIXED, ...BY_BASIS };

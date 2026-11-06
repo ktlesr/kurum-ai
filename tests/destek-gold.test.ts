@@ -108,3 +108,24 @@ test("destek gold set: every value of the engine equals the independent computat
     await sql.end();
   }
 });
+
+// "Deflatörlü" means these three columns (user, 2026-11-06). The engine sums the first two and weighs the ratio as their
+// quotient: that holds only while each row's own "Nihai Fiili Destek Oranı (Def-%)" is that quotient. Checked on every file.
+test("destek: each row's Def-% column is its Def-TL support over its Def-TL budget", { skip: !XLSX ? "DESTEK_XLSX tanımlı değil" : false }, async () => {
+  const { parseWorkbook } = await import("../lib/destek/load.ts");
+  const parsed = await parseWorkbook(readFileSync(XLSX!), basename(XLSX!));
+  let checked = 0;
+  for (const r of parsed.families.flatMap((f) => f.rows)) {
+    const col = r.extra["Nihai Fiili Destek Oranı (Def-%)"];
+    if (col === undefined || col === null || col === "") continue;
+    const d = Number(val(r, "def_destek") ?? 0), b = Number(val(r, "def_fiili_butce") ?? 0);
+    if (b === 0) {
+      assert.equal(Number(col), 0, `${r.sheet} satır ${r.row}: bütçe 0, oran ${col}`);
+      continue;
+    }
+    const c = Number(col) > 1.5 ? Number(col) / 100 : Number(col);
+    assert.ok(Math.abs(d / b - c) < 1e-9, `${r.sheet} satır ${r.row}: Excel ${col}, hesap ${d / b}`);
+    checked++;
+  }
+  assert.ok(checked > 100, `kontrol edilen satır: ${checked}`);
+});
